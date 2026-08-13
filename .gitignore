@@ -1,0 +1,31 @@
+# Go
+/backend/bin/
+*.test
+coverage.out
+
+# Node / React Native
+node_modules/
+.expo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+# Android / iOS build output
+apps/mobile/android/app/build/
+apps/mobile/android/.gradle/
+apps/mobile/ios/Pods/
+apps/mobile/ios/build/
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+
+# Environment
+.env
+.env.local
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
