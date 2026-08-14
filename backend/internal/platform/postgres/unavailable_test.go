@@ -7,8 +7,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/vanillaiice/kolo/backend/internal/domain/auth"
+	"github.com/vanillaiice/kolo/backend/internal/domain/authz"
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
+	"github.com/vanillaiice/kolo/backend/internal/domain/users"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
+	"github.com/vanillaiice/kolo/backend/internal/kernel/phone"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres/pgtest"
 )
@@ -94,5 +98,60 @@ func TestMigrationOperationsReportAnUnavailableDatabase(t *testing.T) {
 				t.Error("succeeded against a closed pool, want an error")
 			}
 		})
+	}
+}
+
+func TestUserAndCredentialOperationsReportAnUnavailableDatabase(t *testing.T) {
+	pool := closedPool(t)
+	userRepo := postgres.NewUserRepository(pool)
+	credentialRepo := postgres.NewCredentialRepository(pool)
+	ctx := context.Background()
+
+	tenant := business.NewID()
+	scope := business.MustNewScope(tenant)
+
+	user, err := users.New(users.NewID(), tenant, "Jean", authz.RoleCashier, createdAt)
+	if err != nil {
+		t.Fatalf("users.New: %v", err)
+	}
+	credential, err := auth.NewCredential(
+		user.ID(), tenant, phone.MustParse("677123456"), "1357", createdAt,
+	)
+	if err != nil {
+		t.Fatalf("auth.NewCredential: %v", err)
+	}
+
+	operations := map[string]func() error{
+		"users.Create":            func() error { return userRepo.Create(ctx, scope, user) },
+		"users.Get":               func() error { _, err := userRepo.Get(ctx, scope, user.ID()); return err },
+		"users.List":              func() error { _, err := userRepo.List(ctx, scope); return err },
+		"users.Update":            func() error { return userRepo.Update(ctx, scope, user) },
+		"credentials.Create":      func() error { return credentialRepo.Create(ctx, scope, credential) },
+		"credentials.Get":         func() error { _, err := credentialRepo.Get(ctx, scope, user.ID()); return err },
+		"credentials.FindByPhone": func() error { _, err := credentialRepo.FindByPhone(ctx, scope, credential.Phone()); return err },
+		"credentials.Update":      func() error { return credentialRepo.Update(ctx, scope, credential) },
+	}
+	for name, operation := range operations {
+		t.Run(name, func(t *testing.T) {
+			if err := operation(); err == nil {
+				t.Error("succeeded against a closed pool, want an error")
+			}
+		})
+	}
+}
+
+// TestListingUsersOnAnUnavailableDatabaseDoesNotLookEmpty is the same trap as
+// for branches: "this business has no staff" is a very different answer from
+// "the database is unreachable".
+func TestListingUsersOnAnUnavailableDatabaseDoesNotLookEmpty(t *testing.T) {
+	pool := closedPool(t)
+	repo := postgres.NewUserRepository(pool)
+
+	found, err := repo.List(context.Background(), business.MustNewScope(business.NewID()))
+	if err == nil {
+		t.Fatalf("List succeeded against a closed pool, returning %d users", len(found))
+	}
+	if found != nil {
+		t.Errorf("returned %d users alongside an error, want none", len(found))
 	}
 }

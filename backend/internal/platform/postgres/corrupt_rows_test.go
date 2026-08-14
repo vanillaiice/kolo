@@ -5,7 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/vanillaiice/kolo/backend/internal/domain/auth"
+	"github.com/vanillaiice/kolo/backend/internal/domain/authz"
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
+	"github.com/vanillaiice/kolo/backend/internal/kernel/phone"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres/pgtest"
 )
@@ -113,5 +116,55 @@ func TestReadingABusinessWithInconsistentTimestampsFails(t *testing.T) {
 
 	if _, err := repo.Get(ctx, tenant); !errors.Is(err, business.ErrInvalidTime) {
 		t.Errorf("got %v, want ErrInvalidTime", err)
+	}
+}
+
+// TestReadingACredentialWithANonBcryptHashFails covers a pin_hash column that
+// bypassed the schema's check — the shape a bad migration or a manual fix
+// leaves behind. Refusing to load matters here more than anywhere: comparing a
+// PIN against a plaintext column would let anyone in.
+func TestReadingACredentialWithANonBcryptHashFails(t *testing.T) {
+	pool := pgtest.FreshPool(t)
+	businesses := postgres.NewBusinessRepository(pool)
+	userRepo := postgres.NewUserRepository(pool)
+	credentials := postgres.NewCredentialRepository(pool)
+	ctx := context.Background()
+
+	tenant, scope := newTenant(t, businesses, ctx)
+	user := newUser(t, tenant.ID(), "Jean Mbarga", authz.RoleCashier)
+	if err := userRepo.Create(ctx, scope, user); err != nil {
+		t.Fatalf("creating the user: %v", err)
+	}
+
+	credential, err := auth.NewCredential(
+		user.ID(), tenant.ID(), phone.MustParse("677123456"), "1357", createdAt,
+	)
+	if err != nil {
+		t.Fatalf("auth.NewCredential: %v", err)
+	}
+	if err := credentials.Create(ctx, scope, credential); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE user_credentials DROP CONSTRAINT user_credentials_pin_hash_is_bcrypt`); err != nil {
+		t.Fatalf("dropping the constraint: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE user_credentials SET pin_hash = '1357' WHERE user_id = $1`, user.ID().ID()); err != nil {
+		t.Fatalf("planting the plaintext PIN: %v", err)
+	}
+
+	loaded, err := credentials.Get(ctx, scope, user.ID())
+	if err == nil {
+		t.Fatalf("reading a credential with a plaintext PIN succeeded, giving %+v", loaded.Snapshot())
+	}
+	if !errors.Is(err, postgres.ErrQuery) {
+		t.Errorf("got %v, want ErrQuery", err)
+	}
+
+	// And the login path must refuse it too, not just the direct read.
+	if _, err := credentials.FindByPhone(ctx, scope, phone.MustParse("677123456")); !errors.Is(err, postgres.ErrQuery) {
+		t.Errorf("the login lookup: got %v, want ErrQuery", err)
 	}
 }
