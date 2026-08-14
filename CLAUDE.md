@@ -11,6 +11,7 @@ KOLO is an offline-first business management platform (inventory, POS, customer 
 - `money` — integer minor units, currency-checked arithmetic, explicit rounding, remainder-preserving allocation
 - `id` — UUIDv7 via `github.com/google/uuid`, generated offline, sortable by creation time. `id.Typed[Tag]` gives phantom-typed identifiers so a sale ID cannot be passed where a product ID belongs; `id/idtest` gives deterministic identifiers for tests
 - `clock` — injectable UTC time source
+- `phone` — E.164 telephone numbers via `github.com/nyaruka/phonenumbers`, default region CM. Login identity (ADR-012) and customer/supplier contact detail
 - `validate` — value rules shared by more than one domain (`Name`, `Timestamps`). A rule moves here only once a second domain needs it
 
 `backend/internal/domain/`:
