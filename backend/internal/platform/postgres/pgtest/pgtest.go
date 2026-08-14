@@ -67,6 +67,28 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	return shared
 }
 
+// FreshPool returns a pool against a migrated database of its own, dropped when
+// the test finishes.
+//
+// Use it for tests that change the schema rather than the data — a migration
+// stepping back, say. Everything else uses Pool, which is shared and much
+// cheaper.
+func FreshPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	url := strings.TrimSpace(os.Getenv(URLVariable))
+	if url == "" {
+		t.Skip(skipMessage)
+	}
+
+	pool, err := prepare(url)
+	if err != nil {
+		t.Fatalf("preparing a dedicated test database: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
 // prepare creates a database for this test binary and migrates it.
 //
 // A dedicated database, rather than the one named in the URL, keeps a test run

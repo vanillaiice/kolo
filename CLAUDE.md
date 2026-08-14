@@ -22,6 +22,10 @@ KOLO is an offline-first business management platform (inventory, POS, customer 
 - `auth` — proves who a user is (ADR-012). `PINHash` (bcrypt, slow, for a low-entropy secret), `Token`/`TokenHash` (32 random bytes, SHA-256, fast — checked on every request), and `Session`, bound to one user/business/device and renewed on sync
 - `devices` — the installation identity (§28). Only the ID for now; the entity lands with the sync phase
 
+`backend/internal/platform/postgres/` — the driver edge (ADR-013). pgx v5, goose migrations embedded from `backend/migrations/`, and repositories that take a `business.Scope` bound into the query. `pgtest` gives tests a migrated database. Domain types cross into driver types here and nowhere else.
+
+A record belonging to another tenant is reported as **not found**, never as forbidden — saying "you may not see this" confirms it exists to someone who may not know of it.
+
 Where a helper has both a fallible and a total form (`business.NewScope`/`ScopeOf`, `authz.Resolve`/`Effective`), the fallible one is for untrusted input and the total one is for callers holding already-validated values. Total forms **fail closed** — a missing tenant yields a scope that permits nothing, an unknown role contributes no permissions. Prefer this over an unreachable `panic` guard, which is untestable dead code.
 
 Entities keep their fields unexported behind accessors and cross the persistence boundary as a validating `Snapshot`/`Restore` pair, so a repository cannot construct one that skipped validation. Stored data is re-validated on the way in — a record written by an older version or synced from another device is not trusted.
@@ -41,7 +45,9 @@ Backend-only, from `backend/`: `go test ./... -race -cover`, `go vet ./...`, `go
 
 ### Testing expectations
 
-Tests must pass under `-race`, and the kernel is held at 100% statement coverage. Comprehensiveness is not satisfied by covering the spec's worked examples — those are a floor. Also cover boundary and overflow values, degenerate and malformed input, concurrency, and the invalid zero-value surface of each type. Prefer property-based tests, Go native fuzz targets, and — where a correct answer is independently computable — an oracle built a structurally different way from the implementation (see `money/oracle_test.go`).
+Tests must pass under `-race`. `kernel/` and `domain/` are held at **100% statement coverage**; `platform/postgres` sits at ~96%, the remainder being driver-error branches that cannot be reached with constants we control. Comprehensiveness is not satisfied by covering the spec's worked examples — those are a floor. Also cover boundary and overflow values, degenerate and malformed input, concurrency, and the invalid zero-value surface of each type. Prefer property-based tests, Go native fuzz targets, and — where a correct answer is independently computable — an oracle built a structurally different way from the implementation (see `money/oracle_test.go`).
+
+**Repository tests run against a real PostgreSQL, never a mock.** A mock passes just as happily against a repository that forgot its `WHERE business_id = $1`, so it cannot prove the property most worth proving. `make db-up` starts one; `make test-integration` runs against it; plain `make test` skips those tests loudly. Closing the pool is the standard way to exercise "the database went away" paths.
 
 Prefer established third-party libraries over hand-rolled implementations of solved problems; wrap them thinly if the project needs extra guarantees.
 
