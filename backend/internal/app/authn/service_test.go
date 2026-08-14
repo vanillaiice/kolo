@@ -85,6 +85,21 @@ func newFixture(t *testing.T) *fixture {
 	return f
 }
 
+// newFixtureWithLimiter builds a fixture whose service throttles with the given
+// limiter, for tests about repeated attempts.
+func newFixtureWithLimiter(t *testing.T, limiter authn.AttemptLimiter) *fixture {
+	t.Helper()
+
+	f := newFixture(t)
+	f.service = authn.NewService(f.credentials, f.users, f.devices, f.sessions, authn.Options{
+		Clock:   f.clock,
+		IDs:     idtest.NewSequence(),
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Limiter: limiter,
+	})
+	return f
+}
+
 func (f *fixture) request() authn.LoginRequest {
 	return authn.LoginRequest{
 		BusinessID: f.tenant,

@@ -87,6 +87,7 @@ type Service struct {
 	ids         id.Generator
 	lifetime    time.Duration
 	logger      *slog.Logger
+	limiter     AttemptLimiter
 }
 
 // Options configures a Service. Every field has a working default.
@@ -101,6 +102,10 @@ type Options struct {
 	// Logger receives notices about things that did not stop a login but that
 	// someone should know about. Defaults to the standard logger.
 	Logger *slog.Logger
+	// Limiter throttles repeated failed logins. Defaults to an in-memory
+	// limiter, because a PIN is only safe if guessing is slow (ADR-012) and a
+	// service assembled without one would silently drop that protection.
+	Limiter AttemptLimiter
 }
 
 // NewService returns a service using the given stores.
@@ -120,6 +125,7 @@ func NewService(
 		ids:         options.IDs,
 		lifetime:    options.SessionLifetime,
 		logger:      options.Logger,
+		limiter:     options.Limiter,
 	}
 	if service.clock == nil {
 		service.clock = clock.System{}
@@ -132,6 +138,9 @@ func NewService(
 	}
 	if service.logger == nil {
 		service.logger = slog.Default()
+	}
+	if service.limiter == nil {
+		service.limiter = NewInMemoryLimiter(LimiterOptions{})
 	}
 	return service
 }
@@ -185,6 +194,13 @@ func (s *Service) Login(ctx context.Context, request LoginRequest) (LoginResult,
 	}
 	now := s.clock.Now()
 
+	// Throttling comes first, before any work is done, so a locked-out caller
+	// cannot keep the server hashing on their behalf.
+	key := attemptKey(request)
+	if retryAfter, allowed := s.limiter.Allow(key, now); !allowed {
+		return LoginResult{}, retryAfterError{after: retryAfter}
+	}
+
 	credential, err := s.credentials.FindByPhone(ctx, scope, request.Phone)
 	if err != nil {
 		// Anything at all — not found, or the database being unreachable — is
@@ -192,11 +208,19 @@ func (s *Service) Login(ctx context.Context, request LoginRequest) (LoginResult,
 		// fault is worth distinguishing, and it is not worth distinguishing to
 		// the caller.
 		auth.VerifyDecoy(request.PIN)
+		s.limiter.RecordFailure(key, now)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	if !credential.Verify(request.PIN) {
+		s.limiter.RecordFailure(key, now)
 		return LoginResult{}, ErrInvalidCredentials
 	}
+
+	// The PIN was right, so this is no longer a guessing attempt whatever
+	// happens next. Clearing here rather than at the end means someone whose
+	// account is suspended, or whose device is refused, is not also locked out
+	// and left unable to log in once that is sorted.
+	s.limiter.RecordSuccess(key)
 
 	user, err := s.users.Get(ctx, scope, credential.UserID())
 	if err != nil {
