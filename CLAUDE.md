@@ -18,7 +18,9 @@ KOLO is an offline-first business management platform (inventory, POS, customer 
 
 - `authz` — granular permissions, roles, and the configurable role→permission matrix (§38). Effective permissions are role defaults + grants − revocations, revocation last
 - `business` — the tenant. `Business` and `Branch` entities, and `Scope`, which is the required argument that makes tenant isolation structural rather than a filter a caller can forget
-- `users` — who operates a business, their tenant/branch, and their permissions. Deliberately holds **no credentials**: §5 separates "Authentication" from "Users & Roles", so passwords, PINs, tokens, and login handles belong to the auth domain, keyed by user ID
+- `users` — who operates a business, their tenant/branch, and their permissions. Deliberately holds **no credentials**: §5 separates "Authentication" from "Users & Roles", so PINs and tokens live in `auth`, keyed by user ID
+- `auth` — proves who a user is (ADR-012). `PINHash` (bcrypt, slow, for a low-entropy secret), `Token`/`TokenHash` (32 random bytes, SHA-256, fast — checked on every request), and `Session`, bound to one user/business/device and renewed on sync
+- `devices` — the installation identity (§28). Only the ID for now; the entity lands with the sync phase
 
 Where a helper has both a fallible and a total form (`business.NewScope`/`ScopeOf`, `authz.Resolve`/`Effective`), the fallible one is for untrusted input and the total one is for callers holding already-validated values. Total forms **fail closed** — a missing tenant yields a scope that permits nothing, an unknown role contributes no permissions. Prefer this over an unreachable `panic` guard, which is untestable dead code.
 

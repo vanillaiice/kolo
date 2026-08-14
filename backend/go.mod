@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/google/uuid v1.6.0
 	github.com/nyaruka/phonenumbers v1.8.1
+	golang.org/x/crypto v0.55.0
 )
 
 require (
