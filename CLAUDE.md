@@ -41,7 +41,9 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 
 There is no UI yet. The data layer is plain TypeScript so it runs under Node against real SQLite; React Native types arrive with the screens.
 
-`backend/internal/api/` — the HTTP edge (§35). Stdlib `net/http` routing under `/api/v1`, one JSON error shape with stable machine-readable codes, and `RequireAuthentication`/`RequirePermission` middleware. `classify` is the single place errors become statuses. An internal error never echoes its cause to a client.
+`backend/internal/api/` — the HTTP edge (§35). Stdlib `net/http` routing under `/api/v1`, one JSON error shape with stable machine-readable codes, and `RequireAuthentication`/`RequirePermission` middleware. `classify` is the single place errors become statuses — a new service's errors must be added there or they fall through to 500. An internal error never echoes its cause to a client.
+
+Endpoints: `/auth/login`, `/auth/logout`, `/auth/me`, `/sync/push`, `/sync/pull`. A push answers **200 even when some events were rejected** — the request succeeded, and per-event results say what happened to each; a non-2xx would make a client resend what landed.
 
 `backend/cmd/api/` — the binary: read config from the environment, connect, migrate, serve, drain on SIGTERM.
 

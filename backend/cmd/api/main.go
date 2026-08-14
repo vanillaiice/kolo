@@ -21,6 +21,7 @@ import (
 
 	"github.com/vanillaiice/kolo/backend/internal/api"
 	"github.com/vanillaiice/kolo/backend/internal/app/authn"
+	"github.com/vanillaiice/kolo/backend/internal/app/syncing"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
 )
 
@@ -68,6 +69,7 @@ func run() error {
 
 	server := api.NewServer(config.address, api.NewRouter(api.Config{
 		Auth:   newAuthService(pool, logger),
+		Sync:   syncing.NewService(postgres.NewSyncRepository(pool), syncing.Options{Logger: logger}),
 		Health: healthCheck{pool: pool},
 		Logger: logger,
 	}))

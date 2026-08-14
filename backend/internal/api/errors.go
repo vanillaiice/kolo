@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/vanillaiice/kolo/backend/internal/app/authn"
+	"github.com/vanillaiice/kolo/backend/internal/app/syncing"
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
 )
@@ -37,6 +38,7 @@ const (
 	CodeAccountSuspended   ErrorCode = "account_suspended"
 	CodeDeviceSuspended    ErrorCode = "device_suspended"
 	CodeTooManyAttempts    ErrorCode = "too_many_attempts"
+	CodeBatchTooLarge      ErrorCode = "batch_too_large"
 	CodeNotFound           ErrorCode = "not_found"
 	CodeConflict           ErrorCode = "conflict"
 	CodeInternal           ErrorCode = "internal_error"
@@ -111,11 +113,21 @@ func classify(err error) failure {
 			message: "This device is not in service. Ask the business owner to restore it.",
 		}
 
-	case errors.Is(err, authn.ErrInvalidRequest):
+	case errors.Is(err, authn.ErrInvalidRequest), errors.Is(err, syncing.ErrInvalidRequest):
 		return failure{
 			status:  http.StatusBadRequest,
 			code:    CodeInvalidRequest,
 			message: "The request is missing something or is not valid.",
+		}
+
+	case errors.Is(err, syncing.ErrBatchTooLarge):
+		// 413 rather than 400: the request was well formed, there was simply too
+		// much of it, and a client should split the batch and try again rather
+		// than treat the events as bad.
+		return failure{
+			status:  http.StatusRequestEntityTooLarge,
+			code:    CodeBatchTooLarge,
+			message: "Too many events in one request. Send them in smaller batches.",
 		}
 
 	case errors.Is(err, business.ErrCrossTenant), errors.Is(err, business.ErrNoTenant):

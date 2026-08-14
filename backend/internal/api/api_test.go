@@ -14,6 +14,7 @@ import (
 
 	"github.com/vanillaiice/kolo/backend/internal/api"
 	"github.com/vanillaiice/kolo/backend/internal/app/authn"
+	"github.com/vanillaiice/kolo/backend/internal/app/syncing"
 	"github.com/vanillaiice/kolo/backend/internal/domain/auth"
 	"github.com/vanillaiice/kolo/backend/internal/domain/authz"
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
@@ -86,7 +87,10 @@ func newHarness(t *testing.T) *harness {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	router := api.NewRouter(api.Config{
-		Auth:   service,
+		Auth: service,
+		Sync: syncing.NewService(postgres.NewSyncRepository(pool), syncing.Options{
+			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 

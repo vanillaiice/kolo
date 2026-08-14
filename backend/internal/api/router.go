@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/vanillaiice/kolo/backend/internal/app/authn"
+	"github.com/vanillaiice/kolo/backend/internal/app/syncing"
 )
 
 // Version is the API version this router serves. §35 requires it to be
@@ -20,6 +21,9 @@ const basePath = "/api/" + Version
 type Config struct {
 	// Auth is the authentication service. Required.
 	Auth *authn.Service
+	// Sync is the synchronization service. Optional: without one the sync
+	// endpoints are not mounted, which is what the auth-only tests want.
+	Sync *syncing.Service
 	// Health reports whether the backend's dependencies are reachable.
 	// Optional: without one, the readiness endpoint reports healthy.
 	Health HealthChecker
@@ -78,6 +82,17 @@ func NewRouter(config Config) http.Handler {
 
 	mux.Handle("GET "+basePath+"/auth/me",
 		chain(http.HandlerFunc(handlers.currentUser), authenticated))
+
+	// Synchronization has dedicated endpoints rather than pretending to be CRUD
+	// (§36). Both require a live session, so the tenant and the device come
+	// from the token rather than from anything a client sends.
+	if config.Sync != nil {
+		sync := &syncHandlers{service: config.Sync, logger: logger}
+		mux.Handle("POST "+basePath+"/sync/push",
+			chain(http.HandlerFunc(sync.push), authenticated))
+		mux.Handle("GET "+basePath+"/sync/pull",
+			chain(http.HandlerFunc(sync.pull), authenticated))
+	}
 
 	// A request to an unknown path gets the same JSON shape as everything else,
 	// rather than ServeMux's plain-text default, so a client has one way to

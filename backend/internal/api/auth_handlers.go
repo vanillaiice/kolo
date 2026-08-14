@@ -251,7 +251,13 @@ func describeDevice(result authn.LoginResult) deviceResponse {
 // authenticating with an empty PIN. The body is size-limited and must contain
 // exactly one JSON value.
 func decodeJSON(w http.ResponseWriter, r *http.Request, into any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	return decodeJSONWithLimit(w, r, into, maxRequestBody)
+}
+
+// decodeJSONWithLimit is decodeJSON with the body size stated, for endpoints
+// whose payloads are legitimately larger — a sync push carries a backlog.
+func decodeJSONWithLimit(w http.ResponseWriter, r *http.Request, into any, limit int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
