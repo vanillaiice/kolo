@@ -44,6 +44,8 @@ There is no UI yet. The data layer is plain TypeScript so it runs under Node aga
 
 `backend/internal/platform/postgres/` — the driver edge (ADR-013). pgx v5, goose migrations embedded from `backend/migrations/`, and repositories that take a `business.Scope` bound into the query. `pgtest` gives tests a migrated database. Domain types cross into driver types here and nowhere else.
 
+`inventory_movements` is append-only in the database, not just the domain: a trigger refuses UPDATE and DELETE, so a correction has to be another movement even for a migration or a support script. Stock is derived by SQL sum, never stored.
+
 A record belonging to another tenant is reported as **not found**, never as forbidden — saying "you may not see this" confirms it exists to someone who may not know of it.
 
 Where a helper has both a fallible and a total form (`business.NewScope`/`ScopeOf`, `authz.Resolve`/`Effective`), the fallible one is for untrusted input and the total one is for callers holding already-validated values. Total forms **fail closed** — a missing tenant yields a scope that permits nothing, an unknown role contributes no permissions. Prefer this over an unreachable `panic` guard, which is untestable dead code.
