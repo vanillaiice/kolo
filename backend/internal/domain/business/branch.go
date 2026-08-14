@@ -3,6 +3,8 @@ package business
 import (
 	"fmt"
 	"time"
+
+	"github.com/vanillaiice/kolo/backend/internal/kernel/validate"
 )
 
 // Branch is a place a business operates from: a shop, a depot, a stall.
@@ -43,8 +45,8 @@ func NewBranch(branchID BranchID, businessID ID, name string, now time.Time) (*B
 	if err != nil {
 		return nil, err
 	}
-	if now.IsZero() {
-		return nil, fmt.Errorf("%w: creation time is unset", ErrInvalidTime)
+	if err := validate.Moment(now, "creation time"); err != nil {
+		return nil, err
 	}
 
 	moment := now.UTC()
@@ -126,8 +128,8 @@ func (b *Branch) Rename(name string, at time.Time) error {
 	if err != nil {
 		return err
 	}
-	if at.IsZero() {
-		return fmt.Errorf("%w: update time is unset", ErrInvalidTime)
+	if err := validate.Moment(at, "update time"); err != nil {
+		return err
 	}
 
 	b.name = cleaned
@@ -149,8 +151,8 @@ func (b *Branch) Activate(at time.Time) error {
 }
 
 func (b *Branch) setActive(active bool, at time.Time) error {
-	if at.IsZero() {
-		return fmt.Errorf("%w: update time is unset", ErrInvalidTime)
+	if err := validate.Moment(at, "update time"); err != nil {
+		return err
 	}
 	if b.active == active {
 		return nil

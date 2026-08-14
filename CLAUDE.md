@@ -11,11 +11,15 @@ KOLO is an offline-first business management platform (inventory, POS, customer 
 - `money` — integer minor units, currency-checked arithmetic, explicit rounding, remainder-preserving allocation
 - `id` — UUIDv7 via `github.com/google/uuid`, generated offline, sortable by creation time. `id.Typed[Tag]` gives phantom-typed identifiers so a sale ID cannot be passed where a product ID belongs; `id/idtest` gives deterministic identifiers for tests
 - `clock` — injectable UTC time source
+- `validate` — value rules shared by more than one domain (`Name`, `Timestamps`). A rule moves here only once a second domain needs it
 
 `backend/internal/domain/`:
 
 - `authz` — granular permissions, roles, and the configurable role→permission matrix (§38). Effective permissions are role defaults + grants − revocations, revocation last
 - `business` — the tenant. `Business` and `Branch` entities, and `Scope`, which is the required argument that makes tenant isolation structural rather than a filter a caller can forget
+- `users` — who operates a business, their tenant/branch, and their permissions. Deliberately holds **no credentials**: §5 separates "Authentication" from "Users & Roles", so passwords, PINs, tokens, and login handles belong to the auth domain, keyed by user ID
+
+Where a helper has both a fallible and a total form (`business.NewScope`/`ScopeOf`, `authz.Resolve`/`Effective`), the fallible one is for untrusted input and the total one is for callers holding already-validated values. Total forms **fail closed** — a missing tenant yields a scope that permits nothing, an unknown role contributes no permissions. Prefer this over an unreachable `panic` guard, which is untestable dead code.
 
 Entities keep their fields unexported behind accessors and cross the persistence boundary as a validating `Snapshot`/`Restore` pair, so a repository cannot construct one that skipped validation. Stored data is re-validated on the way in — a record written by an older version or synced from another device is not trusted.
 

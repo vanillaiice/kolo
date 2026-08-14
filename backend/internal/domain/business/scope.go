@@ -39,6 +39,20 @@ func NewScope(business ID) (Scope, error) {
 	return Scope{business: business}, nil
 }
 
+// ScopeOf builds a scope from a business and an optional branch, without
+// reporting an error.
+//
+// It is for callers holding identifiers already validated elsewhere — an entity
+// exposing its own scope, typically. A zero business yields the zero Scope,
+// which permits nothing, so the total form still fails closed. Callers handling
+// untrusted input use NewScope, which says what was wrong.
+func ScopeOf(businessID ID, branchID BranchID) Scope {
+	if businessID.IsZero() {
+		return Scope{}
+	}
+	return Scope{business: businessID, branch: branchID}
+}
+
 // MustNewScope is NewScope for use in tests and fixtures. It panics on a zero
 // business identifier.
 func MustNewScope(business ID) Scope {

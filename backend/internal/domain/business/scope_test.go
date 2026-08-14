@@ -313,3 +313,36 @@ func TestScopeIsUsableAsAMapKey(t *testing.T) {
 		t.Errorf("map holds %d entries, want 2", len(counts))
 	}
 }
+
+// TestScopeOfIsTotalAndFailsClosed covers the form entities use to expose their
+// own scope: it cannot report an error, so a missing business must yield a
+// scope that permits nothing rather than one that permits everything.
+func TestScopeOfIsTotalAndFailsClosed(t *testing.T) {
+	tenant, branch := business.NewID(), business.NewBranchID()
+
+	wide := business.ScopeOf(tenant, business.BranchID{})
+	if !wide.Valid() || wide.IsBranchScoped() {
+		t.Errorf("ScopeOf with no branch gave %s, want a business-wide scope", wide)
+	}
+	if !wide.Equal(business.MustNewScope(tenant)) {
+		t.Errorf("ScopeOf gave %s, want the same as NewScope", wide)
+	}
+
+	narrow := business.ScopeOf(tenant, branch)
+	if got, ok := narrow.Branch(); !ok || got != branch {
+		t.Errorf("Branch() = %s, %v, want %s, true", got, ok, branch)
+	}
+
+	// A missing business denies everything, including when a branch is given.
+	for _, scope := range []business.Scope{
+		business.ScopeOf(business.ID{}, business.BranchID{}),
+		business.ScopeOf(business.ID{}, branch),
+	} {
+		if scope.Valid() {
+			t.Errorf("ScopeOf with no business gave the valid scope %s", scope)
+		}
+		if scope.Permits(tenant, branch) || scope.Permits(business.ID{}, business.BranchID{}) {
+			t.Errorf("a scope with no business permitted a record")
+		}
+	}
+}

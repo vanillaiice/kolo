@@ -131,16 +131,27 @@ func DefaultPermissions(r Role) (Set, bool) {
 	return permissions, true
 }
 
-// Resolve returns the effective permissions for a user: the role's defaults,
-// extended by grants and reduced by revocations.
+// Effective returns the permissions a role resolves to once per-user grants and
+// revocations are applied.
 //
 // Revocation is applied last, so an explicit revocation always wins over both
 // the role default and a grant. That ordering makes "this user must not be able
 // to do X" a statement that holds regardless of what else is configured.
+//
+// The function is total: an unrecognised role contributes no defaults, so the
+// result is whatever was explicitly granted. Callers that hold an already
+// validated role use this; callers validating untrusted input use Resolve,
+// which reports the bad role instead of quietly resolving around it.
+func Effective(r Role, granted, revoked Set) Set {
+	base, _ := DefaultPermissions(r)
+	return base.Union(granted).Without(revoked.All()...)
+}
+
+// Resolve is Effective with the role checked first, reporting an unrecognised
+// role rather than treating it as one that grants nothing.
 func Resolve(r Role, granted, revoked Set) (Set, error) {
-	base, ok := DefaultPermissions(r)
-	if !ok {
+	if !r.Defined() {
 		return Set{}, fmt.Errorf("%w: %q", ErrUnknownRole, r)
 	}
-	return base.Union(granted).Without(revoked.All()...), nil
+	return Effective(r, granted, revoked), nil
 }

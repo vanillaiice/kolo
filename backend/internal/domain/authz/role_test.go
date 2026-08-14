@@ -425,3 +425,39 @@ func TestResolveCanRevokeEveryPermission(t *testing.T) {
 		}
 	}
 }
+
+// TestEffectiveIsTotalAndFailsClosed covers the form entities use once their
+// role is already validated: it cannot report an error, so an unrecognised role
+// must contribute nothing rather than everything.
+func TestEffectiveIsTotalAndFailsClosed(t *testing.T) {
+	var none authz.Set
+
+	unknown := authz.Effective("SUPERUSER", none, none)
+	if !unknown.IsEmpty() {
+		t.Errorf("an unrecognised role resolved to %v, want nothing", unknown.All())
+	}
+
+	// Explicit grants still apply, because they were configured deliberately;
+	// only the role's own contribution is missing.
+	granted := authz.Effective("SUPERUSER", authz.MustNewSet(authz.SalesCreate), none)
+	if !granted.Equal(authz.MustNewSet(authz.SalesCreate)) {
+		t.Errorf("resolved to %v, want just the granted permission", granted.All())
+	}
+}
+
+// TestEffectiveAgreesWithResolve keeps the two entry points from drifting: they
+// must apply overrides in the same order.
+func TestEffectiveAgreesWithResolve(t *testing.T) {
+	granted := authz.MustNewSet(authz.SalesRefund, authz.ReportsFinancial)
+	revoked := authz.MustNewSet(authz.SalesRefund, authz.ProductsView)
+
+	for _, role := range authz.Roles() {
+		resolved, err := authz.Resolve(role, granted, revoked)
+		if err != nil {
+			t.Fatalf("Resolve(%s): %v", role, err)
+		}
+		if effective := authz.Effective(role, granted, revoked); !effective.Equal(resolved) {
+			t.Errorf("%s: Effective = %v, Resolve = %v", role, effective.All(), resolved.All())
+		}
+	}
+}
