@@ -20,6 +20,7 @@ corrections are new records rather than destructive edits.
 | [010](ADR-010-integer-minor-units-for-money.md) | Integer minor units for money | Accepted |
 | [011](ADR-011-uuidv7-identifiers.md) | UUIDv7 identifiers from a standard library | Accepted |
 | [012](ADR-012-authentication.md) | Phone-and-PIN authentication with cached sessions | Accepted |
+| [013](ADR-013-server-persistence.md) | Server persistence: driver, migrations, tenant enforcement | Accepted |
 
 ADR-001 through ADR-009 record the baseline established by `SPECIFICATION.md`
 (§63). They are written down so that later work has something concrete to

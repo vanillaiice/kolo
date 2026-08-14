@@ -1,17 +1,27 @@
-.PHONY: help test test-backend fuzz-backend lint lint-backend fmt fmt-backend check
+.PHONY: help check test test-backend test-integration fuzz-backend \
+        lint lint-backend fmt fmt-backend db-up db-down db-reset db-url
 
 # How long each fuzz target runs under `make fuzz-backend`.
 FUZZTIME ?= 30s
 
+COMPOSE = docker compose -f infrastructure/docker-compose.yml
+
+# Where the local development database listens. Integration tests create their
+# own database on this server, so this points at the default one.
+KOLO_TEST_DATABASE_URL ?= postgres://kolo:kolo@localhost:5433/kolo?sslmode=disable
+
 help: ## Show available targets
-	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-16s %s\n", $$1, $$2}'
+	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
 check: fmt lint test ## Format, lint, and test everything
 
-test: test-backend ## Run all tests
+test: test-backend ## Run unit tests (integration tests skip without a database)
 
 test-backend: ## Run backend tests with the race detector
 	cd backend && go test ./... -race -cover
+
+test-integration: db-up ## Start the database and run every test against it
+	cd backend && KOLO_TEST_DATABASE_URL="$(KOLO_TEST_DATABASE_URL)" go test ./... -race -cover -count=1
 
 fuzz-backend: ## Run every fuzz target for FUZZTIME each (default 30s)
 	@cd backend && for package in $$(go list ./...); do \
@@ -34,3 +44,15 @@ fmt: fmt-backend ## Format everything
 
 fmt-backend: ## Apply gofmt to the backend
 	cd backend && gofmt -w .
+
+db-up: ## Start the local PostgreSQL and wait until it accepts connections
+	$(COMPOSE) up -d --wait
+
+db-down: ## Stop the local PostgreSQL, keeping its data
+	$(COMPOSE) down
+
+db-reset: ## Stop the local PostgreSQL and discard its data
+	$(COMPOSE) down -v
+
+db-url: ## Print the database URL the integration tests use
+	@echo '$(KOLO_TEST_DATABASE_URL)'

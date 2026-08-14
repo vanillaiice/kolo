@@ -1,0 +1,43 @@
+# Local PostgreSQL for development and integration tests.
+#
+# This is a development convenience, not a deployment artefact. Credentials are
+# deliberately trivial and the data lives in a named volume that can be thrown
+# away; nothing here is intended to run anywhere but a developer's machine.
+#
+#   make db-up            start it
+#   make test-integration run the repository tests against it
+#   make db-down          stop it, keeping the data
+#   make db-reset         stop it and discard the data
+
+name: kolo-dev
+
+services:
+  postgres:
+    image: postgres:18
+    container_name: kolo-postgres
+    environment:
+      POSTGRES_USER: kolo
+      POSTGRES_PASSWORD: kolo
+      POSTGRES_DB: kolo
+      # The test harness creates a database per test binary, so the server
+      # needs to allow more than the default handful of connections.
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    ports:
+      # 5433 on the host, so a PostgreSQL already installed locally on the
+      # standard port is left alone.
+      - "5433:5432"
+    volumes:
+      # Mounted at the parent, not at .../data. PostgreSQL 18 places its data in
+      # a subdirectory so that a future `pg_upgrade --link` is not blocked by a
+      # mount point sitting exactly on the data directory.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # Waiting on this is what lets `make db-up` return only once the server
+      # can actually accept a connection, rather than once the container exists.
+      test: ["CMD-SHELL", "pg_isready -U kolo -d kolo"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  postgres-data:
