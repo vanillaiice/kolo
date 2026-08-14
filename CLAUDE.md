@@ -13,6 +13,7 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `money` — integer minor units, currency-checked arithmetic, explicit rounding, remainder-preserving allocation
 - `id` — UUIDv7 via `github.com/google/uuid`, generated offline, sortable by creation time. `id.Typed[Tag]` gives phantom-typed identifiers so a sale ID cannot be passed where a product ID belongs; `id/idtest` gives deterministic identifiers for tests
 - `clock` — injectable UTC time source
+- `quantity` — exact stock amounts as thousandths of a unit. Fractional (half a kilo) but never floating point, for the same reason money is not: a tenth added ten times must be exactly one
 - `phone` — E.164 telephone numbers via `github.com/nyaruka/phonenumbers`, default region CM. Login identity (ADR-012) and customer/supplier contact detail
 - `validate` — value rules shared by more than one domain (`Name`, `Timestamps`). A rule moves here only once a second domain needs it
 
@@ -22,6 +23,8 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `business` — the tenant. `Business` and `Branch` entities, and `Scope`, which is the required argument that makes tenant isolation structural rather than a filter a caller can forget
 - `users` — who operates a business, their tenant/branch, and their permissions. Deliberately holds **no credentials**: §5 separates "Authentication" from "Users & Roles", so PINs and tokens live in `auth`, keyed by user ID
 - `auth` — proves who a user is (ADR-012). `PINHash` (bcrypt, slow, for a low-entropy secret), `Token`/`TokenHash` (32 random bytes, SHA-256, fast — checked on every request), and `Session`, bound to one user/business/device and renewed on sync
+- `inventory` — the stock ledger (§7, ADR-009). **Stock is never stored; it is the sum of append-only movements.** Two devices selling the last unit offline both stand, and the total goes to −1 — a true statement, surfaced rather than hidden
+- `products` — product and category identifiers. The entity (§6) is still to come
 - `devices` — an installation of the app (§28): its business, optional branch, label, and platform. A session binds to one, and an audit record names one. Its sync-specific state arrives with the sync phase
 
 `backend/internal/app/` — application services, between HTTP and the domain (ADR-005):
