@@ -35,6 +35,7 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 
 - `database/` — a deliberately narrow driver interface, a `node:sqlite` adapter for tests, and forward-only migrations that catch a device up across any number of versions
 - `sync/outbox.ts` — the queue of events waiting for the server. **A business write and its event commit in one transaction, or neither does.** `enqueue` takes a transaction, not a database, so it cannot be called on its own
+- `inventory/movements.ts` — recording stock on the device. Every write records the movement and queues its event together; the ledger is append-only here too, enforced by SQLite triggers, and stock is derived by SQL sum
 
 There is no UI yet. The data layer is plain TypeScript so it runs under Node against real SQLite; React Native types arrive with the screens.
 

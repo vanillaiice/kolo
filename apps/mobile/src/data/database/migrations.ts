@@ -157,6 +157,124 @@ export const MIGRATIONS: readonly Migration[] = [
       `INSERT INTO sync_state (id) VALUES (1)`,
     ],
   },
+
+  {
+    version: 3,
+    name: "products and the stock ledger",
+    statements: [
+      `CREATE TABLE categories (
+         id          TEXT    PRIMARY KEY,
+         business_id TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         name        TEXT    NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 120),
+         active      INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+         created_at  TEXT    NOT NULL,
+         updated_at  TEXT    NOT NULL,
+         CHECK (updated_at >= created_at)
+       ) STRICT`,
+
+      `CREATE TABLE products (
+         id                    TEXT    PRIMARY KEY,
+         business_id           TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         category_id           TEXT    REFERENCES categories (id) ON DELETE RESTRICT,
+         name                  TEXT    NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 120),
+         -- Both optional: a shopkeeper entering stock at the till has neither
+         -- yet, and requiring them would stop the sale.
+         sku                   TEXT,
+         barcode               TEXT,
+         description           TEXT,
+         brand                 TEXT,
+         unit                  TEXT    NOT NULL CHECK (length(trim(unit)) BETWEEN 1 AND 24),
+         divisible             INTEGER NOT NULL DEFAULT 0 CHECK (divisible IN (0, 1)),
+         -- Null when the business does not yet know what it paid. A guess
+         -- would be worse than an honest gap.
+         purchase_price_minor  INTEGER CHECK (purchase_price_minor IS NULL OR purchase_price_minor >= 0),
+         selling_price_minor   INTEGER NOT NULL CHECK (selling_price_minor >= 0),
+         currency              TEXT    NOT NULL CHECK (length(currency) = 3),
+         tax_rate_basis_points INTEGER NOT NULL DEFAULT 0
+                                       CHECK (tax_rate_basis_points BETWEEN 0 AND 10000),
+         minimum_stock         INTEGER NOT NULL DEFAULT 0 CHECK (minimum_stock >= 0),
+         active                INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+         created_at            TEXT    NOT NULL,
+         updated_at            TEXT    NOT NULL,
+         CHECK (updated_at >= created_at),
+         -- A product sold whole cannot have a reorder point of half a unit.
+         CHECK (divisible = 1 OR minimum_stock % 1000 = 0)
+       ) STRICT`,
+
+      // Codes identify a product within one business, not globally: two shops
+      // may each sell the same manufacturer's barcode.
+      `CREATE UNIQUE INDEX products_sku_per_business
+         ON products (business_id, sku) WHERE sku IS NOT NULL`,
+      `CREATE UNIQUE INDEX products_barcode_per_business
+         ON products (business_id, barcode) WHERE barcode IS NOT NULL`,
+      // Product search must be fast on cheap hardware (§46).
+      `CREATE INDEX products_by_business ON products (business_id, name)`,
+
+      `CREATE TABLE inventory_movements (
+         id                 TEXT    PRIMARY KEY,
+         business_id        TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         branch_id          TEXT    REFERENCES branches (id) ON DELETE RESTRICT,
+         product_id         TEXT    NOT NULL REFERENCES products (id) ON DELETE RESTRICT,
+         type               TEXT    NOT NULL
+                                    CHECK (type IN ('PURCHASE', 'SALE', 'SALE_RETURN',
+                                                    'PURCHASE_RETURN', 'DAMAGE', 'ADJUSTMENT',
+                                                    'STOCK_COUNT', 'TRANSFER_OUT', 'TRANSFER_IN',
+                                                    'OPENING_BALANCE')),
+         -- Signed thousandths: positive adds stock, negative removes it, so
+         -- summing the ledger is plain addition.
+         quantity           INTEGER NOT NULL CHECK (quantity <> 0),
+         unit_cost_minor    INTEGER CHECK (unit_cost_minor IS NULL OR unit_cost_minor >= 0),
+         unit_cost_currency TEXT,
+         reference_kind     TEXT,
+         reference_id       TEXT,
+         reason             TEXT,
+         user_id            TEXT    NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+         device_id          TEXT    NOT NULL REFERENCES devices (id) ON DELETE RESTRICT,
+         -- When the stock actually moved. On a device offline for days that is
+         -- days ago, and reports slice on it.
+         occurred_at        TEXT    NOT NULL,
+         -- When this row was written. Deliberately a separate column.
+         recorded_at        TEXT    NOT NULL,
+
+         -- A sign contradicting the type is a mistake caught here rather than
+         -- as an inexplicable stock level weeks later. Corrections go either
+         -- way, because a count can find more or less than the ledger says.
+         CHECK (
+           (type IN ('PURCHASE', 'SALE_RETURN', 'TRANSFER_IN', 'OPENING_BALANCE') AND quantity > 0)
+           OR (type IN ('SALE', 'PURCHASE_RETURN', 'DAMAGE', 'TRANSFER_OUT') AND quantity < 0)
+           OR type IN ('ADJUSTMENT', 'STOCK_COUNT')
+         ),
+         -- Corrections and write-offs are where stock changes with no sale or
+         -- delivery to explain it.
+         CHECK (type NOT IN ('ADJUSTMENT', 'STOCK_COUNT', 'DAMAGE')
+                OR length(trim(coalesce(reason, ''))) > 0),
+         CHECK (type NOT IN ('PURCHASE', 'SALE', 'SALE_RETURN', 'PURCHASE_RETURN',
+                             'TRANSFER_IN', 'TRANSFER_OUT')
+                OR (reference_kind IS NOT NULL AND reference_id IS NOT NULL)),
+         CHECK ((reference_kind IS NULL) = (reference_id IS NULL)),
+         CHECK ((unit_cost_minor IS NULL) = (unit_cost_currency IS NULL))
+       ) STRICT`,
+
+      // Deriving stock is the query this table exists to serve.
+      `CREATE INDEX inventory_movements_for_stock
+         ON inventory_movements (business_id, product_id, occurred_at)`,
+
+      // The ledger is append-only, enforced here as it is on the server. The
+      // repository offers no way to edit a movement, but a future screen, a
+      // migration, or a support build could reach the table directly, and a
+      // correction must be another movement (§41, ADR-009).
+      `CREATE TRIGGER inventory_movements_no_update
+         BEFORE UPDATE ON inventory_movements
+       BEGIN
+         SELECT RAISE(ABORT, 'inventory_movements is append-only: record a correcting movement');
+       END`,
+      `CREATE TRIGGER inventory_movements_no_delete
+         BEFORE DELETE ON inventory_movements
+       BEGIN
+         SELECT RAISE(ABORT, 'inventory_movements is append-only: record a correcting movement');
+       END`,
+    ],
+  },
 ];
 
 /** The version the code in this build expects. */
