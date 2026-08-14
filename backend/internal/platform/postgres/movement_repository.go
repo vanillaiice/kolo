@@ -37,6 +37,30 @@ const movementColumns = `id, business_id, branch_id, product_id, type, quantity,
 	unit_cost_minor, unit_cost_currency, reference_kind, reference_id, reason,
 	user_id, device_id, occurred_at, recorded_at`
 
+// movementInsert appends one row to the ledger.
+//
+// There is exactly one of these, shared by every path that writes a movement —
+// a single append, a batch, and a sync event applying one. A second copy would
+// be a second place to forget a column.
+const movementInsert = `
+	INSERT INTO inventory_movements (` + movementColumns + `)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+
+// movementValues lays a movement out in the order movementInsert expects.
+func movementValues(movement *inventory.Movement) []any {
+	snapshot := movement.Snapshot()
+	cost, currency := optionalCost(snapshot.UnitCost)
+	referenceKind, referenceID := optionalReference(snapshot.Reference)
+
+	return []any{
+		snapshot.ID.ID(), snapshot.BusinessID.ID(), optionalBranch(snapshot.BranchID),
+		snapshot.ProductID.ID(), string(snapshot.Type), snapshot.Quantity.Thousandths(),
+		cost, currency, referenceKind, referenceID, optionalText(snapshot.Reason),
+		snapshot.UserID.ID(), snapshot.DeviceID.ID(),
+		snapshot.OccurredAt, snapshot.RecordedAt,
+	}
+}
+
 // Append records a movement.
 func (r *MovementRepository) Append(
 	ctx context.Context, scope business.Scope, movement *inventory.Movement,
@@ -49,21 +73,7 @@ func (r *MovementRepository) Append(
 		return err
 	}
 
-	cost, currency := optionalCost(snapshot.UnitCost)
-	referenceKind, referenceID := optionalReference(snapshot.Reference)
-
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO inventory_movements (`+movementColumns+`)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-		snapshot.ID.ID(), snapshot.BusinessID.ID(), optionalBranch(snapshot.BranchID),
-		snapshot.ProductID.ID(), string(snapshot.Type), snapshot.Quantity.Thousandths(),
-		cost, currency, referenceKind, referenceID, optionalText(snapshot.Reason),
-		snapshot.UserID.ID(), snapshot.DeviceID.ID(),
-		snapshot.OccurredAt, snapshot.RecordedAt)
-	if err != nil {
-		return wrapWrite("appending movement", err)
-	}
-	return nil
+	return insertMovement(ctx, r.pool, movement)
 }
 
 // AppendAll records several movements in one transaction.
@@ -92,16 +102,7 @@ func (r *MovementRepository) AppendAll(
 			return err
 		}
 
-		cost, currency := optionalCost(snapshot.UnitCost)
-		referenceKind, referenceID := optionalReference(snapshot.Reference)
-		batch.Queue(`
-			INSERT INTO inventory_movements (`+movementColumns+`)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-			snapshot.ID.ID(), snapshot.BusinessID.ID(), optionalBranch(snapshot.BranchID),
-			snapshot.ProductID.ID(), string(snapshot.Type), snapshot.Quantity.Thousandths(),
-			cost, currency, referenceKind, referenceID, optionalText(snapshot.Reason),
-			snapshot.UserID.ID(), snapshot.DeviceID.ID(),
-			snapshot.OccurredAt, snapshot.RecordedAt)
+		batch.Queue(movementInsert, movementValues(movement)...)
 	}
 
 	transaction, err := r.pool.Begin(ctx)

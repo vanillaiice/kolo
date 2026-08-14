@@ -156,3 +156,11 @@ Roles (OWNER, MANAGER, CASHIER, INVENTORY, ACCOUNTANT) resolve to granular, conf
 ## Working style expected by the spec
 
 Inspect existing architecture and files before changing them, and prefer the smallest appropriate domain. Do not introduce a new database, backend framework, state-management architecture, sync strategy, or auth system without explicit approval. Significant architectural decisions get recorded as ADRs under `docs/adr/`.
+
+### Applying events
+
+A pushed event is **recorded and applied in one transaction** (`SyncRepository.RecordWithMovements`). Recording without applying is the failure mode to watch for: the device is told "accepted", stops resending, and the stock never lands — undetectable afterwards, since the log says the event arrived. Any new applied event type must extend that transaction, never add a second write beside it.
+
+Payload structs live in `app/syncing` (`StockMovedPayload`), not in `postgres` — they are the wire contract, and their JSON names are a protocol version. A movement's tenant, branch, device, and user come from the authenticated envelope; only the movement's own ID comes from the payload, because that ID is what makes a replay a duplicate.
+
+Two deliberately opposite forward-compatibility rules: an **unknown event type** is recorded and relayed untouched (never strand a newer client's backlog), while an **unknown field inside a payload this build applies** is rejected (`DisallowUnknownFields`) — ignoring it could half-apply a fact and report success.

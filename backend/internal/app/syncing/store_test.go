@@ -9,6 +9,7 @@ import (
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	domainsync "github.com/vanillaiice/kolo/backend/internal/domain/sync"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
 )
@@ -33,14 +34,27 @@ type fakeStore struct {
 	// batch cap is applied before the store is reached.
 	lastLimit int
 
+	// movements holds what each applied event moved, so a test can check the
+	// service applied an event rather than merely filing it.
+	movements map[domainsync.EventID][]*inventory.Movement
+	// appliedIDs is every movement identifier the ledger holds, standing in for
+	// the real table's primary key.
+	appliedIDs map[inventory.MovementID]bool
+
 	failRecord       bool
 	failLatest       bool
 	failSince        bool
 	refuseReferences bool
+	// failApply makes the write of the movements fail while the event itself
+	// would have succeeded — the split that must never leave the event stored.
+	failApply bool
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{}
+	return &fakeStore{
+		movements:  make(map[domainsync.EventID][]*inventory.Movement),
+		appliedIDs: make(map[inventory.MovementID]bool),
+	}
 }
 
 var errStoreUnavailable = errors.New("the store is unavailable")
@@ -73,6 +87,72 @@ func (f *fakeStore) Record(
 	f.sequence++
 	f.events = append(f.events, envelope)
 	return postgres.Recorded, nil
+}
+
+// RecordWithMovements files an event and its movements together, or neither.
+//
+// The real repository gets that from a transaction. This fake gets it from
+// checking everything before it writes anything, which is the same guarantee by
+// a cruder route — and it is the guarantee the service is entitled to assume.
+func (f *fakeStore) RecordWithMovements(
+	_ context.Context, scope business.Scope, event *domainsync.Event, movements []*inventory.Movement,
+) (postgres.RecordOutcome, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.failRecord {
+		return postgres.Recorded, errStoreUnavailable
+	}
+	if f.refuseReferences {
+		return postgres.Recorded, &pgconn.PgError{Code: "23503", ConstraintName: "inventory_movements_product_id_fkey"}
+	}
+
+	envelope := event.Envelope()
+	if err := scope.Guard(envelope.BusinessID, business.BranchID{}); err != nil {
+		return postgres.Recorded, err
+	}
+	for _, existing := range f.events {
+		if existing.ID == envelope.ID {
+			return postgres.AlreadyRecorded, nil
+		}
+	}
+
+	for _, movement := range movements {
+		snapshot := movement.Snapshot()
+		if err := scope.Guard(snapshot.BusinessID, snapshot.BranchID); err != nil {
+			return postgres.Recorded, err
+		}
+		if f.appliedIDs[snapshot.ID] {
+			return postgres.Recorded, &pgconn.PgError{Code: "23505", ConstraintName: "inventory_movements_pkey"}
+		}
+	}
+	if f.failApply {
+		// Nothing above was written, which is the point: the caller sees a
+		// failure and the event is not in the log.
+		return postgres.Recorded, errStoreUnavailable
+	}
+
+	for _, movement := range movements {
+		f.appliedIDs[movement.Snapshot().ID] = true
+	}
+	f.sequence++
+	f.events = append(f.events, envelope)
+	f.movements[envelope.ID] = movements
+	return postgres.Recorded, nil
+}
+
+// applied reports how many movements an event was recorded as having moved.
+func (f *fakeStore) applied(eventID domainsync.EventID) []*inventory.Movement {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.movements[eventID]
+}
+
+// appliedTotal counts every movement in the ledger.
+func (f *fakeStore) appliedTotal() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.appliedIDs)
 }
 
 func (f *fakeStore) Reject(

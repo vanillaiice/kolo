@@ -346,3 +346,17 @@ func IsForeignKeyViolation(err error) bool {
 	}
 	return pgErr.Code == "23503" || pgErr.Code == "23001"
 }
+
+// IsUniqueViolation reports whether an error is the database refusing a
+// duplicate key.
+//
+// For an applied event this means the ledger already holds a movement with that
+// identifier. The sync service treats it as a rejection of the one event: it is
+// a client that reused an identifier, and resending will not change the answer.
+func IsUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == "23505"
+}

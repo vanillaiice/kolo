@@ -19,10 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sync"
+	"github.com/vanillaiice/kolo/backend/internal/kernel/clock"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
 )
 
@@ -56,6 +59,10 @@ const (
 // code that uses it (ADR-005).
 type EventStore interface {
 	Record(ctx context.Context, scope business.Scope, event *sync.Event) (postgres.RecordOutcome, error)
+	// RecordWithMovements stores an event and applies its stock movements in
+	// one transaction. Recording without applying would tell the device the
+	// event landed while the stock it recorded silently never arrived.
+	RecordWithMovements(ctx context.Context, scope business.Scope, event *sync.Event, movements []*inventory.Movement) (postgres.RecordOutcome, error)
 	Reject(ctx context.Context, scope business.Scope, envelope sync.Envelope, reason string) (postgres.RecordOutcome, error)
 	Since(ctx context.Context, scope business.Scope, cursor int64, excludeDevice devices.ID, limit int) ([]postgres.StoredEvent, error)
 	LatestSequence(ctx context.Context, scope business.Scope) (int64, error)
@@ -65,13 +72,22 @@ type EventStore interface {
 type Service struct {
 	events EventStore
 	logger *slog.Logger
+	clock  clock.Clock
 }
+
+// now is when the server learned of something, which is distinct from when it
+// happened on the device (§7). A backlog from a week offline is recorded now and
+// occurred then.
+func (s *Service) now() time.Time { return s.clock.Now() }
 
 // Options configures a Service.
 type Options struct {
 	// Logger receives notices about events the server refused. Defaults to the
 	// standard logger.
 	Logger *slog.Logger
+	// Clock supplies the time an event was recorded. Defaults to the system
+	// clock; a test supplies a fixed one.
+	Clock clock.Clock
 }
 
 // NewService returns a service backed by the given store.
@@ -80,7 +96,11 @@ func NewService(events EventStore, options Options) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{events: events, logger: logger}
+	timepiece := options.Clock
+	if timepiece == nil {
+		timepiece = clock.System{}
+	}
+	return &Service{events: events, logger: logger, clock: timepiece}
 }
 
 // Status says what became of one pushed event.
@@ -205,13 +225,38 @@ func (s *Service) handle(ctx context.Context, request PushRequest, envelope sync
 		return s.reject(ctx, request.Scope, envelope, err.Error())
 	}
 
-	outcome, err := s.events.Record(ctx, request.Scope, event)
+	// An event is not merely filed, it is applied. A STOCK_MOVED that were only
+	// logged would leave the server's ledger disagreeing with the device that
+	// sent it, and §7 says stock is the sum of movements — so the movements have
+	// to be there.
+	//
+	// An event type this build does not apply is still recorded and still handed
+	// to other devices. It is a real event, and refusing it would strand a
+	// device on a newer client with a backlog it can never clear.
+	var outcome postgres.RecordOutcome
+	if envelope.Type == sync.StockMoved {
+		movements, decodeErr := stockMovements(request.Scope, envelope, s.now())
+		if decodeErr != nil {
+			// The payload is wrong and resending will not make it right.
+			return s.reject(ctx, request.Scope, envelope, decodeErr.Error())
+		}
+		outcome, err = s.events.RecordWithMovements(ctx, request.Scope, event, movements)
+	} else {
+		outcome, err = s.events.Record(ctx, request.Scope, event)
+	}
 	if err != nil {
 		// A reference the database refuses — a user who does not exist here —
 		// is this event's problem, not the batch's.
 		if postgres.IsForeignKeyViolation(err) {
 			return s.reject(ctx, request.Scope, envelope,
-				"the event names a user or device this business does not have")
+				"the event names a user, device, or product this business does not have")
+		}
+		// A movement identifier the ledger already holds means this event's
+		// effects are already in place under a different event — a client bug
+		// rather than a transient fault, and resending will not clear it.
+		if postgres.IsUniqueViolation(err) {
+			return s.reject(ctx, request.Scope, envelope,
+				"the event reuses a movement identifier the ledger already holds")
 		}
 		// Anything else is the server's fault. The device should retry, so this
 		// is reported as unsettled rather than rejected.

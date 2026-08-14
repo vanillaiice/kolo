@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sync"
+	"github.com/vanillaiice/kolo/backend/internal/kernel/id"
 )
 
 // These drive sync over real HTTP, against a real database, with two devices —
@@ -53,10 +55,28 @@ func (h *harness) event(sequence int64) wireEvent {
 		EventID:    sync.NewEventID().String(),
 		UserID:     h.user.ID().String(),
 		Type:       string(sync.StockMoved),
-		Payload:    json.RawMessage(`{"movements":[{"product_id":"abc","quantity":-3000}]}`),
+		Payload:    h.stockPayload(),
 		OccurredAt: registeredAt,
 		Sequence:   sequence,
 	}
+}
+
+// stockPayload is three units sold, which the server records and applies.
+func (h *harness) stockPayload() json.RawMessage {
+	encoded, err := json.Marshal(map[string]any{
+		"movements": []map[string]any{{
+			"id":             inventory.NewMovementID().String(),
+			"product_id":     h.product.String(),
+			"type":           string(inventory.Sale),
+			"quantity":       -3000,
+			"reference_kind": "SALE",
+			"reference_id":   id.New().String(),
+		}},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return encoded
 }
 
 // loginOnAnotherDevice registers a second installation, which is how the same
@@ -394,5 +414,33 @@ func TestAnEmptyPushIsAccepted(t *testing.T) {
 	pushed := h.push(t, till)
 	if len(pushed.Results) != 0 {
 		t.Errorf("got %d results, want none", len(pushed.Results))
+	}
+}
+
+// The whole point, end to end: a device pushes a sale over HTTP and the
+// server's stock goes down. Before this, an event was filed and the ledger was
+// left disagreeing with the device that sent it.
+func TestPushingASaleMovesServerStock(t *testing.T) {
+	h := newHarness(t)
+	token := h.login(t)
+
+	first, second := h.event(1), h.event(2)
+	response := h.push(t, token, first, second)
+	if response.Accepted != 2 {
+		t.Fatalf("accepted %d of 2 events", response.Accepted)
+	}
+
+	// Six units sold across two events, so the shelf is six down. It reads as
+	// negative because nothing was ever received into this ledger — which is the
+	// honest answer, not a bug (§29).
+	if got := h.stock(t); got != -6_000 {
+		t.Errorf("stock = %d thousandths, want -6000", got)
+	}
+
+	// And the very same events again change nothing. This has to resend the
+	// identical envelopes — a fresh one would be a different sale, not a replay.
+	h.push(t, token, first, second)
+	if got := h.stock(t); got != -6_000 {
+		t.Errorf("stock = %d after a resend, want it unchanged", got)
 	}
 }

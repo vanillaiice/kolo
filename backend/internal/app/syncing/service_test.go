@@ -12,11 +12,21 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/app/syncing"
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
+	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sync"
 	"github.com/vanillaiice/kolo/backend/internal/domain/users"
+	"github.com/vanillaiice/kolo/backend/internal/kernel/clock"
+	"github.com/vanillaiice/kolo/backend/internal/kernel/id"
 )
 
-var occurredAt = time.Date(2026, 8, 14, 9, 30, 0, 0, time.UTC)
+var (
+	// occurredAt is when a movement happened on the device, and recordedAt is
+	// when the server learned of it — an hour later, as a device syncing after
+	// a gap does (§45).
+	occurredAt = time.Date(2026, 8, 14, 9, 30, 0, 0, time.UTC)
+	recordedAt = time.Date(2026, 8, 14, 10, 30, 0, 0, time.UTC)
+)
 
 type fixture struct {
 	service *syncing.Service
@@ -38,6 +48,7 @@ func newFixture(t *testing.T) *fixture {
 	return &fixture{
 		service: syncing.NewService(store, syncing.Options{
 			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Clock:  clock.NewFixed(recordedAt),
 		}),
 		store:  store,
 		ctx:    context.Background(),
@@ -49,6 +60,8 @@ func newFixture(t *testing.T) *fixture {
 	}
 }
 
+// envelope is an ordinary event: one sale of one unit, which the service will
+// apply as well as record.
 func (f *fixture) envelope(sequence int64) sync.Envelope {
 	return sync.Envelope{
 		ID:             sync.NewEventID(),
@@ -56,10 +69,59 @@ func (f *fixture) envelope(sequence int64) sync.Envelope {
 		DeviceID:       f.till,
 		UserID:         f.user,
 		Type:           sync.StockMoved,
-		Payload:        json.RawMessage(`{"movements":[]}`),
+		Payload:        stockPayload(movementLine{}),
 		OccurredAt:     occurredAt,
 		DeviceSequence: sequence,
 	}
+}
+
+// movementLine describes one movement for a test payload. The zero value is a
+// sale of one unit of a fresh product, so a test states only what it cares
+// about. The quantity is negative because a sale removes stock (§7), which the
+// domain insists on.
+type movementLine struct {
+	id        string
+	productID string
+	kind      string
+	quantity  int64
+	reference string
+}
+
+func stockPayload(lines ...movementLine) json.RawMessage {
+	movements := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		if line.id == "" {
+			line.id = inventory.NewMovementID().String()
+		}
+		if line.productID == "" {
+			line.productID = products.NewID().String()
+		}
+		if line.kind == "" {
+			line.kind = string(inventory.Sale)
+		}
+		if line.quantity == 0 {
+			line.quantity = -1000
+		}
+		if line.reference == "" {
+			line.reference = id.New().String()
+		}
+		// A sale's movement must name the sale that caused it, so stock stays
+		// traceable to a business event (§40).
+		movements = append(movements, map[string]any{
+			"id":             line.id,
+			"product_id":     line.productID,
+			"type":           line.kind,
+			"quantity":       line.quantity,
+			"reference_kind": "SALE",
+			"reference_id":   line.reference,
+		})
+	}
+
+	encoded, err := json.Marshal(map[string]any{"movements": movements})
+	if err != nil {
+		panic(err)
+	}
+	return encoded
 }
 
 func (f *fixture) push(t *testing.T, events ...sync.Envelope) syncing.PushResponse {

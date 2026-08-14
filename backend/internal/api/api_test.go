@@ -18,6 +18,7 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/auth"
 	"github.com/vanillaiice/kolo/backend/internal/domain/authz"
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
+	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/users"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/phone"
@@ -43,6 +44,23 @@ type harness struct {
 	user   *users.User
 	number phone.Number
 	ctx    context.Context
+	// product is a real product to move stock against, since an applied event
+	// writes into the ledger and the ledger references products.
+	product products.ID
+	// movements reads the ledger back, so a test can check an event was applied
+	// and not merely filed.
+	movements *postgres.MovementRepository
+}
+
+// stock reports the product's stock in thousandths, derived from movements.
+func (h *harness) stock(t *testing.T) int64 {
+	t.Helper()
+
+	level, err := h.movements.StockOf(h.ctx, business.MustNewScope(h.tenant), h.product)
+	if err != nil {
+		t.Fatalf("StockOf: %v", err)
+	}
+	return level.OnHand.Thousandths()
 }
 
 func newHarness(t *testing.T) *harness {
@@ -56,6 +74,7 @@ func newHarness(t *testing.T) *harness {
 	credentials := postgres.NewCredentialRepository(pool)
 	deviceRepo := postgres.NewDeviceRepository(pool)
 	sessions := postgres.NewSessionRepository(pool)
+	productRepo := postgres.NewProductRepository(pool)
 
 	tenant, err := business.New(business.NewID(), "Boutique Chez Jean", money.XAF, registeredAt)
 	if err != nil {
@@ -97,7 +116,28 @@ func newHarness(t *testing.T) *harness {
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 
-	return &harness{server: server, tenant: tenant.ID(), user: user, number: number, ctx: ctx}
+	product, err := products.New(products.Snapshot{
+		ID:            products.NewID(),
+		BusinessID:    tenant.ID(),
+		Name:          "Sucre 1kg",
+		Unit:          "paquet",
+		PurchasePrice: money.FromXAF(700),
+		SellingPrice:  money.FromXAF(900),
+		CreatedAt:     registeredAt,
+		UpdatedAt:     registeredAt,
+	})
+	if err != nil {
+		t.Fatalf("products.New: %v", err)
+	}
+	if err := productRepo.Create(ctx, scope, product); err != nil {
+		t.Fatalf("creating the product: %v", err)
+	}
+
+	return &harness{
+		movements: postgres.NewMovementRepository(pool),
+		server:    server, tenant: tenant.ID(), user: user,
+		number: number, ctx: ctx, product: product.ID(),
+	}
 }
 
 func (h *harness) post(t *testing.T, path string, body any, token string) *http.Response {
