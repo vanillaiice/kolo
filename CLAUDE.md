@@ -24,6 +24,10 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `auth` — proves who a user is (ADR-012). `PINHash` (bcrypt, slow, for a low-entropy secret), `Token`/`TokenHash` (32 random bytes, SHA-256, fast — checked on every request), and `Session`, bound to one user/business/device and renewed on sync
 - `devices` — an installation of the app (§28): its business, optional branch, label, and platform. A session binds to one, and an audit record names one. Its sync-specific state arrives with the sync phase
 
+`backend/internal/app/` — application services, between HTTP and the domain (ADR-005):
+
+- `authn` — login, authenticate, logout. Owns what a failure reveals: an unknown number and a wrong PIN are the same error and cost the same time; a suspended account is distinguished only *after* the PIN is right
+
 `backend/internal/platform/postgres/` — the driver edge (ADR-013). pgx v5, goose migrations embedded from `backend/migrations/`, and repositories that take a `business.Scope` bound into the query. `pgtest` gives tests a migrated database. Domain types cross into driver types here and nowhere else.
 
 A record belonging to another tenant is reported as **not found**, never as forbidden — saying "you may not see this" confirms it exists to someone who may not know of it.
