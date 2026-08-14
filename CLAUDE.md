@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 KOLO is an offline-first business management platform (inventory, POS, customer credit, cash, reports) for small and medium businesses in Cameroon.
 
-Progress against the Foundation phase (spec §51): project structure, authentication, the business/tenant model, the user model, PostgreSQL, and migrations are done. Still to come: the SQLite client database, the rest of the repositories, the HTTP API, and the React Native shell. No client code exists yet.
+Progress against the Foundation phase (spec §51): project structure, authentication, the business/tenant model, the user model, PostgreSQL, migrations, and the basic API are done — `cmd/api` serves login, logout, and `/auth/me` end to end. Still to come: the SQLite client database and the React Native shell. No client code exists yet.
 
 `backend/internal/kernel/` — primitives shared by every domain:
 
@@ -27,6 +27,10 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 `backend/internal/app/` — application services, between HTTP and the domain (ADR-005):
 
 - `authn` — login, authenticate, logout. Owns what a failure reveals: an unknown number and a wrong PIN are the same error and cost the same time; a suspended account is distinguished only *after* the PIN is right
+
+`backend/internal/api/` — the HTTP edge (§35). Stdlib `net/http` routing under `/api/v1`, one JSON error shape with stable machine-readable codes, and `RequireAuthentication`/`RequirePermission` middleware. `classify` is the single place errors become statuses. An internal error never echoes its cause to a client.
+
+`backend/cmd/api/` — the binary: read config from the environment, connect, migrate, serve, drain on SIGTERM.
 
 `backend/internal/platform/postgres/` — the driver edge (ADR-013). pgx v5, goose migrations embedded from `backend/migrations/`, and repositories that take a `business.Scope` bound into the query. `pgtest` gives tests a migrated database. Domain types cross into driver types here and nowhere else.
 
