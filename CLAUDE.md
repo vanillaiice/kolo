@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-KOLO is an offline-first business management platform (inventory, POS, customer credit, cash, reports) for small and medium businesses in Cameroon. It is early: the monorepo skeleton (spec §52), the ADRs (spec §55), and the first backend domains exist. There is no client, no API, no repositories, and no database code yet.
+KOLO is an offline-first business management platform (inventory, POS, customer credit, cash, reports) for small and medium businesses in Cameroon.
+
+Progress against the Foundation phase (spec §51): project structure, authentication, the business/tenant model, the user model, PostgreSQL, and migrations are done. Still to come: the SQLite client database, the rest of the repositories, the HTTP API, and the React Native shell. No client code exists yet.
 
 `backend/internal/kernel/` — primitives shared by every domain:
 
@@ -35,10 +37,14 @@ Entities keep their fields unexported behind accessors and cross the persistence
 Run from the repository root:
 
 ```sh
-make check          # fmt + lint + test
-make test           # go test ./... -race -cover
-make lint           # go vet + gofmt check
-make fuzz-backend   # run every fuzz target (FUZZTIME=30s by default)
+make check            # fmt + lint + test
+make test             # unit tests; integration tests skip without a database
+make test-integration # start PostgreSQL and run every test against it
+make lint             # go vet + gofmt check
+make fuzz-backend     # run every fuzz target (FUZZTIME=30s by default)
+make db-up            # start the local PostgreSQL (port 5433)
+make db-down          # stop it, keeping the data
+make db-reset         # stop it and discard the data
 ```
 
 Backend-only, from `backend/`: `go test ./... -race -cover`, `go vet ./...`, `gofmt -l .`.
