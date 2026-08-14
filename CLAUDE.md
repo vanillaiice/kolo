@@ -25,10 +25,12 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `auth` — proves who a user is (ADR-012). `PINHash` (bcrypt, slow, for a low-entropy secret), `Token`/`TokenHash` (32 random bytes, SHA-256, fast — checked on every request), and `Session`, bound to one user/business/device and renewed on sync
 - `inventory` — the stock ledger (§7, ADR-009). **Stock is never stored; it is the sum of append-only movements.** Two devices selling the last unit offline both stand, and the total goes to −1 — a true statement, surfaced rather than hidden
 - `products` — what a business sells (§6). Only a name, unit, and selling price are required; SKU, barcode, category, brand, and purchase price are filled in as the business learns them. Carries **no stock level** — that is the ledger's job
+- `sync` — what devices send each other (§26). Events, not state: two devices pushing "three were sold" lose nothing, while two pushing "stock is 47" must lose one
 - `devices` — an installation of the app (§28): its business, optional branch, label, and platform. A session binds to one, and an audit record names one. Its sync-specific state arrives with the sync phase
 
 `backend/internal/app/` — application services, between HTTP and the domain (ADR-005):
 
+- `syncing` — push and pull (§36). Owns what happens to an event the server cannot use: a replay is a success, a bad event fails alone, a rejection is kept
 - `authn` — login, authenticate, logout. Owns what a failure reveals: an unknown number and a wrong PIN are the same error and cost the same time; a suspended account is distinguished only *after* the PIN is right
 
 `apps/mobile/src/data/` — the client's SQLite layer (ADR-002, ADR-014):

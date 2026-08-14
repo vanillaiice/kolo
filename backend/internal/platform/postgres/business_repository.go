@@ -275,13 +275,16 @@ func wrapWrite(operation string, err error) error {
 			checkViolation      = "23514"
 		)
 		switch pgErr.Code {
-		case uniqueViolation:
-			return fmt.Errorf("%w: %s: %s", ErrConflict, operation, pgErr.ConstraintName)
-		case foreignKeyViolation, restrictViolation, checkViolation:
+		case uniqueViolation, foreignKeyViolation, restrictViolation, checkViolation:
 			// A constraint the domain should have caught first. Reporting it as
 			// a conflict rather than a generic failure tells the caller the
 			// input was wrong, not the database.
-			return fmt.Errorf("%w: %s: %s", ErrConflict, operation, pgErr.ConstraintName)
+			//
+			// The driver's error is wrapped as well as the sentinel, so a caller
+			// that needs to tell one constraint failure from another — the sync
+			// service turns a bad reference into a single rejected event rather
+			// than a failed batch — can still reach it with errors.As.
+			return fmt.Errorf("%w: %s: %s: %w", ErrConflict, operation, pgErr.ConstraintName, err)
 		}
 	}
 	return fmt.Errorf("%w: %s: %w", ErrQuery, operation, err)
