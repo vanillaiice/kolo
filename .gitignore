@@ -29,3 +29,6 @@ apps/mobile/ios/build/
 .DS_Store
 .idea/
 .vscode/
+
+# Client build output
+apps/mobile/dist/

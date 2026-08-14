@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 KOLO is an offline-first business management platform (inventory, POS, customer credit, cash, reports) for small and medium businesses in Cameroon.
 
-Progress against the Foundation phase (spec §51): project structure, authentication, the business/tenant model, the user model, PostgreSQL, migrations, and the basic API are done — `cmd/api` serves login, logout, and `/auth/me` end to end. Still to come: the SQLite client database and the React Native shell. No client code exists yet.
+Progress against the Foundation phase (spec §51): project structure, authentication, the business/tenant model, the user model, PostgreSQL, migrations, the basic API, and the client's SQLite layer are done — `cmd/api` serves login, logout, and `/auth/me` end to end. Still to come: the React Native shell (no UI code exists yet).
 
 `backend/internal/kernel/` — primitives shared by every domain:
 
@@ -28,6 +28,13 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 
 - `authn` — login, authenticate, logout. Owns what a failure reveals: an unknown number and a wrong PIN are the same error and cost the same time; a suspended account is distinguished only *after* the PIN is right
 
+`apps/mobile/src/data/` — the client's SQLite layer (ADR-002, ADR-014):
+
+- `database/` — a deliberately narrow driver interface, a `node:sqlite` adapter for tests, and forward-only migrations that catch a device up across any number of versions
+- `sync/outbox.ts` — the queue of events waiting for the server. **A business write and its event commit in one transaction, or neither does.** `enqueue` takes a transaction, not a database, so it cannot be called on its own
+
+There is no UI yet. The data layer is plain TypeScript so it runs under Node against real SQLite; React Native types arrive with the screens.
+
 `backend/internal/api/` — the HTTP edge (§35). Stdlib `net/http` routing under `/api/v1`, one JSON error shape with stable machine-readable codes, and `RequireAuthentication`/`RequirePermission` middleware. `classify` is the single place errors become statuses. An internal error never echoes its cause to a client.
 
 `backend/cmd/api/` — the binary: read config from the environment, connect, migrate, serve, drain on SIGTERM.
@@ -45,8 +52,10 @@ Entities keep their fields unexported behind accessors and cross the persistence
 Run from the repository root:
 
 ```sh
-make check            # fmt + lint + test
+make check            # fmt + lint + test (backend and client)
 make test             # unit tests; integration tests skip without a database
+make test-client      # client tests, against real SQLite via node:sqlite
+make install-client   # npm install for apps/mobile
 make test-integration # start PostgreSQL and run every test against it
 make lint             # go vet + gofmt check
 make fuzz-backend     # run every fuzz target (FUZZTIME=30s by default)
@@ -60,6 +69,8 @@ Backend-only, from `backend/`: `go test ./... -race -cover`, `go vet ./...`, `go
 ### Testing expectations
 
 Tests must pass under `-race`. `kernel/` and `domain/` are held at **100% statement coverage**; `platform/postgres` sits at ~96%, the remainder being driver-error branches that cannot be reached with constants we control. Comprehensiveness is not satisfied by covering the spec's worked examples — those are a floor. Also cover boundary and overflow values, degenerate and malformed input, concurrency, and the invalid zero-value surface of each type. Prefer property-based tests, Go native fuzz targets, and — where a correct answer is independently computable — an oracle built a structurally different way from the implementation (see `money/oracle_test.go`).
+
+The client is tested the same way and for the same reason: `node:sqlite` is real SQLite, so the schema, constraints, and queries are exercised rather than simulated. What that does not cover is the native driver the app loads, which needs a device.
 
 **Repository tests run against a real PostgreSQL, never a mock.** A mock passes just as happily against a repository that forgot its `WHERE business_id = $1`, so it cannot prove the property most worth proving. `make db-up` starts one; `make test-integration` runs against it; plain `make test` skips those tests loudly. Closing the pool is the standard way to exercise "the database went away" paths.
 

@@ -1,5 +1,6 @@
-.PHONY: help check test test-backend test-integration fuzz-backend \
-        lint lint-backend fmt fmt-backend db-up db-down db-reset db-url
+.PHONY: help check test test-backend test-client test-integration fuzz-backend \
+        lint lint-backend lint-client fmt fmt-backend db-up db-down db-reset db-url \
+        install-client
 
 # How long each fuzz target runs under `make fuzz-backend`.
 FUZZTIME ?= 30s
@@ -15,10 +16,16 @@ help: ## Show available targets
 
 check: fmt lint test ## Format, lint, and test everything
 
-test: test-backend ## Run unit tests (integration tests skip without a database)
+test: test-backend test-client ## Run unit tests (integration tests skip without a database)
 
 test-backend: ## Run backend tests with the race detector
 	cd backend && go test ./... -race -cover
+
+test-client: ## Run client tests against a real SQLite via node:sqlite
+	cd apps/mobile && npm test
+
+install-client: ## Install the client's dev dependencies
+	cd apps/mobile && npm install
 
 test-integration: db-up ## Start the database and run every test against it
 	cd backend && KOLO_TEST_DATABASE_URL="$(KOLO_TEST_DATABASE_URL)" go test ./... -race -cover -count=1
@@ -31,7 +38,7 @@ fuzz-backend: ## Run every fuzz target for FUZZTIME each (default 30s)
 		done; \
 	done
 
-lint: lint-backend ## Lint everything
+lint: lint-backend lint-client ## Lint everything
 
 lint-backend: ## Vet the backend and check formatting
 	cd backend && go vet ./...
@@ -39,6 +46,9 @@ lint-backend: ## Vet the backend and check formatting
 	if [ -n "$$unformatted" ]; then \
 		echo "gofmt needed in:"; echo "$$unformatted"; exit 1; \
 	fi
+
+lint-client: ## Typecheck the client
+	cd apps/mobile && npx tsc --noEmit
 
 fmt: fmt-backend ## Format everything
 
