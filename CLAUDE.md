@@ -24,7 +24,7 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `users` — who operates a business, their tenant/branch, and their permissions. Deliberately holds **no credentials**: §5 separates "Authentication" from "Users & Roles", so PINs and tokens live in `auth`, keyed by user ID
 - `auth` — proves who a user is (ADR-012). `PINHash` (bcrypt, slow, for a low-entropy secret), `Token`/`TokenHash` (32 random bytes, SHA-256, fast — checked on every request), and `Session`, bound to one user/business/device and renewed on sync
 - `inventory` — the stock ledger (§7, ADR-009). **Stock is never stored; it is the sum of append-only movements.** Two devices selling the last unit offline both stand, and the total goes to −1 — a true statement, surfaced rather than hidden
-- `products` — product and category identifiers. The entity (§6) is still to come
+- `products` — what a business sells (§6). Only a name, unit, and selling price are required; SKU, barcode, category, brand, and purchase price are filled in as the business learns them. Carries **no stock level** — that is the ledger's job
 - `devices` — an installation of the app (§28): its business, optional branch, label, and platform. A session binds to one, and an audit record names one. Its sync-specific state arrives with the sync phase
 
 `backend/internal/app/` — application services, between HTTP and the domain (ADR-005):
