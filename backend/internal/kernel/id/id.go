@@ -18,9 +18,8 @@
 // itself is the library's job — see ADR-011.
 //
 // Identifiers are immutable once assigned (SPECIFICATION.md §40). Domain
-// packages are expected to define named types over ID — for example
-// `type ProductID id.ID` — so a sale identifier cannot be passed where a
-// product identifier is meant.
+// packages name their identifiers with Typed, so that a sale identifier cannot
+// be passed where a product identifier is meant.
 package id
 
 import (

@@ -4,13 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-KOLO is an offline-first business management platform (inventory, POS, customer credit, cash, reports) for small and medium businesses in Cameroon. It is early: the monorepo skeleton (spec §52), the ADRs (spec §55), and the Go backend's shared kernel exist. There is no client, no API, and no database code yet.
+KOLO is an offline-first business management platform (inventory, POS, customer credit, cash, reports) for small and medium businesses in Cameroon. It is early: the monorepo skeleton (spec §52), the ADRs (spec §55), and the first backend domains exist. There is no client, no API, no repositories, and no database code yet.
 
-What is implemented today lives in `backend/internal/kernel/`:
+`backend/internal/kernel/` — primitives shared by every domain:
 
 - `money` — integer minor units, currency-checked arithmetic, explicit rounding, remainder-preserving allocation
-- `id` — UUIDv7 identifiers via `github.com/google/uuid`, generated offline, sortable by creation time; `id/idtest` gives deterministic identifiers for tests
+- `id` — UUIDv7 via `github.com/google/uuid`, generated offline, sortable by creation time. `id.Typed[Tag]` gives phantom-typed identifiers so a sale ID cannot be passed where a product ID belongs; `id/idtest` gives deterministic identifiers for tests
 - `clock` — injectable UTC time source
+
+`backend/internal/domain/`:
+
+- `authz` — granular permissions, roles, and the configurable role→permission matrix (§38). Effective permissions are role defaults + grants − revocations, revocation last
+- `business` — the tenant. `Business` and `Branch` entities, and `Scope`, which is the required argument that makes tenant isolation structural rather than a filter a caller can forget
+
+Entities keep their fields unexported behind accessors and cross the persistence boundary as a validating `Snapshot`/`Restore` pair, so a repository cannot construct one that skipped validation. Stored data is re-validated on the way in — a record written by an older version or synced from another device is not trusted.
 
 ### Commands
 
