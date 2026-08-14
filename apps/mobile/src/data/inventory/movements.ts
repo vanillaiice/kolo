@@ -307,16 +307,18 @@ function describe(movement: NewMovement): Record<string, unknown> {
     product_id: movement.productId,
     type: movement.type,
     quantity: movement.quantity,
-    user_id: movement.userId,
-    device_id: movement.deviceId,
     occurred_at: movement.occurredAt,
   };
-  if (movement.branchId !== undefined) {
-    described["branch_id"] = movement.branchId;
-  }
-  if (movement.unitCostMinor !== undefined && movement.unitCostCurrency !== undefined) {
+  // No business, branch, device, or user. The server takes all four from the
+  // authenticated envelope, so sending them would at best be ignored and at
+  // worst be a device claiming to write somewhere it may not (ADR-008). The
+  // server refuses a payload carrying a field it does not know, so these are
+  // absent rather than merely unread.
+  if (movement.unitCostMinor !== undefined) {
+    // The amount travels; the currency does not. Everything is XAF (§46), and
+    // a device announcing otherwise would be putting two currencies in one
+    // ledger that nothing adds up.
     described["unit_cost_minor"] = movement.unitCostMinor;
-    described["unit_cost_currency"] = movement.unitCostCurrency;
   }
   if (movement.reference !== undefined) {
     described["reference_kind"] = movement.reference.kind;

@@ -275,6 +275,47 @@ export const MIGRATIONS: readonly Migration[] = [
        END`,
     ],
   },
+
+  {
+    version: 4,
+    name: "the sync inbox",
+    statements: [
+      // Events pulled from other devices, held before they are applied.
+      //
+      // A pull cannot simply apply what it receives and move on. Events arrive
+      // in the order the server learned of them, and a movement can reach this
+      // device before the product it moves — a till selling something the
+      // owner's phone created while both were offline. Applying that fails, and
+      // neither dropping it nor blocking every event behind it is acceptable.
+      //
+      // So an arrival is durable first and applied second. The cursor advances
+      // once the event is safely here, and a deferred event is retried on later
+      // syncs, when whatever it was waiting for has usually arrived.
+      `CREATE TABLE sync_inbox (
+         event_id        TEXT    PRIMARY KEY,
+         business_id     TEXT    NOT NULL,
+         device_id       TEXT    NOT NULL,
+         user_id         TEXT    NOT NULL,
+         type            TEXT    NOT NULL,
+         payload         TEXT    NOT NULL CHECK (json_valid(payload)),
+         occurred_at     TEXT    NOT NULL,
+         -- The server's sequence, which orders events across every device. A
+         -- device's own sequence means nothing here.
+         server_sequence INTEGER NOT NULL,
+         received_at     TEXT    NOT NULL,
+         state           TEXT    NOT NULL DEFAULT 'deferred'
+                                 CHECK (state IN ('deferred', 'applied', 'unusable')),
+         attempts        INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+         last_error      TEXT,
+         applied_at      TEXT,
+
+         CHECK ((state = 'applied') = (applied_at IS NOT NULL))
+       ) STRICT`,
+
+      // Finding what still needs applying is the query this table exists for.
+      `CREATE INDEX sync_inbox_deferred ON sync_inbox (state, server_sequence)`,
+    ],
+  },
 ];
 
 /** The version the code in this build expects. */

@@ -38,6 +38,10 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `database/` — a deliberately narrow driver interface, a `node:sqlite` adapter for tests, and forward-only migrations that catch a device up across any number of versions
 - `sync/outbox.ts` — the queue of events waiting for the server. **A business write and its event commit in one transaction, or neither does.** `enqueue` takes a transaction, not a database, so it cannot be called on its own
 - `inventory/movements.ts` — recording stock on the device. Every write records the movement and queues its event together; the ledger is append-only here too, enforced by SQLite triggers, and stock is derived by SQL sum
+- `sync/inbox.ts` — the mirror of the outbox: events pulled from other devices, **stored durably before they are applied**. An event can arrive before what it depends on (a movement before its product), so arrival advances the cursor and applying is retried on later syncs. One holds what has not left, the other what has not landed
+- `sync/transport.ts` — the HTTP contract plus an implementation. The engine takes the interface, so its failure behaviour is testable without a network
+- `sync/engine.ts` — drains both queues. An event leaves the outbox only when the server says it has it; anything else keeps it queued. A rejection is set aside rather than retried forever, since retrying blocks everything behind it
+- `sync/stock-applier.ts` — applies a pulled `STOCK_MOVED` to the local ledger, `INSERT OR IGNORE` on the movement ID so re-applying cannot double stock
 
 There is no UI yet. The data layer is plain TypeScript so it runs under Node against real SQLite; React Native types arrive with the screens.
 
@@ -164,3 +168,9 @@ A pushed event is **recorded and applied in one transaction** (`SyncRepository.R
 Payload structs live in `app/syncing` (`StockMovedPayload`), not in `postgres` — they are the wire contract, and their JSON names are a protocol version. A movement's tenant, branch, device, and user come from the authenticated envelope; only the movement's own ID comes from the payload, because that ID is what makes a replay a duplicate.
 
 Two deliberately opposite forward-compatibility rules: an **unknown event type** is recorded and relayed untouched (never strand a newer client's backlog), while an **unknown field inside a payload this build applies** is rejected (`DisallowUnknownFields`) — ignoring it could half-apply a fact and report success.
+
+### The client/server payload contract
+
+`StockMovedPayload` in `app/syncing` and `describe()` in the client's `movements.ts` are two halves of one wire format, and nothing but a test holds them together. The server refuses a payload carrying a field it does not know, so a field added to one side and not the other **rejects every event from that client**.
+
+The payload carries no business, branch, device, or user, and no currency: identity comes from the authenticated envelope (ADR-008) and everything is XAF (§46). Only the movement's own ID travels, because that ID is what makes a replay a duplicate.
