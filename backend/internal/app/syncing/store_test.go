@@ -11,6 +11,7 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
+	"github.com/vanillaiice/kolo/backend/internal/domain/sales"
 	domainsync "github.com/vanillaiice/kolo/backend/internal/domain/sync"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
 )
@@ -43,6 +44,10 @@ type fakeStore struct {
 	appliedIDs map[inventory.MovementID]bool
 	// products is the product table, holding whichever edit won.
 	products map[products.ID]*products.Product
+	// sales and salePayments are the sale tables. A sale is immutable, so a
+	// second one under the same identifier is refused as the primary key would.
+	sales        map[sales.ID]*sales.Sale
+	salePayments map[sales.ID][]*sales.Payment
 
 	failRecord       bool
 	failLatest       bool
@@ -55,9 +60,11 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		movements:  make(map[domainsync.EventID][]*inventory.Movement),
-		appliedIDs: make(map[inventory.MovementID]bool),
-		products:   make(map[products.ID]*products.Product),
+		movements:    make(map[domainsync.EventID][]*inventory.Movement),
+		appliedIDs:   make(map[inventory.MovementID]bool),
+		products:     make(map[products.ID]*products.Product),
+		sales:        make(map[sales.ID]*sales.Sale),
+		salePayments: make(map[sales.ID][]*sales.Payment),
 	}
 }
 
@@ -140,6 +147,20 @@ func (f *fakeStore) RecordAndApply(
 	for _, movement := range movements {
 		f.appliedIDs[movement.Snapshot().ID] = true
 	}
+	if effects.Sale != nil {
+		saleID := effects.Sale.ID()
+		if err := scope.Guard(effects.Sale.BusinessID(), business.BranchID{}); err != nil {
+			return postgres.Recorded, err
+		}
+		if _, exists := f.sales[saleID]; exists {
+			// Financial history is immutable: a second sale under the same
+			// identifier is the primary key's answer, not an overwrite (§41).
+			return postgres.Recorded, &pgconn.PgError{Code: "23505", ConstraintName: "sales_pkey"}
+		}
+		f.sales[saleID] = effects.Sale
+		f.salePayments[saleID] = effects.Payments
+	}
+
 	f.sequence++
 	f.events = append(f.events, envelope)
 	f.movements[envelope.ID] = movements
@@ -175,6 +196,20 @@ func (f *fakeStore) product(id products.ID) *products.Product {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.products[id]
+}
+
+// sale returns the sale the store holds, if any.
+func (f *fakeStore) sale(id sales.ID) *sales.Sale {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sales[id]
+}
+
+// paymentsOf returns what was recorded against a sale.
+func (f *fakeStore) paymentsOf(id sales.ID) []*sales.Payment {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.salePayments[id]
 }
 
 // applied reports how many movements an event was recorded as having moved.

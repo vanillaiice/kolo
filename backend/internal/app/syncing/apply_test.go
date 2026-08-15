@@ -261,26 +261,35 @@ func TestAReusedMovementIdentifierIsRejected(t *testing.T) {
 	}
 }
 
-// An event type this build cannot apply is still recorded and still passed on.
-// Refusing it would strand a device on a newer client with a backlog it can
-// never clear.
-func TestAnEventTypeThisBuildCannotApplyIsStillKept(t *testing.T) {
+// An event type this build does not know is refused, and refused on the way in.
+//
+// This is the opposite of how an unknown *field* inside a payload is treated,
+// and deliberately so. A device running ahead of the server must find out that
+// its events are not landing, rather than being told "accepted" and believing
+// its data arrived. The other half of the rule lives in domain/sync: a stored
+// event of an unknown type is still relayed on the way out, so one row an older
+// build accepted cannot fail the pull for every device.
+func TestAnEventTypeThisBuildDoesNotKnowIsRefused(t *testing.T) {
 	f := newFixture(t)
 
 	envelope := f.envelope(1)
-	envelope.Type = sync.SaleCompleted
-	envelope.Payload = json.RawMessage(`{"total_minor":15000}`)
+	envelope.Type = "LOYALTY_POINTS_AWARDED"
+	envelope.Payload = json.RawMessage(`{"points":40}`)
 
-	response := f.push(t, envelope)
-
-	if got := response.Results[0].Status; got != syncing.Accepted {
-		t.Fatalf("Status = %q, want accepted", got)
+	result := f.push(t, envelope).Results[0]
+	if result.Status != syncing.Rejected {
+		t.Fatalf("Status = %q, want rejected", result.Status)
 	}
-	if f.store.recorded() != 1 {
-		t.Error("the event was not recorded")
+	if !result.Settled() {
+		t.Error("the device was left retrying an event the server will never take")
 	}
 	if f.store.appliedTotal() != 0 {
-		t.Error("an event this build cannot apply moved stock anyway")
+		t.Error("an event this build cannot apply changed something")
+	}
+	// It is kept as a rejection rather than dropped, so an operator can see
+	// which devices are ahead of the server.
+	if f.store.rejectedCount() != 1 {
+		t.Error("the refusal was not recorded")
 	}
 }
 

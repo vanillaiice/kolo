@@ -58,7 +58,9 @@ Endpoints: `/auth/login`, `/auth/logout`, `/auth/me`, `/sync/push`, `/sync/pull`
 
 `backend/internal/platform/postgres/` — the driver edge (ADR-013). pgx v5, goose migrations embedded from `backend/migrations/`, and repositories that take a `business.Scope` bound into the query. `pgtest` gives tests a migrated database. Domain types cross into driver types here and nowhere else.
 
-`inventory_movements` is append-only in the database, not just the domain: a trigger refuses UPDATE and DELETE, so a correction has to be another movement even for a migration or a support script. Stock is derived by SQL sum, never stored.
+`inventory_movements`, `sales`, `sale_items`, and `sale_payments` are append-only **in the database**, not just the domain: triggers refuse UPDATE and DELETE, so a correction has to be a compensating transaction even for a migration or a support script. Stock and sale totals are derived, never stored.
+
+`SaleRepository.Record` is §9's fan-out: the sale, its lines, its payments, and the stock it released, in one transaction. Half of it landing describes something that did not happen — money taken for goods still on the shelf, or stock gone with nobody recorded as paying.
 
 A record belonging to another tenant is reported as **not found**, never as forbidden — saying "you may not see this" confirms it exists to someone who may not know of it.
 
@@ -170,11 +172,14 @@ Inspect existing architecture and files before changing them, and prefer the sma
 
 A pushed event is **recorded and applied in one transaction** (`SyncRepository.RecordAndApply`, taking an `Effects`). Recording without applying is the failure mode to watch for: the device is told "accepted", stops resending, and the stock never lands — undetectable afterwards, since the log says the event arrived. A new applied event type adds a field to `Effects` and a write inside that transaction, never a second write beside it.
 
-Applied types so far: `STOCK_MOVED` (append) and `PRODUCT_SAVED` (last-write-wins upsert, ADR-015). Conflict policy is per type and deliberately different — two devices' movements both stand, but only one product edit can.
+Applied types so far: `STOCK_MOVED` (append), `PRODUCT_SAVED` (last-write-wins upsert, ADR-015), and `SALE_COMPLETED` (immutable insert of the whole fan-out). Conflict policy is per type and deliberately different — two devices' movements both stand, but only one product edit can.
 
 Payload structs live in `app/syncing` (`StockMovedPayload`), not in `postgres` — they are the wire contract, and their JSON names are a protocol version. A movement's tenant, branch, device, and user come from the authenticated envelope; only the movement's own ID comes from the payload, because that ID is what makes a replay a duplicate.
 
-Two deliberately opposite forward-compatibility rules: an **unknown event type** is recorded and relayed untouched (never strand a newer client's backlog), while an **unknown field inside a payload this build applies** is rejected (`DisallowUnknownFields`) — ignoring it could half-apply a fact and report success.
+Forward compatibility runs in two directions, and they are opposite on purpose:
+
+- **On the way in**, an unknown event type is **refused** (`sync.Type.Defined`), so a device running ahead of the server finds out rather than being told "accepted" and believing its data arrived. An unknown *field* inside a payload this build applies is refused too (`DisallowUnknownFields`) — ignoring it could half-apply a fact and report success.
+- **On the way out**, a stored event of an unknown type is **relayed untouched** (`sync.Restore`), because refusing to read one row an older build accepted would fail the pull for every device.
 
 ### The client/server payload contract
 

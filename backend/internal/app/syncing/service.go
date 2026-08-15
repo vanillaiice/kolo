@@ -289,6 +289,9 @@ func (s *Service) effectsOf(scope business.Scope, envelope sync.Envelope) (postg
 		}
 		return postgres.Effects{Products: []*products.Product{product}}, nil
 
+	case sync.SaleCompleted:
+		return completedSale(scope, envelope, s.now())
+
 	default:
 		// Recorded and relayed, but not applied.
 		return postgres.Effects{}, nil

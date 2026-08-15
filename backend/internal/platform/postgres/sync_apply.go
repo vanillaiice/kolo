@@ -10,6 +10,7 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
+	"github.com/vanillaiice/kolo/backend/internal/domain/sales"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sync"
 )
 
@@ -24,11 +25,18 @@ type Effects struct {
 	// Products are upserted last-write-wins, since a product is state and only
 	// one edit can win (ADR-015).
 	Products []*products.Product
+	// Sale is a completed sale with its lines. Immutable: a replay is refused
+	// by the primary key rather than overwriting financial history (§41).
+	Sale *sales.Sale
+	// Payments are what was paid against that sale.
+	Payments []*sales.Payment
 }
 
 // IsEmpty reports whether the event changes nothing, which is true of an event
 // type this build records and relays without applying.
-func (e Effects) IsEmpty() bool { return len(e.Movements) == 0 && len(e.Products) == 0 }
+func (e Effects) IsEmpty() bool {
+	return len(e.Movements) == 0 && len(e.Products) == 0 && e.Sale == nil
+}
 
 // RecordAndApply stores an event and everything it changes, in one transaction.
 //
@@ -74,6 +82,23 @@ func (r *SyncRepository) RecordAndApply(
 			return Recorded, err
 		}
 	}
+	if effects.Sale != nil {
+		if err := scope.Guard(effects.Sale.BusinessID(), effects.Sale.BranchID()); err != nil {
+			return Recorded, err
+		}
+	}
+	for i, payment := range effects.Payments {
+		if payment == nil {
+			return Recorded, fmt.Errorf("%w: payment %d is missing", ErrQuery, i)
+		}
+		if err := scope.Guard(payment.BusinessID(), payment.BranchID()); err != nil {
+			return Recorded, err
+		}
+		if effects.Sale == nil || payment.SaleID() != effects.Sale.ID() {
+			return Recorded, fmt.Errorf("%w: payment %s names a sale this event does not carry",
+				ErrQuery, payment.ID())
+		}
+	}
 
 	transaction, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -108,6 +133,19 @@ func (r *SyncRepository) RecordAndApply(
 	for i, product := range effects.Products {
 		if err := upsertProduct(ctx, transaction, product); err != nil {
 			return Recorded, fmt.Errorf("applying product %d of event %s: %w", i, envelope.ID, err)
+		}
+	}
+	// A sale and its payments join the same transaction as the event and the
+	// movements, so §9's fan-out lands whole or not at all — whether it was
+	// recorded here or arrived from a till that has been offline for a week.
+	if effects.Sale != nil {
+		if err := insertSale(ctx, transaction, effects.Sale); err != nil {
+			return Recorded, fmt.Errorf("applying sale of event %s: %w", envelope.ID, err)
+		}
+	}
+	for i, payment := range effects.Payments {
+		if err := insertPayment(ctx, transaction, payment); err != nil {
+			return Recorded, fmt.Errorf("applying payment %d of event %s: %w", i, envelope.ID, err)
 		}
 	}
 
