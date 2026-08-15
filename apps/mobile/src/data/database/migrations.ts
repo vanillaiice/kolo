@@ -336,6 +336,109 @@ export const MIGRATIONS: readonly Migration[] = [
          REFERENCES devices (id) ON DELETE RESTRICT`,
     ],
   },
+
+  {
+    version: 6,
+    name: "sales, their lines and their payments",
+    statements: [
+      `CREATE TABLE sales (
+         id             TEXT    PRIMARY KEY,
+         business_id    TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         branch_id      TEXT    REFERENCES branches (id) ON DELETE RESTRICT,
+         -- Optional: a cash sale at a till names nobody (§12). Required only
+         -- when something is still owed, which the application enforces
+         -- because it needs the payments to know.
+         customer_id    TEXT,
+         -- What the receipt says. For people; the system uses the identifier.
+         number         TEXT    NOT NULL CHECK (length(trim(number)) BETWEEN 1 AND 120),
+         discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
+         currency       TEXT    NOT NULL CHECK (length(currency) = 3),
+         note           TEXT,
+         user_id        TEXT    NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+         device_id      TEXT    NOT NULL REFERENCES devices (id) ON DELETE RESTRICT,
+         -- When the sale happened; on a till offline for days, days ago.
+         occurred_at    TEXT    NOT NULL,
+         -- When the row was written. Reports slice on occurred_at.
+         recorded_at    TEXT    NOT NULL,
+
+         CHECK (recorded_at >= occurred_at)
+       ) STRICT`,
+
+      // A receipt number identifies a sale within one business, not globally.
+      `CREATE UNIQUE INDEX sales_number_per_business ON sales (business_id, number)`,
+      // The query every sales report starts from (§21).
+      `CREATE INDEX sales_by_business_and_time ON sales (business_id, occurred_at DESC)`,
+      `CREATE INDEX sales_by_customer ON sales (business_id, customer_id, occurred_at DESC)
+         WHERE customer_id IS NOT NULL`,
+
+      `CREATE TABLE sale_items (
+         id          TEXT    PRIMARY KEY,
+         sale_id     TEXT    NOT NULL REFERENCES sales (id) ON DELETE RESTRICT,
+         business_id TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         product_id  TEXT    NOT NULL REFERENCES products (id) ON DELETE RESTRICT,
+         -- The product's name as it was when it sold. A receipt reprinted next
+         -- year must show what was charged, and the product will have been
+         -- renamed and repriced by then (§41).
+         name        TEXT    NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 120),
+         unit_price_minor INTEGER NOT NULL CHECK (unit_price_minor >= 0),
+         -- Thousandths, always positive: a negative line would be a refund
+         -- wearing a sale's clothes, and §41 wants that as its own transaction.
+         quantity    INTEGER NOT NULL CHECK (quantity > 0),
+         discount_minor INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
+         tax_rate_basis_points INTEGER NOT NULL DEFAULT 0
+                             CHECK (tax_rate_basis_points BETWEEN 0 AND 10000),
+         -- Null when the business has never recorded what it paid. An honest
+         -- gap: profit is reported only for the lines that have it (§6).
+         unit_cost_minor INTEGER CHECK (unit_cost_minor IS NULL OR unit_cost_minor >= 0),
+         currency    TEXT    NOT NULL CHECK (length(currency) = 3)
+       ) STRICT`,
+
+      `CREATE INDEX sale_items_by_sale ON sale_items (sale_id)`,
+      `CREATE INDEX sale_items_by_product ON sale_items (business_id, product_id)`,
+
+      `CREATE TABLE sale_payments (
+         id          TEXT    PRIMARY KEY,
+         sale_id     TEXT    NOT NULL REFERENCES sales (id) ON DELETE RESTRICT,
+         business_id TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         branch_id   TEXT    REFERENCES branches (id) ON DELETE RESTRICT,
+         -- Where the money went. An account, never a payment type: that is what
+         -- keeps MTN and Orange configurable (§10). The accounts table arrives
+         -- with §17, so this is not yet a foreign key.
+         account_id  TEXT    NOT NULL,
+         amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+         currency    TEXT    NOT NULL CHECK (length(currency) = 3),
+         -- The provider's number: how a Mobile Money payment is found later.
+         reference   TEXT,
+         note        TEXT,
+         user_id     TEXT    NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+         device_id   TEXT    NOT NULL REFERENCES devices (id) ON DELETE RESTRICT,
+         occurred_at TEXT    NOT NULL,
+         recorded_at TEXT    NOT NULL,
+
+         CHECK (recorded_at >= occurred_at)
+       ) STRICT`,
+
+      `CREATE INDEX sale_payments_by_sale ON sale_payments (sale_id)`,
+      `CREATE INDEX sale_payments_by_account
+         ON sale_payments (business_id, account_id, occurred_at)`,
+
+      // Financial history is immutable here as on the server (§41, ADR-007). A
+      // correction is a compensating transaction, and a future screen or a
+      // support build must not be able to reach past that.
+      ...["sales", "sale_items", "sale_payments"].flatMap((table) => [
+        `CREATE TRIGGER ${table}_no_update
+           BEFORE UPDATE ON ${table}
+         BEGIN
+           SELECT RAISE(ABORT, '${table} is immutable: record a compensating transaction');
+         END`,
+        `CREATE TRIGGER ${table}_no_delete
+           BEFORE DELETE ON ${table}
+         BEGIN
+           SELECT RAISE(ABORT, '${table} is immutable: record a compensating transaction');
+         END`,
+      ]),
+    ],
+  },
 ];
 
 /** The version the code in this build expects. */

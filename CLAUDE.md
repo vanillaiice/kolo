@@ -47,6 +47,10 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `sync/stock-applier.ts` — applies a pulled `STOCK_MOVED` to the local ledger, `INSERT OR IGNORE` on the movement ID so re-applying cannot double stock
 - `sync/product-applier.ts` — applies a pulled `PRODUCT_SAVED`, which is what unblocks movements deferred waiting on their product
 - `products/products.ts` — products on the device, with the last-write-wins upsert. A losing edit is a `false` return, never an error
+- `sales/sales.ts` — **the POS fan-out** (§9). `completeSale` writes the sale, its lines, the stock they released, the payments, and the outbox event in one transaction. `totalsOf` is exported so a till shows a running total from *this* arithmetic — a second implementation in the UI is how the screen comes to disagree with the receipt
+- `sync/sale-applier.ts` — applies a pulled `SALE_COMPLETED`, `INSERT OR IGNORE` throughout so a replay cannot double a day's takings
+
+Line totals are `price × quantity / 1000` rounded **half away from zero**, matching the server's `MulRatio(..., RoundHalfUp)` exactly. `Math.round` is wrong here — it breaks ties toward positive infinity, so it would agree today and diverge the moment a negative line existed. A device and a server that round differently disagree by a franc a line and nobody can say which is right.
 
 There is no UI yet. The data layer is plain TypeScript so it runs under Node against real SQLite; React Native types arrive with the screens.
 

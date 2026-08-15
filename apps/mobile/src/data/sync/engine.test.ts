@@ -10,6 +10,7 @@ import { cursor, deferredCount, unusable } from "./inbox.ts";
 import { pending, pendingCount, rejected } from "./outbox.ts";
 import { stockApplier, STOCK_MOVED } from "./stock-applier.ts";
 import { PRODUCT_SAVED, productApplier } from "./product-applier.ts";
+import { SALE_COMPLETED, saleApplier } from "./sale-applier.ts";
 import { productOf } from "../products/products.ts";
 import { TransportError, type IncomingEvent, type PullResult, type PushResult } from "./transport.ts";
 
@@ -67,7 +68,9 @@ function empty(): PullResult {
 let database: Database;
 let transport: FakeTransport;
 
-function newEngine(appliers: readonly EventApplier[] = [stockApplier, productApplier]): SyncEngine {
+function newEngine(
+  appliers: readonly EventApplier[] = [stockApplier, productApplier, saleApplier],
+): SyncEngine {
   return new SyncEngine({
     database,
     transport: transport as never,
@@ -965,3 +968,135 @@ function withUpdatedAt(event: IncomingEvent, at: string): unknown {
   const payload = event.payload as { product: Record<string, unknown> };
   return { product: { ...payload.product, updated_at: at } };
 }
+
+describe("a sale from the other till", () => {
+  /** A completed sale as another device would send it. */
+  function saleEvent(sequence: number, saleId: string): IncomingEvent {
+    return {
+      event_id: `sale-event-${sequence}`,
+      device_id: OTHER_DEVICE,
+      user_id: USER,
+      type: SALE_COMPLETED,
+      payload: {
+        sale: {
+          id: saleId,
+          number: `V-${sequence}`,
+          occurred_at: AT,
+          items: [
+            {
+              id: `${saleId}-line`,
+              product_id: PRODUCT,
+              name: "Riz parfumé 5kg",
+              unit_price_minor: 18_500,
+              quantity: 1_000,
+            },
+          ],
+        },
+        payments: [
+          { id: `${saleId}-pay-1`, account_id: "till", amount_minor: 10_000 },
+          {
+            id: `${saleId}-pay-2`,
+            account_id: "wallet",
+            amount_minor: 8_500,
+            reference: "MP260814.0930.A12345",
+          },
+        ],
+        movements: [
+          {
+            id: `${saleId}-line:stock`,
+            product_id: PRODUCT,
+            type: "SALE",
+            quantity: -1_000,
+            reference_kind: "SALE",
+            reference_id: saleId,
+          },
+        ],
+      },
+      occurred_at: AT,
+      sequence,
+    };
+  }
+
+  function countsOf(): Record<string, unknown> {
+    return database.transaction((tx) => ({
+      sales: tx.get(`SELECT count(*) AS n FROM sales`)?.["n"],
+      items: tx.get(`SELECT count(*) AS n FROM sale_items`)?.["n"],
+      payments: tx.get(`SELECT count(*) AS n FROM sale_payments`)?.["n"],
+    }));
+  }
+
+  it("lands whole: the sale, its lines, its payments, and its stock", async () => {
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [saleEvent(1, "remote-sale")], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.applied, 1);
+    assert.deepEqual(countsOf(), { sales: 1, items: 1, payments: 2 });
+    assert.equal(stockOf(database, BUSINESS, PRODUCT).onHandThousandths, -1_000);
+  });
+
+  it("is not applied twice when the event arrives again", async () => {
+    transport.pullHandler = () => ({
+      events: [saleEvent(1, "remote-sale")],
+      cursor: 0,
+      has_more: false,
+    });
+
+    await newEngine().sync();
+    await newEngine().sync();
+    await newEngine().sync();
+
+    // Financial history is written once. A second copy would double the day's
+    // takings and the stock that left the shop.
+    assert.deepEqual(countsOf(), { sales: 1, items: 1, payments: 2 });
+    assert.equal(stockOf(database, BUSINESS, PRODUCT).onHandThousandths, -1_000);
+  });
+
+  it("waits for a product it has never seen rather than dropping the sale", async () => {
+    const unknown: IncomingEvent = {
+      ...saleEvent(1, "remote-sale"),
+      payload: {
+        sale: {
+          id: "remote-sale",
+          number: "V-1",
+          occurred_at: AT,
+          items: [
+            {
+              id: "remote-line",
+              product_id: "99999999-9999-7999-8999-999999999999",
+              name: "Inconnu",
+              unit_price_minor: 500,
+              quantity: 1_000,
+            },
+          ],
+        },
+        payments: [],
+        movements: [],
+      },
+    };
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [unknown], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.applied, 0);
+    assert.equal(outcome.stillDeferred, 1, "a sale was dropped rather than kept");
+    // And nothing half-landed: the sale row must not survive its failed lines.
+    assert.deepEqual(countsOf(), { sales: 0, items: 0, payments: 0 });
+  });
+
+  it("sets aside a payload it cannot read", async () => {
+    const broken: IncomingEvent = {
+      ...saleEvent(1, "remote-sale"),
+      payload: { sale: { id: "remote-sale", number: "V-1", items: "three" }, payments: [] },
+    };
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [broken], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.unusable, 1);
+    assert.equal(outcome.stillDeferred, 0);
+  });
+});
