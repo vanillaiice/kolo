@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
+	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/quantity"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/validate"
@@ -92,9 +93,14 @@ type Product struct {
 
 	minimumStock quantity.Quantity
 
-	active    bool
-	createdAt time.Time
-	updatedAt time.Time
+	active bool
+	// updatedByDevice is the device that last edited this product. It exists to
+	// break a tie when two devices edited it in the same instant, so every
+	// device resolves the conflict the same way (ADR-015). Zero on a product
+	// written before that decision, which sorts below any device.
+	updatedByDevice devices.ID
+	createdAt       time.Time
+	updatedAt       time.Time
 }
 
 // Snapshot is the flat representation of a Product, used to persist it and to
@@ -115,6 +121,7 @@ type Snapshot struct {
 	TaxRateBasisPoints int
 	MinimumStock       quantity.Quantity
 	Active             bool
+	UpdatedByDevice    devices.ID
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -138,6 +145,7 @@ func New(snapshot Snapshot) (*Product, error) {
 	moment := snapshot.CreatedAt.UTC()
 	product := build(cleaned)
 	product.active = true
+	product.updatedByDevice = snapshot.UpdatedByDevice
 	product.createdAt = moment
 	product.updatedAt = moment
 	return product, nil
@@ -155,6 +163,7 @@ func Restore(snapshot Snapshot) (*Product, error) {
 
 	product := build(cleaned)
 	product.active = snapshot.Active
+	product.updatedByDevice = snapshot.UpdatedByDevice
 	product.createdAt = snapshot.CreatedAt.UTC()
 	product.updatedAt = snapshot.UpdatedAt.UTC()
 	return product, nil
@@ -353,6 +362,7 @@ func (p *Product) Snapshot() Snapshot {
 		TaxRateBasisPoints: p.taxRateBasisPoints,
 		MinimumStock:       p.minimumStock,
 		Active:             p.active,
+		UpdatedByDevice:    p.updatedByDevice,
 		CreatedAt:          p.createdAt,
 		UpdatedAt:          p.updatedAt,
 	}
@@ -413,6 +423,10 @@ func (p *Product) CreatedAt() time.Time { return p.createdAt }
 
 // UpdatedAt returns when it last changed, in UTC.
 func (p *Product) UpdatedAt() time.Time { return p.updatedAt }
+
+// UpdatedByDevice returns the device that last edited the product, which may be
+// zero for one written before that was recorded.
+func (p *Product) UpdatedByDevice() devices.ID { return p.updatedByDevice }
 
 // Scope returns the tenant scope the product belongs to.
 func (p *Product) Scope() business.Scope {

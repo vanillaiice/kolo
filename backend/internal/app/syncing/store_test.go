@@ -10,6 +10,7 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
+	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	domainsync "github.com/vanillaiice/kolo/backend/internal/domain/sync"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
 )
@@ -40,6 +41,8 @@ type fakeStore struct {
 	// appliedIDs is every movement identifier the ledger holds, standing in for
 	// the real table's primary key.
 	appliedIDs map[inventory.MovementID]bool
+	// products is the product table, holding whichever edit won.
+	products map[products.ID]*products.Product
 
 	failRecord       bool
 	failLatest       bool
@@ -54,6 +57,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		movements:  make(map[domainsync.EventID][]*inventory.Movement),
 		appliedIDs: make(map[inventory.MovementID]bool),
+		products:   make(map[products.ID]*products.Product),
 	}
 }
 
@@ -94,9 +98,10 @@ func (f *fakeStore) Record(
 // The real repository gets that from a transaction. This fake gets it from
 // checking everything before it writes anything, which is the same guarantee by
 // a cruder route — and it is the guarantee the service is entitled to assume.
-func (f *fakeStore) RecordWithMovements(
-	_ context.Context, scope business.Scope, event *domainsync.Event, movements []*inventory.Movement,
+func (f *fakeStore) RecordAndApply(
+	_ context.Context, scope business.Scope, event *domainsync.Event, effects postgres.Effects,
 ) (postgres.RecordOutcome, error) {
+	movements := effects.Movements
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -138,7 +143,38 @@ func (f *fakeStore) RecordWithMovements(
 	f.sequence++
 	f.events = append(f.events, envelope)
 	f.movements[envelope.ID] = movements
+
+	// Last-write-wins, the same comparison the real upsert makes (ADR-015), so
+	// the service is tested against the rule rather than against a map that
+	// always accepts.
+	for _, product := range effects.Products {
+		snapshot := product.Snapshot()
+		if err := scope.Guard(snapshot.BusinessID, business.BranchID{}); err != nil {
+			return postgres.Recorded, err
+		}
+		held, seen := f.products[snapshot.ID]
+		if seen && !wins(snapshot, held.Snapshot()) {
+			continue
+		}
+		f.products[snapshot.ID] = product
+	}
 	return postgres.Recorded, nil
+}
+
+// wins reports whether an incoming edit beats the one already held, ordered by
+// (updated_at, updated_by_device) exactly as the database does.
+func wins(incoming, held products.Snapshot) bool {
+	if !incoming.UpdatedAt.Equal(held.UpdatedAt) {
+		return incoming.UpdatedAt.After(held.UpdatedAt)
+	}
+	return incoming.UpdatedByDevice.String() > held.UpdatedByDevice.String()
+}
+
+// product returns the product the store holds, if any.
+func (f *fakeStore) product(id products.ID) *products.Product {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.products[id]
 }
 
 // applied reports how many movements an event was recorded as having moved.

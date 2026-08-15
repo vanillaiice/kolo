@@ -75,9 +75,13 @@ const (
 	StockMoved Type = "STOCK_MOVED"
 	// SaleCompleted carries a sale and everything it produced.
 	SaleCompleted Type = "SALE_COMPLETED"
+	// ProductSaved carries a product a device created or edited. Unlike a
+	// movement, which is appended, this is state: the newest edit wins, ordered
+	// so that every device agrees which that is (ADR-015).
+	ProductSaved Type = "PRODUCT_SAVED"
 )
 
-var knownTypes = []Type{StockMoved, SaleCompleted}
+var knownTypes = []Type{StockMoved, SaleCompleted, ProductSaved}
 
 // Types returns every event type this server understands, in a stable order.
 func Types() []Type { return slices.Clone(knownTypes) }

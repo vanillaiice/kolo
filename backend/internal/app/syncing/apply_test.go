@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/vanillaiice/kolo/backend/internal/app/syncing"
+	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sync"
@@ -303,5 +304,227 @@ func TestAUnitCostIsKeptInWholeFrancs(t *testing.T) {
 	cost := applied[0].Snapshot().UnitCost
 	if cost.Amount() != 2500 || cost.Currency() != money.XAF {
 		t.Errorf("UnitCost = %s, want 2500 XAF", cost)
+	}
+}
+
+// productPayload builds a PRODUCT_SAVED body.
+func productPayload(id products.ID, price int64, updatedAt string) json.RawMessage {
+	encoded, err := json.Marshal(map[string]any{
+		"product": map[string]any{
+			"id":                  id.String(),
+			"name":                "Riz parfumé 5kg",
+			"unit":                "sac",
+			"selling_price_minor": price,
+			"created_at":          "2026-08-01T08:00:00Z",
+			"updated_at":          updatedAt,
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return encoded
+}
+
+func (f *fixture) productEvent(sequence int64, payload json.RawMessage) sync.Envelope {
+	envelope := f.envelope(sequence)
+	envelope.Type = sync.ProductSaved
+	envelope.Payload = payload
+	return envelope
+}
+
+// A product event is applied, not merely filed, the same as a stock event.
+func TestAnAcceptedProductEventSavesTheProduct(t *testing.T) {
+	f := newFixture(t)
+
+	productID := products.NewID()
+	envelope := f.productEvent(1, productPayload(productID, 6_500, "2026-08-14T09:00:00Z"))
+
+	if got := f.push(t, envelope).Results[0].Status; got != syncing.Accepted {
+		t.Fatalf("Status = %q, want accepted", got)
+	}
+
+	saved := f.store.product(productID)
+	if saved == nil {
+		t.Fatal("the product was not saved")
+	}
+	snapshot := saved.Snapshot()
+	if snapshot.BusinessID != f.tenant {
+		t.Errorf("the product landed in %s, want %s", snapshot.BusinessID, f.tenant)
+	}
+	// The editing device comes from the envelope, which is what breaks a tie
+	// between two edits stamped the same instant (ADR-015).
+	if snapshot.UpdatedByDevice != f.till {
+		t.Errorf("UpdatedByDevice = %s, want the pushing device %s", snapshot.UpdatedByDevice, f.till)
+	}
+	if snapshot.SellingPrice.Amount() != 6_500 {
+		t.Errorf("price = %s, want 6500 XAF", snapshot.SellingPrice)
+	}
+}
+
+// The device's own edit time is kept, not the moment the server heard. An edit
+// made offline on Monday and synced on Friday is a Monday edit.
+func TestAProductKeepsTheDevicesEditTime(t *testing.T) {
+	f := newFixture(t)
+
+	productID := products.NewID()
+	edited := "2026-08-05T11:00:00Z"
+	f.push(t, f.productEvent(1, productPayload(productID, 6_500, edited)))
+
+	saved := f.store.product(productID)
+	if saved == nil {
+		t.Fatal("the product was not saved")
+	}
+	if got := saved.Snapshot().UpdatedAt.Format(time.RFC3339); got != edited {
+		t.Errorf("UpdatedAt = %s, want the device's %s", got, edited)
+	}
+}
+
+// A newer edit wins, whichever order the two arrive in.
+func TestTheNewerProductEditWinsEitherWay(t *testing.T) {
+	earlier, later := "2026-08-14T09:00:00Z", "2026-08-14T17:00:00Z"
+
+	for _, testCase := range []struct{ name, first, second string }{
+		{"newer last", earlier, later},
+		{"newer first", later, earlier},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := newFixture(t)
+			productID := products.NewID()
+
+			price := map[string]int64{earlier: 6_500, later: 7_000}
+			f.push(t, f.productEvent(1, productPayload(productID, price[testCase.first], testCase.first)))
+			f.push(t, f.productEvent(2, productPayload(productID, price[testCase.second], testCase.second)))
+
+			saved := f.store.product(productID)
+			if saved == nil {
+				t.Fatal("the product was not saved")
+			}
+			if got := saved.Snapshot().SellingPrice.Amount(); got != 7_000 {
+				t.Errorf("price = %d, want the newer 7000", got)
+			}
+		})
+	}
+}
+
+// A payload the server cannot read is rejected on its own.
+func TestABadProductPayloadIsRejected(t *testing.T) {
+	productID := products.NewID()
+
+	for _, testCase := range []struct {
+		name    string
+		payload json.RawMessage
+	}{
+		{"no product", json.RawMessage(`{}`)},
+		{"no identifier", json.RawMessage(`{"product":{"name":"Riz","unit":"sac","selling_price_minor":1,"created_at":"2026-08-01T08:00:00Z","updated_at":"2026-08-14T09:00:00Z"}}`)},
+		{"no name", json.RawMessage(`{"product":{"id":"` + productID.String() + `","unit":"sac","selling_price_minor":1,"created_at":"2026-08-01T08:00:00Z","updated_at":"2026-08-14T09:00:00Z"}}`)},
+		{"a negative price", json.RawMessage(`{"product":{"id":"` + productID.String() + `","name":"Riz","unit":"sac","selling_price_minor":-1,"created_at":"2026-08-01T08:00:00Z","updated_at":"2026-08-14T09:00:00Z"}}`)},
+		{"no edit time", json.RawMessage(`{"product":{"id":"` + productID.String() + `","name":"Riz","unit":"sac","selling_price_minor":1,"created_at":"2026-08-01T08:00:00Z"}}`)},
+		{"an unreadable edit time", json.RawMessage(`{"product":{"id":"` + productID.String() + `","name":"Riz","unit":"sac","selling_price_minor":1,"created_at":"2026-08-01T08:00:00Z","updated_at":"last Tuesday"}}`)},
+		{"edited before it existed", json.RawMessage(`{"product":{"id":"` + productID.String() + `","name":"Riz","unit":"sac","selling_price_minor":1,"created_at":"2026-08-14T09:00:00Z","updated_at":"2026-08-01T08:00:00Z"}}`)},
+		{"a field from a newer client", json.RawMessage(`{"product":{"id":"` + productID.String() + `","name":"Riz","unit":"sac","selling_price_minor":1,"created_at":"2026-08-01T08:00:00Z","updated_at":"2026-08-14T09:00:00Z","colour":"red"}}`)},
+		{"a business of its own choosing", json.RawMessage(`{"product":{"id":"` + productID.String() + `","business_id":"` + business.NewID().String() + `","name":"Riz","unit":"sac","selling_price_minor":1,"created_at":"2026-08-01T08:00:00Z","updated_at":"2026-08-14T09:00:00Z"}}`)},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := newFixture(t)
+
+			response := f.push(t, f.productEvent(1, testCase.payload))
+
+			if got := response.Results[0].Status; got != syncing.Rejected {
+				t.Errorf("Status = %q, want rejected", got)
+			}
+			if f.store.product(productID) != nil {
+				t.Error("a product was saved from a payload the server could not read")
+			}
+		})
+	}
+}
+
+// Every optional field survives the trip, including the ones a shopkeeper fills
+// in later (§6).
+func TestAProductCarriesItsOptionalFields(t *testing.T) {
+	f := newFixture(t)
+
+	productID, categoryID := products.NewID(), products.NewCategoryID()
+	payload, err := json.Marshal(map[string]any{
+		"product": map[string]any{
+			"id":                    productID.String(),
+			"category_id":           categoryID.String(),
+			"name":                  "Riz parfumé 5kg",
+			"sku":                   "RIZ-5KG",
+			"barcode":               "6001234567890",
+			"description":           "Riz parfumé importé.",
+			"brand":                 "Uncle Sam",
+			"unit":                  "kg",
+			"divisible":             true,
+			"purchase_price_minor":  5_000,
+			"selling_price_minor":   6_500,
+			"tax_rate_basis_points": 1_925,
+			"minimum_stock":         10_000,
+			"active":                false,
+			"created_at":            "2026-08-01T08:00:00Z",
+			"updated_at":            "2026-08-14T09:00:00Z",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+
+	f.push(t, f.productEvent(1, payload))
+
+	saved := f.store.product(productID)
+	if saved == nil {
+		t.Fatal("the product was not saved")
+	}
+	snapshot := saved.Snapshot()
+	if snapshot.CategoryID != categoryID {
+		t.Errorf("CategoryID = %s, want %s", snapshot.CategoryID, categoryID)
+	}
+	if snapshot.SKU != "RIZ-5KG" || snapshot.Barcode != "6001234567890" {
+		t.Errorf("codes = %q/%q", snapshot.SKU, snapshot.Barcode)
+	}
+	if !snapshot.Divisible {
+		t.Error("Divisible was lost")
+	}
+	if snapshot.PurchasePrice.Amount() != 5_000 {
+		t.Errorf("PurchasePrice = %s, want 5000 XAF", snapshot.PurchasePrice)
+	}
+	if snapshot.TaxRateBasisPoints != 1_925 {
+		t.Errorf("TaxRateBasisPoints = %d, want 1925", snapshot.TaxRateBasisPoints)
+	}
+	if snapshot.MinimumStock.Thousandths() != 10_000 {
+		t.Errorf("MinimumStock = %s, want 10 units", snapshot.MinimumStock)
+	}
+	// Absent means active, but an explicit false means archived.
+	if snapshot.Active {
+		t.Error("an archived product came back active")
+	}
+}
+
+// A category identifier that is not one is the event's problem, not the batch's.
+func TestAProductWithAnUnreadableCategoryIsRejected(t *testing.T) {
+	f := newFixture(t)
+
+	productID := products.NewID()
+	payload := json.RawMessage(`{"product":{"id":"` + productID.String() +
+		`","category_id":"not-a-category","name":"Riz","unit":"sac",` +
+		`"selling_price_minor":1,"created_at":"2026-08-01T08:00:00Z","updated_at":"2026-08-14T09:00:00Z"}}`)
+
+	if got := f.push(t, f.productEvent(1, payload)).Results[0].Status; got != syncing.Rejected {
+		t.Errorf("Status = %q, want rejected", got)
+	}
+}
+
+// A purchase price below zero is refused. A business cannot have paid less than
+// nothing, and money is checked rather than trusted (ADR-010).
+func TestAProductWithANegativePurchasePriceIsRejected(t *testing.T) {
+	f := newFixture(t)
+
+	productID := products.NewID()
+	payload := json.RawMessage(`{"product":{"id":"` + productID.String() +
+		`","name":"Riz","unit":"sac","selling_price_minor":100,"purchase_price_minor":-5,` +
+		`"created_at":"2026-08-01T08:00:00Z","updated_at":"2026-08-14T09:00:00Z"}}`)
+
+	if got := f.push(t, f.productEvent(1, payload)).Results[0].Status; got != syncing.Rejected {
+		t.Errorf("Status = %q, want rejected", got)
 	}
 }

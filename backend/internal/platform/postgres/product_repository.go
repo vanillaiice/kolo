@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
+	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/quantity"
@@ -30,7 +31,29 @@ func NewProductRepository(pool *pgxpool.Pool) *ProductRepository {
 
 const productColumns = `id, business_id, category_id, name, sku, barcode, description, brand,
 	unit, divisible, purchase_price_minor, selling_price_minor, currency,
-	tax_rate_basis_points, minimum_stock, active, created_at, updated_at`
+	tax_rate_basis_points, minimum_stock, active, created_at, updated_at, updated_by_device`
+
+// productInsert writes one product row. Shared by the ordinary create and the
+// conflict-resolving upsert a sync event uses, so there is one column list.
+const productInsert = `
+	INSERT INTO products (` + productColumns + `)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`
+
+// productValues lays a product out in the order productInsert expects.
+func productValues(product *products.Product) []any {
+	snapshot := product.Snapshot()
+	purchase, currency := productPrices(snapshot)
+	return []any{
+		snapshot.ID.ID(), snapshot.BusinessID.ID(), optionalCategory(snapshot.CategoryID),
+		snapshot.Name, optionalText(snapshot.SKU), optionalText(snapshot.Barcode),
+		optionalText(snapshot.Description), optionalText(snapshot.Brand),
+		snapshot.Unit, snapshot.Divisible,
+		purchase, snapshot.SellingPrice.Amount(), currency,
+		snapshot.TaxRateBasisPoints, snapshot.MinimumStock.Thousandths(),
+		snapshot.Active, snapshot.CreatedAt, snapshot.UpdatedAt,
+		optionalDevice(snapshot.UpdatedByDevice),
+	}
+}
 
 // Create stores a new product within the scope's business.
 func (r *ProductRepository) Create(ctx context.Context, scope business.Scope, product *products.Product) error {
@@ -42,18 +65,7 @@ func (r *ProductRepository) Create(ctx context.Context, scope business.Scope, pr
 		return err
 	}
 
-	purchase, currency := productPrices(snapshot)
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO products (`+productColumns+`)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
-		snapshot.ID.ID(), snapshot.BusinessID.ID(), optionalCategory(snapshot.CategoryID),
-		snapshot.Name, optionalText(snapshot.SKU), optionalText(snapshot.Barcode),
-		optionalText(snapshot.Description), optionalText(snapshot.Brand),
-		snapshot.Unit, snapshot.Divisible,
-		purchase, snapshot.SellingPrice.Amount(), currency,
-		snapshot.TaxRateBasisPoints, snapshot.MinimumStock.Thousandths(),
-		snapshot.Active, snapshot.CreatedAt, snapshot.UpdatedAt)
-	if err != nil {
+	if _, err := r.pool.Exec(ctx, productInsert, productValues(product)...); err != nil {
 		return wrapWrite("creating product", err)
 	}
 	return nil
@@ -149,7 +161,7 @@ func (r *ProductRepository) Update(ctx context.Context, scope business.Scope, pr
 		SET category_id = $3, name = $4, sku = $5, barcode = $6, description = $7, brand = $8,
 		    unit = $9, divisible = $10, purchase_price_minor = $11, selling_price_minor = $12,
 		    currency = $13, tax_rate_basis_points = $14, minimum_stock = $15,
-		    active = $16, updated_at = $17
+		    active = $16, updated_at = $17, updated_by_device = $18
 		WHERE id = $1 AND business_id = $2`,
 		snapshot.ID.ID(), snapshot.BusinessID.ID(), optionalCategory(snapshot.CategoryID),
 		snapshot.Name, optionalText(snapshot.SKU), optionalText(snapshot.Barcode),
@@ -157,7 +169,7 @@ func (r *ProductRepository) Update(ctx context.Context, scope business.Scope, pr
 		snapshot.Unit, snapshot.Divisible,
 		purchase, snapshot.SellingPrice.Amount(), currency,
 		snapshot.TaxRateBasisPoints, snapshot.MinimumStock.Thousandths(),
-		snapshot.Active, snapshot.UpdatedAt)
+		snapshot.Active, snapshot.UpdatedAt, optionalDevice(snapshot.UpdatedByDevice))
 	if err != nil {
 		return wrapWrite("updating product", err)
 	}
@@ -177,12 +189,13 @@ func scanProduct(row pgx.Row) (*products.Product, error) {
 		sellingMinor                     int64
 		currencyCode                     string
 		minimumStock                     int64
+		updatedByDevice                  *uuid.UUID
 	)
 	err := row.Scan(&rawID, &rawOwner, &rawCategory, &snapshot.Name, &sku, &barcode,
 		&description, &brand, &snapshot.Unit, &snapshot.Divisible,
 		&purchaseMinor, &sellingMinor, &currencyCode,
 		&snapshot.TaxRateBasisPoints, &minimumStock,
-		&snapshot.Active, &snapshot.CreatedAt, &snapshot.UpdatedAt)
+		&snapshot.Active, &snapshot.CreatedAt, &snapshot.UpdatedAt, &updatedByDevice)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -199,6 +212,9 @@ func scanProduct(row pgx.Row) (*products.Product, error) {
 		return nil, fmt.Errorf("%w: product %s: %w", ErrQuery, rawID, err)
 	}
 
+	if updatedByDevice != nil {
+		snapshot.UpdatedByDevice = devices.IDFrom(*updatedByDevice)
+	}
 	snapshot.ID = products.IDFrom(rawID)
 	snapshot.BusinessID = business.IDFrom(rawOwner)
 	if rawCategory != nil {

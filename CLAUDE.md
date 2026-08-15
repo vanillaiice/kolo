@@ -42,6 +42,8 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `sync/transport.ts` — the HTTP contract plus an implementation. The engine takes the interface, so its failure behaviour is testable without a network
 - `sync/engine.ts` — drains both queues. An event leaves the outbox only when the server says it has it; anything else keeps it queued. A rejection is set aside rather than retried forever, since retrying blocks everything behind it
 - `sync/stock-applier.ts` — applies a pulled `STOCK_MOVED` to the local ledger, `INSERT OR IGNORE` on the movement ID so re-applying cannot double stock
+- `sync/product-applier.ts` — applies a pulled `PRODUCT_SAVED`, which is what unblocks movements deferred waiting on their product
+- `products/products.ts` — products on the device, with the last-write-wins upsert. A losing edit is a `false` return, never an error
 
 There is no UI yet. The data layer is plain TypeScript so it runs under Node against real SQLite; React Native types arrive with the screens.
 
@@ -163,7 +165,9 @@ Inspect existing architecture and files before changing them, and prefer the sma
 
 ### Applying events
 
-A pushed event is **recorded and applied in one transaction** (`SyncRepository.RecordWithMovements`). Recording without applying is the failure mode to watch for: the device is told "accepted", stops resending, and the stock never lands — undetectable afterwards, since the log says the event arrived. Any new applied event type must extend that transaction, never add a second write beside it.
+A pushed event is **recorded and applied in one transaction** (`SyncRepository.RecordAndApply`, taking an `Effects`). Recording without applying is the failure mode to watch for: the device is told "accepted", stops resending, and the stock never lands — undetectable afterwards, since the log says the event arrived. A new applied event type adds a field to `Effects` and a write inside that transaction, never a second write beside it.
+
+Applied types so far: `STOCK_MOVED` (append) and `PRODUCT_SAVED` (last-write-wins upsert, ADR-015). Conflict policy is per type and deliberately different — two devices' movements both stand, but only one product edit can.
 
 Payload structs live in `app/syncing` (`StockMovedPayload`), not in `postgres` — they are the wire contract, and their JSON names are a protocol version. A movement's tenant, branch, device, and user come from the authenticated envelope; only the movement's own ID comes from the payload, because that ID is what makes a replay a duplicate.
 
@@ -174,3 +178,13 @@ Two deliberately opposite forward-compatibility rules: an **unknown event type**
 `StockMovedPayload` in `app/syncing` and `describe()` in the client's `movements.ts` are two halves of one wire format, and nothing but a test holds them together. The server refuses a payload carrying a field it does not know, so a field added to one side and not the other **rejects every event from that client**.
 
 The payload carries no business, branch, device, or user, and no currency: identity comes from the authenticated envelope (ADR-008) and everything is XAF (§46). Only the movement's own ID travels, because that ID is what makes a replay a duplicate.
+
+### Product conflicts
+
+Products are last-write-wins ordered by **`(updated_at, updated_by_device)`** (ADR-015). The tie-break is not decoration: without it, two devices holding the same two edits could settle on different prices depending on arrival order, permanently and undetectably. Because the comparison reads only the two rows, applying edits in any order gives the same answer everywhere.
+
+The rule is written twice — once in PostgreSQL, once in SQLite — because a device must resolve a conflict with no network. Both sides are tested against the same cases, including the order-independence property itself.
+
+A losing edit is **discarded, not an error**. On the client `saveProduct` returns `false`; treating it as a failure would defer the event forever.
+
+Timestamps come from the device, never the server: an edit made offline on Monday and synced on Friday must not beat one made on Wednesday.

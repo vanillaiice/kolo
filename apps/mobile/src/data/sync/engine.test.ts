@@ -9,6 +9,8 @@ import { SyncEngine, UnusableEvent, type EventApplier } from "./engine.ts";
 import { cursor, deferredCount, unusable } from "./inbox.ts";
 import { pending, pendingCount, rejected } from "./outbox.ts";
 import { stockApplier, STOCK_MOVED } from "./stock-applier.ts";
+import { PRODUCT_SAVED, productApplier } from "./product-applier.ts";
+import { productOf } from "../products/products.ts";
 import { TransportError, type IncomingEvent, type PullResult, type PushResult } from "./transport.ts";
 
 const BUSINESS = "11111111-1111-7111-8111-111111111111";
@@ -65,7 +67,7 @@ function empty(): PullResult {
 let database: Database;
 let transport: FakeTransport;
 
-function newEngine(appliers: readonly EventApplier[] = [stockApplier]): SyncEngine {
+function newEngine(appliers: readonly EventApplier[] = [stockApplier, productApplier]): SyncEngine {
   return new SyncEngine({
     database,
     transport: transport as never,
@@ -819,3 +821,147 @@ describe("the outbox and the ledger stay in step", () => {
     assert.equal(database.transaction((tx) => deferredCount(tx)), 0);
   });
 });
+
+describe("products arriving with the stock that needs them", () => {
+  const LATE_PRODUCT = "66666666-6666-7666-8666-666666666666";
+
+  /** A product event as another device would send it. */
+  function productEvent(sequence: number, price = 900): IncomingEvent {
+    return {
+      event_id: `product-event-${sequence}`,
+      device_id: OTHER_DEVICE,
+      user_id: USER,
+      type: PRODUCT_SAVED,
+      payload: {
+        product: {
+          id: LATE_PRODUCT,
+          name: "Sucre 1kg",
+          unit: "paquet",
+          selling_price_minor: price,
+          created_at: "2026-08-01T08:00:00.000Z",
+          updated_at: AT,
+        },
+      },
+      occurred_at: AT,
+      sequence,
+    };
+  }
+
+  /** A sale of the product above, which cannot apply until it exists here. */
+  function saleOfLateProduct(sequence: number): IncomingEvent {
+    return {
+      ...relayed(`sale-event-${sequence}`, `sale-movement-${sequence}`, sequence),
+      payload: {
+        movements: [
+          {
+            id: `sale-movement-${sequence}`,
+            product_id: LATE_PRODUCT,
+            type: "SALE",
+            quantity: -2000,
+            reference_kind: "SALE",
+            reference_id: `sale-${sequence}`,
+          },
+        ],
+      },
+    };
+  }
+
+  it("applies a product from another device", async () => {
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [productEvent(1)], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.applied, 1);
+    const stored = database.transaction((tx) => productOf(tx, BUSINESS, LATE_PRODUCT));
+    assert.equal(stored?.sellingPriceMinor, 900);
+    // The editing device comes from the envelope, which is what breaks a tie.
+    assert.equal(stored?.updatedByDevice, OTHER_DEVICE);
+  });
+
+  it("unblocks a sale that arrived before its product", async () => {
+    // The sale comes first, which is the ordering that made the inbox
+    // necessary: the server relays events as it learned of them, and the till
+    // sold something the owner's phone had only just created.
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [saleOfLateProduct(1)], cursor: 1, has_more: false } : empty();
+
+    const first = await newEngine().sync();
+    assert.equal(first.applied, 0);
+    assert.equal(first.stillDeferred, 1);
+
+    // Now the product turns up on a later sync.
+    transport.pullHandler = (from) =>
+      from === 1 ? { events: [productEvent(2)], cursor: 2, has_more: false } : empty();
+
+    const second = await newEngine().sync();
+
+    assert.equal(second.applied, 2, "the product and the sale waiting on it");
+    assert.equal(second.stillDeferred, 0);
+    assert.equal(stockOf(database, BUSINESS, LATE_PRODUCT).onHandThousandths, -2000);
+  });
+
+  it("applies both in one sync when they arrive together, product first", async () => {
+    transport.pullHandler = (from) =>
+      from === 0
+        ? { events: [productEvent(1), saleOfLateProduct(2)], cursor: 2, has_more: false }
+        : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.applied, 2);
+    assert.equal(outcome.stillDeferred, 0);
+  });
+
+  it("keeps the newer edit when two devices edited the same product", async () => {
+    const earlier = "2026-08-14T09:00:00.000Z";
+    const later = "2026-08-14T17:00:00.000Z";
+
+    transport.pullHandler = (from) =>
+      from === 0
+        ? {
+            events: [
+              { ...productEvent(1, 7000), payload: withUpdatedAt(productEvent(1, 7000), later) },
+              { ...productEvent(2, 6500), payload: withUpdatedAt(productEvent(2, 6500), earlier) },
+            ],
+            cursor: 2,
+            has_more: false,
+          }
+        : empty();
+
+    await newEngine().sync();
+
+    // The older edit arrived last and must not win, or two devices syncing in
+    // different orders would hold different prices (ADR-015).
+    const stored = database.transaction((tx) => productOf(tx, BUSINESS, LATE_PRODUCT));
+    assert.equal(stored?.sellingPriceMinor, 7000);
+  });
+
+  it("does not defer a product edit that merely lost", async () => {
+    const earlier = "2026-08-14T09:00:00.000Z";
+    transport.pullHandler = (from) =>
+      from === 0
+        ? {
+            events: [
+              productEvent(1, 7000),
+              { ...productEvent(2, 6500), payload: withUpdatedAt(productEvent(2, 6500), earlier) },
+            ],
+            cursor: 2,
+            has_more: false,
+          }
+        : empty();
+
+    const outcome = await newEngine().sync();
+
+    // A losing edit is fully handled: the device already holds a later one.
+    // Deferring it would leave it retrying forever.
+    assert.equal(outcome.applied, 2);
+    assert.equal(outcome.stillDeferred, 0);
+  });
+});
+
+/** Rewrites a product event's updated_at, leaving everything else alone. */
+function withUpdatedAt(event: IncomingEvent, at: string): unknown {
+  const payload = event.payload as { product: Record<string, unknown> };
+  return { product: { ...payload.product, updated_at: at } };
+}

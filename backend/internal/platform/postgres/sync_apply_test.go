@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
@@ -20,6 +22,7 @@ type applyFixture struct {
 	*syncFixture
 	movements *postgres.MovementRepository
 	product   products.ID
+	pool      *pgxpool.Pool
 }
 
 func newApplyFixture(t *testing.T) *applyFixture {
@@ -38,6 +41,7 @@ func newApplyFixture(t *testing.T) *applyFixture {
 		syncFixture: base,
 		movements:   postgres.NewMovementRepository(pool),
 		product:     product.ID(),
+		pool:        pool,
 	}
 }
 
@@ -97,13 +101,13 @@ func (f *applyFixture) stock(t *testing.T) int64 {
 }
 
 // An applied event moves stock and files the event, both at once.
-func TestRecordWithMovementsAppliesAndRecords(t *testing.T) {
+func TestRecordAndApplyAppliesAndRecords(t *testing.T) {
 	f := newApplyFixture(t)
 
-	outcome, err := f.events.RecordWithMovements(
-		f.ctx, f.scope, f.event(t, 1), []*inventory.Movement{f.movement(t, 12)})
+	outcome, err := f.events.RecordAndApply(
+		f.ctx, f.scope, f.event(t, 1), postgres.Effects{Movements: []*inventory.Movement{f.movement(t, 12)}})
 	if err != nil {
-		t.Fatalf("RecordWithMovements: %v", err)
+		t.Fatalf("RecordAndApply: %v", err)
 	}
 	if outcome != postgres.Recorded {
 		t.Errorf("got %v, want Recorded", outcome)
@@ -121,11 +125,11 @@ func TestReplayingAnAppliedEventMovesNoStock(t *testing.T) {
 	event := f.event(t, 1)
 	movements := []*inventory.Movement{f.movement(t, 12)}
 
-	if _, err := f.events.RecordWithMovements(f.ctx, f.scope, event, movements); err != nil {
+	if _, err := f.events.RecordAndApply(f.ctx, f.scope, event, postgres.Effects{Movements: movements}); err != nil {
 		t.Fatalf("the first push: %v", err)
 	}
 	for attempt := range 3 {
-		outcome, err := f.events.RecordWithMovements(f.ctx, f.scope, event, movements)
+		outcome, err := f.events.RecordAndApply(f.ctx, f.scope, event, postgres.Effects{Movements: movements})
 		if err != nil {
 			t.Fatalf("replay %d: %v", attempt, err)
 		}
@@ -165,8 +169,8 @@ func TestAnEventIsNotRecordedWhenItsMovementsCannotBe(t *testing.T) {
 
 	event := f.event(t, 1)
 	good := f.movement(t, 12)
-	if _, err := f.events.RecordWithMovements(
-		f.ctx, f.scope, event, []*inventory.Movement{good, orphan}); err == nil {
+	if _, err := f.events.RecordAndApply(
+		f.ctx, f.scope, event, postgres.Effects{Movements: []*inventory.Movement{good, orphan}}); err == nil {
 		t.Fatal("a movement against an unknown product was accepted")
 	}
 
@@ -184,8 +188,8 @@ func TestAnEventIsNotRecordedWhenItsMovementsCannotBe(t *testing.T) {
 
 	// And the same event goes through once the bad movement is gone, which is
 	// what makes the retry worth making.
-	if _, err := f.events.RecordWithMovements(
-		f.ctx, f.scope, event, []*inventory.Movement{good}); err != nil {
+	if _, err := f.events.RecordAndApply(
+		f.ctx, f.scope, event, postgres.Effects{Movements: []*inventory.Movement{good}}); err != nil {
 		t.Fatalf("the retry: %v", err)
 	}
 	if got := f.stock(t); got != 12_000 {
@@ -199,13 +203,13 @@ func TestAReusedMovementIdentifierIsRefused(t *testing.T) {
 	f := newApplyFixture(t)
 
 	shared := inventory.NewMovementID()
-	if _, err := f.events.RecordWithMovements(f.ctx, f.scope, f.event(t, 1),
-		[]*inventory.Movement{f.movementWithID(t, shared, 12)}); err != nil {
+	if _, err := f.events.RecordAndApply(f.ctx, f.scope, f.event(t, 1),
+		postgres.Effects{Movements: []*inventory.Movement{f.movementWithID(t, shared, 12)}}); err != nil {
 		t.Fatalf("the first event: %v", err)
 	}
 
-	err := errFrom(f.events.RecordWithMovements(f.ctx, f.scope, f.event(t, 2),
-		[]*inventory.Movement{f.movementWithID(t, shared, 99)}))
+	err := errFrom(f.events.RecordAndApply(f.ctx, f.scope, f.event(t, 2),
+		postgres.Effects{Movements: []*inventory.Movement{f.movementWithID(t, shared, 99)}}))
 	if err == nil {
 		t.Fatal("a reused movement identifier was accepted")
 	}
@@ -238,8 +242,8 @@ func TestAMovementOutsideTheScopeIsRefused(t *testing.T) {
 		t.Fatalf("inventory.Record: %v", err)
 	}
 
-	if _, err := f.events.RecordWithMovements(
-		f.ctx, f.scope, f.event(t, 1), []*inventory.Movement{stranger}); err == nil {
+	if _, err := f.events.RecordAndApply(
+		f.ctx, f.scope, f.event(t, 1), postgres.Effects{Movements: []*inventory.Movement{stranger}}); err == nil {
 		t.Fatal("a movement for another business was accepted")
 	}
 	if got := f.stock(t); got != 0 {
@@ -252,8 +256,8 @@ func TestAMovementOutsideTheScopeIsRefused(t *testing.T) {
 func TestAnEventWithNoMovementsIsStillRecorded(t *testing.T) {
 	f := newApplyFixture(t)
 
-	if _, err := f.events.RecordWithMovements(f.ctx, f.scope, f.event(t, 1), nil); err != nil {
-		t.Fatalf("RecordWithMovements: %v", err)
+	if _, err := f.events.RecordAndApply(f.ctx, f.scope, f.event(t, 1), postgres.Effects{}); err != nil {
+		t.Fatalf("RecordAndApply: %v", err)
 	}
 	stored, err := f.events.Since(f.ctx, f.scope, 0, devices.ID{}, 10)
 	if err != nil {
@@ -269,8 +273,9 @@ func TestAnEventWithNoMovementsIsStillRecorded(t *testing.T) {
 func TestANilMovementIsRefused(t *testing.T) {
 	f := newApplyFixture(t)
 
-	if _, err := f.events.RecordWithMovements(f.ctx, f.scope, f.event(t, 1),
-		[]*inventory.Movement{f.movement(t, 3), nil}); err == nil {
+	if _, err := f.events.RecordAndApply(
+		f.ctx, f.scope, f.event(t, 1),
+		postgres.Effects{Movements: []*inventory.Movement{f.movement(t, 3), nil}}); err == nil {
 		t.Fatal("a nil movement was accepted")
 	}
 	if got := f.stock(t); got != 0 {
@@ -282,9 +287,9 @@ func TestANilMovementIsRefused(t *testing.T) {
 func TestApplyingRefusesTheZeroScope(t *testing.T) {
 	f := newApplyFixture(t)
 
-	if _, err := f.events.RecordWithMovements(
+	if _, err := f.events.RecordAndApply(
 		context.Background(), business.Scope{}, f.event(t, 1),
-		[]*inventory.Movement{f.movement(t, 3)}); err == nil {
+		postgres.Effects{Movements: []*inventory.Movement{f.movement(t, 3)}}); err == nil {
 		t.Fatal("the zero scope was accepted")
 	}
 }

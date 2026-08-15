@@ -23,7 +23,7 @@ import (
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
-	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
+	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sync"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/clock"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
@@ -59,10 +59,10 @@ const (
 // code that uses it (ADR-005).
 type EventStore interface {
 	Record(ctx context.Context, scope business.Scope, event *sync.Event) (postgres.RecordOutcome, error)
-	// RecordWithMovements stores an event and applies its stock movements in
-	// one transaction. Recording without applying would tell the device the
-	// event landed while the stock it recorded silently never arrived.
-	RecordWithMovements(ctx context.Context, scope business.Scope, event *sync.Event, movements []*inventory.Movement) (postgres.RecordOutcome, error)
+	// RecordAndApply stores an event and everything it changes in one
+	// transaction. Recording without applying would tell the device the event
+	// landed while what it recorded silently never arrived.
+	RecordAndApply(ctx context.Context, scope business.Scope, event *sync.Event, effects postgres.Effects) (postgres.RecordOutcome, error)
 	Reject(ctx context.Context, scope business.Scope, envelope sync.Envelope, reason string) (postgres.RecordOutcome, error)
 	Since(ctx context.Context, scope business.Scope, cursor int64, excludeDevice devices.ID, limit int) ([]postgres.StoredEvent, error)
 	LatestSequence(ctx context.Context, scope business.Scope) (int64, error)
@@ -233,17 +233,13 @@ func (s *Service) handle(ctx context.Context, request PushRequest, envelope sync
 	// An event type this build does not apply is still recorded and still handed
 	// to other devices. It is a real event, and refusing it would strand a
 	// device on a newer client with a backlog it can never clear.
-	var outcome postgres.RecordOutcome
-	if envelope.Type == sync.StockMoved {
-		movements, decodeErr := stockMovements(request.Scope, envelope, s.now())
-		if decodeErr != nil {
-			// The payload is wrong and resending will not make it right.
-			return s.reject(ctx, request.Scope, envelope, decodeErr.Error())
-		}
-		outcome, err = s.events.RecordWithMovements(ctx, request.Scope, event, movements)
-	} else {
-		outcome, err = s.events.Record(ctx, request.Scope, event)
+	effects, err := s.effectsOf(request.Scope, envelope)
+	if err != nil {
+		// The payload is wrong and resending will not make it right.
+		return s.reject(ctx, request.Scope, envelope, err.Error())
 	}
+
+	outcome, err := s.events.RecordAndApply(ctx, request.Scope, event, effects)
 	if err != nil {
 		// A reference the database refuses — a user who does not exist here —
 		// is this event's problem, not the batch's.
@@ -269,6 +265,34 @@ func (s *Service) handle(ctx context.Context, request PushRequest, envelope sync
 		return Result{EventID: identifier, Status: Duplicate}
 	}
 	return Result{EventID: identifier, Status: Accepted}
+}
+
+// effectsOf works out what an event changes, before anything is written.
+//
+// Deciding here rather than inside the transaction keeps the two apart: a
+// payload this build cannot read is the event's own fault and is rejected,
+// while a write that fails is the server's and is retried. Conflating them
+// would either retry a bad payload forever or discard a sale over a hiccup.
+func (s *Service) effectsOf(scope business.Scope, envelope sync.Envelope) (postgres.Effects, error) {
+	switch envelope.Type {
+	case sync.StockMoved:
+		movements, err := stockMovements(scope, envelope, s.now())
+		if err != nil {
+			return postgres.Effects{}, err
+		}
+		return postgres.Effects{Movements: movements}, nil
+
+	case sync.ProductSaved:
+		product, err := savedProduct(scope, envelope)
+		if err != nil {
+			return postgres.Effects{}, err
+		}
+		return postgres.Effects{Products: []*products.Product{product}}, nil
+
+	default:
+		// Recorded and relayed, but not applied.
+		return postgres.Effects{}, nil
+	}
 }
 
 // reject records a refusal and reports it.

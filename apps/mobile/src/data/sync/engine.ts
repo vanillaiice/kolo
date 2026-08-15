@@ -353,15 +353,34 @@ export class SyncEngine {
    *
    * Each event is applied in its own transaction, so one that cannot be applied
    * does not roll back the ones before it. An event that fails is left deferred
-   * and tried again next time, which is what makes it safe for events to arrive
-   * before what they depend on.
+   * and tried again, which is what makes it safe for events to arrive before
+   * what they depend on.
    */
   #applyDeferred(tally: Tally): void {
-    // A bound rather than a while-true: applying is synchronous, and a device
+    // Repeated passes, not one. Events are applied in the order the server
+    // learned of them, and that order does not respect dependencies: a sale can
+    // sit ahead of the product it needs in the very same batch. One pass would
+    // try the sale, fail, apply the product, and leave the sale waiting for a
+    // whole extra sync — on a link that may not come back for days (§45).
+    //
+    // Each pass either applies something or changes nothing, so this terminates:
+    // the bound is the number of deferred events, and in practice it is two.
+    for (;;) {
+      const applied = this.#applyPass(tally);
+      if (applied === 0) {
+        return;
+      }
+    }
+  }
+
+  /** One attempt at every deferred event. Returns how many landed. */
+  #applyPass(tally: Tally): number {
+    // A bound rather than everything: applying is synchronous, and a device
     // with thousands of deferred events must not freeze the interface.
     const batch = this.#database.transaction((tx) =>
       deferred(tx, this.#pullBatchSize * this.#maxRoundTrips),
     );
+    let applied = 0;
 
     for (const event of batch) {
       const applier = this.#appliers.get(event.type);
@@ -384,6 +403,7 @@ export class SyncEngine {
           markApplied(tx, event.eventId, at);
         });
         tally.applied++;
+        applied++;
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         if (error instanceof UnusableEvent) {
@@ -398,6 +418,7 @@ export class SyncEngine {
         }
       }
     }
+    return applied;
   }
 
   #timestamp(): string {

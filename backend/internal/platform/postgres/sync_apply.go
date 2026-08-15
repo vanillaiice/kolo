@@ -9,11 +9,28 @@ import (
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
+	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sync"
 )
 
-// RecordWithMovements stores an event and the stock movements it describes, in
-// one transaction.
+// Effects are the changes an event makes to the domain tables.
+//
+// One struct rather than an argument per kind, so a new applied event type adds
+// a field here and a write inside the one transaction below, rather than a
+// second method that could be called beside it instead of within it.
+type Effects struct {
+	// Movements are appended to the ledger. Two devices' movements both stand.
+	Movements []*inventory.Movement
+	// Products are upserted last-write-wins, since a product is state and only
+	// one edit can win (ADR-015).
+	Products []*products.Product
+}
+
+// IsEmpty reports whether the event changes nothing, which is true of an event
+// type this build records and relays without applying.
+func (e Effects) IsEmpty() bool { return len(e.Movements) == 0 && len(e.Products) == 0 }
+
+// RecordAndApply stores an event and everything it changes, in one transaction.
 //
 // This has to be atomic, and the reason is easy to miss. If the event were
 // recorded and the movements written separately, a failure between them would
@@ -27,11 +44,11 @@ import (
 //
 // A replay applies nothing. The event identifier collides, the transaction
 // rolls back, and the caller is told the server already had it (§27).
-func (r *SyncRepository) RecordWithMovements(
+func (r *SyncRepository) RecordAndApply(
 	ctx context.Context,
 	scope business.Scope,
 	event *sync.Event,
-	movements []*inventory.Movement,
+	effects Effects,
 ) (RecordOutcome, error) {
 	if err := requireScope(scope); err != nil {
 		return Recorded, err
@@ -40,12 +57,20 @@ func (r *SyncRepository) RecordWithMovements(
 	if err := scope.Guard(envelope.BusinessID, business.BranchID{}); err != nil {
 		return Recorded, err
 	}
-	for i, movement := range movements {
+	for i, movement := range effects.Movements {
 		if movement == nil {
 			return Recorded, fmt.Errorf("%w: movement %d is missing", ErrQuery, i)
 		}
 		snapshot := movement.Snapshot()
 		if err := scope.Guard(snapshot.BusinessID, snapshot.BranchID); err != nil {
+			return Recorded, err
+		}
+	}
+	for i, product := range effects.Products {
+		if product == nil {
+			return Recorded, fmt.Errorf("%w: product %d is missing", ErrQuery, i)
+		}
+		if err := scope.Guard(product.BusinessID(), business.BranchID{}); err != nil {
 			return Recorded, err
 		}
 	}
@@ -75,9 +100,14 @@ func (r *SyncRepository) RecordWithMovements(
 		return AlreadyRecorded, nil
 	}
 
-	for i, movement := range movements {
+	for i, movement := range effects.Movements {
 		if err := insertMovement(ctx, transaction, movement); err != nil {
 			return Recorded, fmt.Errorf("applying movement %d of event %s: %w", i, envelope.ID, err)
+		}
+	}
+	for i, product := range effects.Products {
+		if err := upsertProduct(ctx, transaction, product); err != nil {
+			return Recorded, fmt.Errorf("applying product %d of event %s: %w", i, envelope.ID, err)
 		}
 	}
 
@@ -92,6 +122,49 @@ func (r *SyncRepository) RecordWithMovements(
 func insertMovement(ctx context.Context, exec executor, movement *inventory.Movement) error {
 	if _, err := exec.Exec(ctx, movementInsert, movementValues(movement)...); err != nil {
 		return wrapWrite("appending movement", err)
+	}
+	return nil
+}
+
+// upsertProduct writes a product, keeping whichever edit wins.
+//
+// Last-write-wins, ordered by (updated_at, updated_by_device) — see ADR-015.
+// The tie-break is not decoration: without it two devices holding the same two
+// edits could settle on different prices depending on the order they arrived,
+// and nothing would ever detect it. Because the comparison reads only the two
+// rows, applying edits in any order gives the same answer everywhere.
+//
+// A losing edit updates nothing and is not an error. It lost; there is nothing
+// for the caller to do about it.
+//
+// The identity columns are deliberately absent from the SET list. A product's
+// business never changes, and an event that tried to move one into another
+// tenant must not be able to (ADR-008).
+func upsertProduct(ctx context.Context, exec executor, product *products.Product) error {
+	_, err := exec.Exec(ctx, productInsert+`
+		ON CONFLICT (id) DO UPDATE SET
+			category_id           = excluded.category_id,
+			name                  = excluded.name,
+			sku                   = excluded.sku,
+			barcode               = excluded.barcode,
+			description           = excluded.description,
+			brand                 = excluded.brand,
+			unit                  = excluded.unit,
+			divisible             = excluded.divisible,
+			purchase_price_minor  = excluded.purchase_price_minor,
+			selling_price_minor   = excluded.selling_price_minor,
+			currency              = excluded.currency,
+			tax_rate_basis_points = excluded.tax_rate_basis_points,
+			minimum_stock         = excluded.minimum_stock,
+			active                = excluded.active,
+			updated_at            = excluded.updated_at,
+			updated_by_device     = excluded.updated_by_device
+		WHERE excluded.updated_at > products.updated_at
+		   OR (excluded.updated_at = products.updated_at
+		       AND excluded.updated_by_device > products.updated_by_device)`,
+		productValues(product)...)
+	if err != nil {
+		return wrapWrite("applying product", err)
 	}
 	return nil
 }

@@ -316,6 +316,26 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX sync_inbox_deferred ON sync_inbox (state, server_sequence)`,
     ],
   },
+
+  {
+    version: 5,
+    name: "product conflict resolution",
+    statements: [
+      // Which device made the last edit, used only to break a tie between two
+      // edits stamped the same instant (ADR-015).
+      //
+      // Last-write-wins needs a total order, and a timestamp alone is not one.
+      // Breaking a tie by arrival order would let two devices holding the same
+      // two edits settle on different prices — permanently, silently, and with
+      // nothing able to detect it. The device identifier is arbitrary but
+      // deterministic, which is the property that matters.
+      //
+      // Nullable for rows written before this, and a null sorts below any
+      // device, so a real edit always beats one from before the column existed.
+      `ALTER TABLE products ADD COLUMN updated_by_device TEXT
+         REFERENCES devices (id) ON DELETE RESTRICT`,
+    ],
+  },
 ];
 
 /** The version the code in this build expects. */
