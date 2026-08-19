@@ -63,3 +63,26 @@ func TestZeroCurrencyIsUndefined(t *testing.T) {
 		t.Errorf("zero Currency String() = %q, want %q", got, "undefined")
 	}
 }
+
+// Zero is the total form of New(0, c): the caller already holds a currency, so
+// there is no error to handle.
+func TestZeroIsNothingInACurrency(t *testing.T) {
+	nothing := money.XAF.Zero()
+
+	if !nothing.Valid() || !nothing.IsZero() {
+		t.Errorf("XAF.Zero() = %s, want nothing in francs", nothing)
+	}
+	if nothing.Currency() != money.XAF {
+		t.Errorf("Currency = %s, want XAF", nothing.Currency())
+	}
+
+	// It fails closed: an undefined currency gives the invalid zero Money,
+	// which every operation refuses, rather than an amount in no currency.
+	var undefined money.Currency
+	if undefined.Zero().Valid() {
+		t.Error("an undefined currency produced a valid amount")
+	}
+	if _, err := undefined.Zero().Add(money.FromXAF(1)); err == nil {
+		t.Error("an amount in no currency was added to francs")
+	}
+}

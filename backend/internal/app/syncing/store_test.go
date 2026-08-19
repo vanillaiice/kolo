@@ -51,6 +51,9 @@ type fakeStore struct {
 	customerRecords map[customers.ID]*customers.Customer
 	// accounts is the financial account table, resolved the same way again.
 	accounts map[finance.AccountID]*finance.Account
+	// cash is money moved by hand, appended and keyed by the movement's own
+	// identifier so a replay collides rather than moving money twice.
+	cash map[finance.MovementID]*finance.Movement
 	// sales and salePayments are the sale tables. A sale is immutable, so a
 	// second one under the same identifier is refused as the primary key would.
 	sales        map[sales.ID]*sales.Sale
@@ -75,6 +78,7 @@ func newFakeStore() *fakeStore {
 		products:        make(map[products.ID]*products.Product),
 		customerRecords: make(map[customers.ID]*customers.Customer),
 		accounts:        make(map[finance.AccountID]*finance.Account),
+		cash:            make(map[finance.MovementID]*finance.Movement),
 		sales:           make(map[sales.ID]*sales.Sale),
 		salePayments:    make(map[sales.ID][]*sales.Payment),
 		credit:          make(map[customers.TransactionID]*customers.Transaction),
@@ -227,7 +231,31 @@ func (f *fakeStore) RecordAndApply(
 		}
 		f.accounts[account.ID()] = account
 	}
+
+	for _, movement := range effects.Cash {
+		if err := scope.Guard(movement.BusinessID(), movement.BranchID()); err != nil {
+			return postgres.Recorded, err
+		}
+		if _, exists := f.cash[movement.ID()]; exists {
+			return postgres.Recorded, &pgconn.PgError{Code: "23505", ConstraintName: "account_movements_pkey"}
+		}
+		f.cash[movement.ID()] = movement
+	}
 	return postgres.Recorded, nil
+}
+
+// cashOf returns the movements recorded against an account.
+func (f *fakeStore) cashOf(accountID finance.AccountID) []*finance.Movement {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	found := make([]*finance.Movement, 0, len(f.cash))
+	for _, movement := range f.cash {
+		if movement.AccountID() == accountID {
+			found = append(found, movement)
+		}
+	}
+	return found
 }
 
 // accountWins is the same comparison over an account's two fields.

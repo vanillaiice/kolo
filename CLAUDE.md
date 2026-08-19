@@ -50,6 +50,7 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `sync/customer-applier.ts` — applies a pulled `CUSTOMER_SAVED`, which is what unblocks a credit sale deferred waiting on its customer
 - `sync/payment-applier.ts` — applies a pulled `CUSTOMER_PAYMENT`, appending it: two tills each taking a payment is two payments, and both stand
 - `finance/accounts.ts` and `sync/account-applier.ts` — accounts on the device, settled by last-write-wins. Opening Orange Money on a phone is what puts it on every till at the next sync
+- `finance/cash.ts` and `sync/cash-applier.ts` — money moved by hand (§18): the float, cash to the bank, transfers, the correction after a count. `balanceOfAccount` is the three-source sum; `reconcile` sets a count against it
 - `products/products.ts` — products on the device, with the last-write-wins upsert. A losing edit is a `false` return, never an error
 - `sales/sales.ts` — **the POS fan-out** (§9). `completeSale` writes the sale, its lines, the stock they released, the payments, the customer ledger entry for anything left owing, and the outbox event in one transaction. `totalsOf` is exported so a till shows a running total from *this* arithmetic — a second implementation in the UI is how the screen comes to disagree with the receipt. `subtotalOf` is exported for the same reason, so the applier that receives a sale from another till works out the debt the way the till that sold it did
 - `sync/sale-applier.ts` — applies a pulled `SALE_COMPLETED`, `INSERT OR IGNORE` throughout so a replay cannot double a day's takings or a customer's debt. A sale for a customer this device has never seen is **deferred, not dropped**: the debt waits for the customer rather than being lost
@@ -184,7 +185,7 @@ Inspect existing architecture and files before changing them, and prefer the sma
 
 A pushed event is **recorded and applied in one transaction** (`SyncRepository.RecordAndApply`, taking an `Effects`). Recording without applying is the failure mode to watch for: the device is told "accepted", stops resending, and the stock never lands — undetectable afterwards, since the log says the event arrived. A new applied event type adds a field to `Effects` and a write inside that transaction, never a second write beside it.
 
-Applied types so far: `STOCK_MOVED` and `CUSTOMER_PAYMENT` (appends), `PRODUCT_SAVED`, `CUSTOMER_SAVED` and `ACCOUNT_SAVED` (last-write-wins upserts, ADR-015), and `SALE_COMPLETED` (immutable insert of the whole fan-out, **including the customer ledger entry for what the sale left owing**).
+Applied types so far: `STOCK_MOVED`, `CUSTOMER_PAYMENT` and `CASH_MOVED` (appends), `PRODUCT_SAVED`, `CUSTOMER_SAVED` and `ACCOUNT_SAVED` (last-write-wins upserts, ADR-015), and `SALE_COMPLETED` (immutable insert of the whole fan-out, **including the customer ledger entry for what the sale left owing**).
 
 `Effects.Credit` is a list, and the guard is per entry: a `CREDIT_SALE` must be against the sale the event carries, while every other kind stands alone — someone settling their tab is not about any one sale. Only a `PAYMENT` names a financial account, and every payment must: an account records where money went, so one on a write-off would claim a till took money it never saw. Since 00010 both `account_id` columns are real foreign keys: a payment naming an account nobody opened is money no report can place. Conflict policy is per type and deliberately different — two devices' movements both stand, but only one product edit can.
 
@@ -202,6 +203,31 @@ Forward compatibility runs in two directions, and they are opposite on purpose:
 The same applies to identifiers, and less visibly. Every identifier in a payload is parsed as a UUID on arrival (ADR-011), so a client that *derives* one — a line's identifier with a suffix, say — has its events rejected with the sale already recorded on the till and nothing there to explain it. Identifiers are drawn, never composed. `sales.test.ts` asserts the shape of every identifier a completed sale sends, which is the only thing standing between that rule and a silent one-way sync.
 
 The payload carries no business, branch, device, or user, and no currency: identity comes from the authenticated envelope (ADR-008) and everything is XAF (§46). Only the movement's own ID travels, because that ID is what makes a replay a duplicate.
+
+### What an account holds
+
+**Derived by summing the sources, never by a ledger that repeats them.** A
+balance is one query over three arms — `sale_payments`, the `PAYMENT` rows of
+`customer_transactions`, and `account_movements` — because each of those records
+its own facts once, where they happened. A dedicated account ledger would hold a
+second copy of every payment, and the two could disagree about the one number
+§18 exists to check.
+
+The consequence to remember: **a new source of money must be added to that query
+or the drawer reads short by exactly what it moved.** `BalanceOf` in
+`account_movement_repository.go` and `balanceOfAccount` in `cash.ts` are the two
+places.
+
+`account_movements` holds only what a *person* moved — the float at opening, cash
+to the bank, transfers, the correction after a count. A transfer is two rows, one
+against each account, each naming the other, written in one transaction: a
+balance sums the rows naming an account, so a single row could only ever be
+counted by one side, and half a transfer is money genuinely lost.
+
+A cash count changes nothing by itself. `Reconcile` says what the difference is;
+correcting it is an `ADJUSTMENT` movement, which is a new record of what was
+found rather than an edit to what was believed — that is what leaves an owner
+able to see that the drawer was short at all.
 
 ### Product, customer, and account conflicts
 

@@ -26,6 +26,19 @@ func (c Currency) Exponent() uint8 { return c.exponent }
 // Defined reports whether c is a real currency rather than the zero value.
 func (c Currency) Defined() bool { return c.code != "" }
 
+// Zero returns nothing, in this currency.
+//
+// The total form of New(0, c), for callers that already hold a currency and
+// would otherwise have to handle an error that cannot happen. It fails closed:
+// an undefined currency yields the invalid zero Money, which every operation
+// refuses, rather than a valid-looking amount in no currency.
+func (c Currency) Zero() Money {
+	if !c.Defined() {
+		return Money{}
+	}
+	return Money{currency: c}
+}
+
 // String implements fmt.Stringer.
 func (c Currency) String() string {
 	if !c.Defined() {

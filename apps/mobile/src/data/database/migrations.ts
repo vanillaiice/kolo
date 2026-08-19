@@ -626,6 +626,70 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX financial_accounts_by_business ON financial_accounts (business_id, name)`,
     ],
   },
+
+  {
+    version: 11,
+    name: "money moved by hand",
+    statements: [
+      // The float at opening, cash carried to the bank, a transfer between two
+      // of the business's own accounts, the correction after a count (§18).
+      //
+      // Money a sale or a customer payment moved is deliberately absent: those
+      // are recorded where they happened, and a balance sums them from there. A
+      // second copy could disagree with the first, and then there would be two
+      // answers to how much is in the drawer.
+      `CREATE TABLE account_movements (
+         id             TEXT    PRIMARY KEY,
+         account_id     TEXT    NOT NULL REFERENCES financial_accounts (id) ON DELETE RESTRICT,
+         business_id    TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         branch_id      TEXT    REFERENCES branches (id) ON DELETE RESTRICT,
+         type           TEXT    NOT NULL CHECK (type IN ('OPENING_BALANCE', 'CASH_IN', 'CASH_OUT',
+                                                         'TRANSFER_IN', 'TRANSFER_OUT',
+                                                         'ADJUSTMENT')),
+         -- Signed: positive puts money in, negative takes it out.
+         amount_minor   INTEGER NOT NULL CHECK (amount_minor <> 0),
+         currency       TEXT    NOT NULL CHECK (length(currency) = 3),
+         -- The other account in a transfer. A transfer is two rows, one against
+         -- each account, because a balance sums the rows naming it.
+         counterpart_id TEXT    REFERENCES financial_accounts (id) ON DELETE RESTRICT,
+         reason         TEXT,
+         user_id        TEXT    NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+         device_id      TEXT    NOT NULL REFERENCES devices (id) ON DELETE RESTRICT,
+         occurred_at    TEXT    NOT NULL,
+         recorded_at    TEXT    NOT NULL,
+
+         -- Cash taken out that read as money in would make a drawer look full
+         -- that is empty. A correction goes either way: a count can find more
+         -- or less.
+         CHECK (
+           (type IN ('OPENING_BALANCE', 'CASH_IN', 'TRANSFER_IN') AND amount_minor > 0)
+           OR (type IN ('CASH_OUT', 'TRANSFER_OUT') AND amount_minor < 0)
+           OR type = 'ADJUSTMENT'
+         ),
+         CHECK (type NOT IN ('ADJUSTMENT', 'CASH_OUT')
+                OR length(trim(coalesce(reason, ''))) > 0),
+         CHECK ((counterpart_id IS NOT NULL) = (type IN ('TRANSFER_IN', 'TRANSFER_OUT'))),
+         CHECK (counterpart_id IS NULL OR counterpart_id <> account_id),
+         CHECK (recorded_at >= occurred_at)
+       ) STRICT`,
+
+      `CREATE INDEX account_movements_by_account
+         ON account_movements (business_id, account_id, occurred_at, id)`,
+
+      // Append-only here as on the server: a count that finds the drawer short
+      // records an adjustment saying so rather than editing yesterday.
+      `CREATE TRIGGER account_movements_no_update
+         BEFORE UPDATE ON account_movements
+       BEGIN
+         SELECT RAISE(ABORT, 'account_movements is immutable: record a compensating movement');
+       END`,
+      `CREATE TRIGGER account_movements_no_delete
+         BEFORE DELETE ON account_movements
+       BEGIN
+         SELECT RAISE(ABORT, 'account_movements is immutable: record a compensating movement');
+       END`,
+    ],
+  },
 ];
 
 /** The version the code in this build expects. */

@@ -33,6 +33,10 @@ type Effects struct {
 	// Accounts are upserted the same way again. What an account holds is not
 	// state either — it is the sum of what moved through it (§18).
 	Accounts []*finance.Account
+	// Cash is money a person moved into or out of an account. Appended, like a
+	// stock movement: two devices' movements both stand, and a transfer's two
+	// halves are two of these.
+	Cash []*finance.Movement
 	// Sale is a completed sale with its lines. Immutable: a replay is refused
 	// by the primary key rather than overwriting financial history (§41).
 	Sale *sales.Sale
@@ -53,7 +57,7 @@ type Effects struct {
 // type this build records and relays without applying.
 func (e Effects) IsEmpty() bool {
 	return len(e.Movements) == 0 && len(e.Products) == 0 && len(e.Customers) == 0 &&
-		len(e.Accounts) == 0 && len(e.Credit) == 0 && e.Sale == nil
+		len(e.Accounts) == 0 && len(e.Credit) == 0 && len(e.Cash) == 0 && e.Sale == nil
 }
 
 // RecordAndApply stores an event and everything it changes, in one transaction.
@@ -113,6 +117,14 @@ func (r *SyncRepository) RecordAndApply(
 			return Recorded, fmt.Errorf("%w: account %d is missing", ErrQuery, i)
 		}
 		if err := scope.Guard(account.BusinessID(), account.BranchID()); err != nil {
+			return Recorded, err
+		}
+	}
+	for i, movement := range effects.Cash {
+		if movement == nil {
+			return Recorded, fmt.Errorf("%w: cash movement %d is missing", ErrQuery, i)
+		}
+		if err := scope.Guard(movement.BusinessID(), movement.BranchID()); err != nil {
 			return Recorded, err
 		}
 	}
@@ -204,6 +216,14 @@ func (r *SyncRepository) RecordAndApply(
 	for i, account := range effects.Accounts {
 		if err := upsertAccount(ctx, transaction, account); err != nil {
 			return Recorded, fmt.Errorf("applying account %d of event %s: %w", i, envelope.ID, err)
+		}
+	}
+	// A transfer's two halves are two movements in one event, so they land
+	// together or not at all: half a transfer is money genuinely lost.
+	for i, movement := range effects.Cash {
+		if err := insertAccountMovement(ctx, transaction, movement); err != nil {
+			return Recorded, fmt.Errorf("applying cash movement %d of event %s: %w",
+				i, envelope.ID, err)
 		}
 	}
 	// A sale and its payments join the same transaction as the event and the

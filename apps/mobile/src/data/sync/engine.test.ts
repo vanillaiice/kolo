@@ -11,6 +11,7 @@ import { pending, pendingCount, rejected } from "./outbox.ts";
 import { stockApplier, STOCK_MOVED } from "./stock-applier.ts";
 import { CUSTOMER_SAVED, customerApplier } from "./customer-applier.ts";
 import { ACCOUNT_SAVED, accountApplier } from "./account-applier.ts";
+import { CASH_MOVED, cashApplier } from "./cash-applier.ts";
 import { CUSTOMER_PAYMENT, paymentApplier } from "./payment-applier.ts";
 import { PRODUCT_SAVED, productApplier } from "./product-applier.ts";
 import { SALE_COMPLETED, saleApplier } from "./sale-applier.ts";
@@ -80,6 +81,7 @@ function newEngine(
     customerApplier,
     paymentApplier,
     accountApplier,
+    cashApplier,
   ],
 ): SyncEngine {
   return new SyncEngine({
@@ -1414,6 +1416,101 @@ describe("a sale from the other till", () => {
 
     assert.equal(outcome.unusable, 1);
     assert.equal(outcome.stillDeferred, 0);
+  });
+
+  it("takes money another device moved", async () => {
+    // The owner takes cash to the bank from their phone; the till has to know,
+    // or the evening count reads over and someone goes looking for money that
+    // is already in the bank.
+    const account = "cccccccc-cccc-7ccc-8ccc-cccccccccccc";
+    database.transaction((tx) =>
+      tx.run(
+        `INSERT INTO financial_accounts (id, business_id, name, kind, currency, created_at, updated_at)
+         VALUES (?, ?, 'Caisse', 'CASH', 'XAF', ?, ?)`,
+        [account, BUSINESS, AT, AT],
+      ),
+    );
+
+    const moved: IncomingEvent = {
+      event_id: "cash-event",
+      device_id: OTHER_DEVICE,
+      user_id: USER,
+      type: CASH_MOVED,
+      payload: {
+        movements: [
+          {
+            id: "cash-1",
+            account_id: account,
+            type: "CASH_OUT",
+            amount_minor: -20_000,
+            reason: "porté à la banque",
+            occurred_at: AT,
+          },
+        ],
+      },
+      occurred_at: AT,
+      sequence: 1,
+    };
+    transport.pullHandler = () => ({ events: [moved], cursor: 0, has_more: false });
+
+    await newEngine().sync();
+    // Twice: a resent movement must not empty the drawer again.
+    await newEngine().sync();
+
+    const held = database.transaction(
+      (tx) =>
+        tx.get(`SELECT coalesce(sum(amount_minor), 0) AS held FROM account_movements`)?.["held"],
+    );
+    assert.equal(held, -20_000);
+  });
+
+  it("sets aside a cash event that moved nothing", async () => {
+    const nothingMoved: IncomingEvent = {
+      event_id: "cash-event",
+      device_id: OTHER_DEVICE,
+      user_id: USER,
+      type: CASH_MOVED,
+      payload: { movements: [] },
+      occurred_at: AT,
+      sequence: 1,
+    };
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [nothingMoved], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.unusable, 1);
+    assert.equal(outcome.stillDeferred, 0);
+  });
+
+  it("waits for an account it has never seen rather than dropping the movement", async () => {
+    const stranger: IncomingEvent = {
+      event_id: "cash-event",
+      device_id: OTHER_DEVICE,
+      user_id: USER,
+      type: CASH_MOVED,
+      payload: {
+        movements: [
+          {
+            id: "cash-1",
+            account_id: "dddddddd-dddd-7ddd-8ddd-dddddddddddd",
+            type: "CASH_IN",
+            amount_minor: 5_000,
+            occurred_at: AT,
+          },
+        ],
+      },
+      occurred_at: AT,
+      sequence: 1,
+    };
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [stranger], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    // The account will arrive with its own event; dropping the movement would
+    // lose money nobody could reconstruct.
+    assert.equal(outcome.stillDeferred, 1);
   });
 
   it("sets aside a payload it cannot read", async () => {

@@ -92,10 +92,16 @@ const (
 	// like a product and a customer, and resolved the same way. This is what
 	// makes a Mobile Money provider a row rather than a release (§10, §17).
 	AccountSaved Type = "ACCOUNT_SAVED"
+	// CashMoved carries money a person put into or took out of an account: the
+	// float at opening, cash to the bank, a transfer between two of the
+	// business's own accounts, the correction after a count (§18). Appended,
+	// like a stock movement: two devices' movements both stand.
+	CashMoved Type = "CASH_MOVED"
 )
 
 var knownTypes = []Type{
-	StockMoved, SaleCompleted, ProductSaved, CustomerSaved, CustomerPaid, AccountSaved,
+	StockMoved, SaleCompleted, ProductSaved, CustomerSaved, CustomerPaid,
+	AccountSaved, CashMoved,
 }
 
 // Types returns every event type this server understands, in a stable order.
