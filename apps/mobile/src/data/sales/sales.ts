@@ -30,6 +30,16 @@ const CURRENCY = "XAF";
 /** One line of a cart. */
 export interface CartLine {
   readonly id: string;
+  /**
+   * The identifier for the stock movement this line releases.
+   *
+   * Supplied rather than derived from the line's, because it travels to the
+   * server in the event and has to be an identifier the server can read — the
+   * same UUID shape as every other identifier here (ADR-011). It is what makes
+   * a resent sale a duplicate rather than a second helping of stock out of the
+   * shop (§27).
+   */
+  readonly movementId: string;
   readonly productId: string;
   /** The product's name as it is now, kept with the line for the receipt. */
   readonly name: string;
@@ -74,6 +84,14 @@ export interface Cart {
   readonly recordedAt: string;
   /** The event identifier, which is what makes a replay a duplicate (§27). */
   readonly eventId: string;
+  /**
+   * The customer ledger entry for what this sale leaves owing (§13).
+   *
+   * Required when anything is outstanding and refused when nothing is: a debt
+   * needs an entry to carry it, and a settled sale that named one would be
+   * claiming a debt its own numbers say does not exist.
+   */
+  readonly creditTransactionId?: string | undefined;
 }
 
 /** Where a completed sale stands. */
@@ -103,6 +121,7 @@ export class SaleError extends Error {
  */
 export function completeSale(database: Database, cart: Cart): SaleTotals {
   const totals = totalsOf(cart);
+  checkCredit(cart, totals);
 
   return database.transaction((tx) => {
     insertSale(tx, cart);
@@ -117,6 +136,14 @@ export function completeSale(database: Database, cart: Cart): SaleTotals {
 
     for (const payment of cart.payments) {
       insertPayment(tx, cart, payment);
+    }
+
+    // What the sale left owing goes on the customer's ledger, in this same
+    // transaction. §9's fan-out reaches §13 here: goods left the shop and
+    // someone owes for them, and a sale recorded without the debt would be
+    // stock gone with nobody on the books for it.
+    if (totals.outstandingMinor > 0) {
+      insertCredit(tx, cart, totals.outstandingMinor);
     }
 
     enqueue(tx, {
@@ -134,6 +161,33 @@ export function completeSale(database: Database, cart: Cart): SaleTotals {
 }
 
 /**
+ * Checks the sale carries an entry for what it leaves owing, and none for what
+ * it does not.
+ *
+ * This is a rule about writing rather than about arithmetic, which is why it is
+ * here and not in {@link totalsOf}: a till showing a running total should not
+ * fail because the cashier has not yet decided how the balance will be carried.
+ *
+ * The identifier is the device's to draw, and must be, because it is what makes
+ * a resent sale a duplicate rather than a second debt (§27). The server applies
+ * exactly this pair of rules to the event, so a cart that fails here would have
+ * been rejected there — better to say so at the till, where the numbers are on
+ * the screen.
+ */
+function checkCredit(cart: Cart, totals: SaleTotals): void {
+  if (totals.outstandingMinor > 0 && (cart.creditTransactionId ?? "") === "") {
+    throw new SaleError(
+      `${totals.outstandingMinor} is left owing with no ledger entry to carry it`,
+    );
+  }
+  if (totals.outstandingMinor === 0 && cart.creditTransactionId !== undefined) {
+    throw new SaleError(
+      "a sale paid in full carries a ledger entry for a debt it does not leave",
+    );
+  }
+}
+
+/**
  * Works out what a sale comes to, refusing anything that does not add up.
  *
  * Exported because a till needs the running total of a cart before anything is
@@ -144,11 +198,7 @@ export function completeSale(database: Database, cart: Cart): SaleTotals {
 export function totalsOf(cart: Cart): SaleTotals {
   validate(cart);
 
-  let subtotalMinor = 0;
-  for (const [index, line] of cart.lines.entries()) {
-    subtotalMinor += lineTotalOf(line, index);
-  }
-
+  const subtotalMinor = subtotalOf(cart.lines);
   const discountMinor = cart.discountMinor ?? 0;
   if (discountMinor > subtotalMinor) {
     throw new SaleError(
@@ -179,6 +229,29 @@ export function totalsOf(cart: Cart): SaleTotals {
 }
 
 /**
+ * The sum of the lines, before the sale's own discount.
+ *
+ * Exported because the applier that receives a sale from another device has to
+ * work out what it left owing, and must reach that number by this arithmetic.
+ * A second implementation is how one till comes to think a customer owes 8,000
+ * and another 8,001.
+ */
+export function subtotalOf(lines: readonly PricedLine[]): number {
+  let subtotalMinor = 0;
+  for (const [index, line] of lines.entries()) {
+    subtotalMinor += lineTotalOf(line, index);
+  }
+  return subtotalMinor;
+}
+
+/** What is needed to price a line: the rest of a CartLine is for the record. */
+export interface PricedLine {
+  readonly unitPriceMinor: number;
+  readonly quantity: number;
+  readonly discountMinor?: number | undefined;
+}
+
+/**
  * What one line comes to.
  *
  * Price times quantity divided by the scale, rounded half away from zero. This
@@ -191,7 +264,7 @@ export function totalsOf(cart: Cart): SaleTotals {
  * positive, so it would agree today and diverge the moment a refund line was
  * added.
  */
-function lineTotalOf(line: CartLine, index: number): number {
+function lineTotalOf(line: PricedLine, index: number): number {
   const gross = roundHalfAwayFromZero(line.unitPriceMinor * line.quantity, QUANTITY_SCALE);
   const discount = line.discountMinor ?? 0;
   if (discount > gross) {
@@ -261,11 +334,6 @@ function insertItem(tx: Queryable, cart: Cart, line: CartLine): void {
  * Negative, because a sale removes stock. The reference points back at the
  * sale, which is what keeps the ledger traceable to the business event that
  * caused it (§40).
- *
- * The movement's identifier is derived from the line's rather than drawn fresh.
- * A sale and its movements are one fact, and deriving means a device that
- * somehow replayed its own write locally would collide on the primary key
- * rather than doubling the stock out of the shop.
  */
 function insertMovement(tx: Queryable, cart: Cart, line: CartLine): void {
   const type: MovementType = "SALE";
@@ -276,7 +344,7 @@ function insertMovement(tx: Queryable, cart: Cart, line: CartLine): void {
         user_id, device_id, occurred_at, recorded_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SALE', ?, NULL, ?, ?, ?, ?)`,
     [
-      movementIdFor(line.id),
+      line.movementId,
       cart.businessId,
       cart.branchId ?? null,
       line.productId,
@@ -294,14 +362,36 @@ function insertMovement(tx: Queryable, cart: Cart, line: CartLine): void {
 }
 
 /**
- * The movement identifier for a sale line.
+ * Writes the ledger entry for what the sale left owing.
  *
- * Exported so the applier that receives this sale from another device derives
- * the same one, and the movement it writes is recognised as the movement this
- * device already recorded rather than a second one.
+ * Positive, because a credit sale adds to what the customer owes, and signed so
+ * that summing the ledger is plain addition (§13). The reference points back at
+ * the sale, which is how a statement line is traced to what the customer
+ * actually took.
+ *
+ * The amount is this sale's own arithmetic rather than a figure handed in, so
+ * the debt cannot disagree with the receipt.
  */
-export function movementIdFor(lineId: string): string {
-  return `${lineId}:stock`;
+function insertCredit(tx: Queryable, cart: Cart, outstandingMinor: number): void {
+  tx.run(
+    `INSERT INTO customer_transactions
+       (id, customer_id, business_id, branch_id, type, amount_minor, currency,
+        reference_kind, reference_id, reason, user_id, device_id, occurred_at, recorded_at)
+     VALUES (?, ?, ?, ?, 'CREDIT_SALE', ?, ?, 'SALE', ?, NULL, ?, ?, ?, ?)`,
+    [
+      cart.creditTransactionId ?? null,
+      cart.customerId ?? null,
+      cart.businessId,
+      cart.branchId ?? null,
+      outstandingMinor,
+      CURRENCY,
+      cart.id,
+      cart.userId,
+      cart.deviceId,
+      cart.occurredAt,
+      cart.recordedAt,
+    ],
+  );
 }
 
 function insertPayment(tx: Queryable, cart: Cart, payment: CartPayment): void {
@@ -364,6 +454,9 @@ function describe(cart: Cart): Record<string, unknown> {
   if (cart.customerId !== undefined) {
     sale["customer_id"] = cart.customerId;
   }
+  if (cart.creditTransactionId !== undefined) {
+    sale["credit_transaction_id"] = cart.creditTransactionId;
+  }
   if ((cart.discountMinor ?? 0) !== 0) {
     sale["discount_minor"] = cart.discountMinor;
   }
@@ -390,7 +483,7 @@ function describe(cart: Cart): Record<string, unknown> {
     // The movements travel with the sale that caused them, so the server
     // applies the whole fan-out as one thing.
     movements: cart.lines.map((line) => ({
-      id: movementIdFor(line.id),
+      id: line.movementId,
       product_id: line.productId,
       type: "SALE",
       quantity: -line.quantity,
@@ -428,6 +521,9 @@ function validate(cart: Cart): void {
   for (const [index, line] of cart.lines.entries()) {
     if (line.id.trim() === "" || line.productId.trim() === "" || line.name.trim() === "") {
       throw new SaleError(`line ${index} is missing an identifier, a product, or a name`);
+    }
+    if (typeof line.movementId !== "string" || line.movementId.trim() === "") {
+      throw new SaleError(`line ${index} is missing the identifier for the stock it releases`);
     }
     if (lineIds.has(line.id)) {
       throw new SaleError(`line ${line.id} appears twice`);

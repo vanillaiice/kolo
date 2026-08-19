@@ -19,6 +19,7 @@ const USER = "22222222-2222-7222-8222-222222222222";
 const DEVICE = "33333333-3333-7333-8333-333333333333";
 const OTHER_DEVICE = "44444444-4444-7444-8444-444444444444";
 const PRODUCT = "55555555-5555-7555-8555-555555555555";
+const CUSTOMER = "66666666-6666-7666-8666-666666666666";
 const AT = "2026-08-14T09:30:00.000Z";
 
 /**
@@ -100,6 +101,8 @@ function seed(): void {
     tx.run(`INSERT INTO products (id, business_id, name, unit, divisible, selling_price_minor,
                                   currency, created_at, updated_at)
             VALUES (?, ?, 'Riz 5kg', 'sac', 0, 6500, 'XAF', ?, ?)`, [PRODUCT, BUSINESS, AT, AT]);
+    tx.run(`INSERT INTO customers (id, business_id, name, created_at, updated_at)
+            VALUES (?, ?, 'Jean Mbarga', ?, ?)`, [CUSTOMER, BUSINESS, AT, AT]);
   });
 }
 
@@ -1025,6 +1028,37 @@ describe("a sale from the other till", () => {
     }));
   }
 
+  /** What the local ledger says a customer owes, which is a sum and never a
+   * stored number (§13). */
+  function owedBy(customerId: string): number {
+    return database.transaction(
+      (tx) =>
+        (tx.get(
+          `SELECT coalesce(sum(amount_minor), 0) AS owed
+             FROM customer_transactions WHERE customer_id = ?`,
+          [customerId],
+        )?.["owed"] as number) ?? 0,
+    );
+  }
+
+  /** A sale from the other till that leaves part of the bill owing. */
+  function creditSaleEvent(sequence: number, saleId: string, paidMinor: number): IncomingEvent {
+    const event = saleEvent(sequence, saleId);
+    const payload = event.payload as Record<string, Record<string, unknown>>;
+    return {
+      ...event,
+      payload: {
+        ...payload,
+        sale: {
+          ...payload["sale"],
+          customer_id: CUSTOMER,
+          credit_transaction_id: `${saleId}-credit`,
+        },
+        payments: [{ id: `${saleId}-pay-1`, account_id: "till", amount_minor: paidMinor }],
+      },
+    };
+  }
+
   it("lands whole: the sale, its lines, its payments, and its stock", async () => {
     transport.pullHandler = (from) =>
       from === 0 ? { events: [saleEvent(1, "remote-sale")], cursor: 1, has_more: false } : empty();
@@ -1084,6 +1118,83 @@ describe("a sale from the other till", () => {
     assert.equal(outcome.stillDeferred, 1, "a sale was dropped rather than kept");
     // And nothing half-landed: the sale row must not survive its failed lines.
     assert.deepEqual(countsOf(), { sales: 0, items: 0, payments: 0 });
+  });
+
+  it("puts what a credit sale left owing on the customer's ledger", async () => {
+    transport.pullHandler = (from) =>
+      from === 0
+        ? { events: [creditSaleEvent(1, "remote-sale", 10_000)], cursor: 1, has_more: false }
+        : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.applied, 1);
+    // 18,500 sold, 10,000 paid. The debt is worked out from the sale, not read
+    // off the wire.
+    assert.equal(owedBy(CUSTOMER), 8_500);
+  });
+
+  it("does not double a debt when the sale arrives again", async () => {
+    transport.pullHandler = () => ({
+      events: [creditSaleEvent(1, "remote-sale", 10_000)],
+      cursor: 0,
+      has_more: false,
+    });
+
+    await newEngine().sync();
+    await newEngine().sync();
+
+    assert.equal(owedBy(CUSTOMER), 8_500);
+  });
+
+  it("waits for a customer it has never seen rather than dropping the debt", async () => {
+    const original = creditSaleEvent(1, "remote-sale", 10_000);
+    const payload = original.payload as Record<string, Record<string, unknown>>;
+    const stranger: IncomingEvent = {
+      ...original,
+      payload: {
+        ...payload,
+        sale: { ...payload["sale"], customer_id: "77777777-7777-7777-8777-777777777777" },
+      },
+    };
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [stranger], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    // The customer will arrive with their own event. Dropping the sale would
+    // lose a debt nobody could reconstruct.
+    assert.equal(outcome.applied, 0);
+    assert.equal(outcome.stillDeferred, 1, "a credit sale was dropped rather than kept");
+    assert.deepEqual(countsOf(), { sales: 0, items: 0, payments: 0 });
+  });
+
+  it("sets aside a sale that leaves a debt with no entry to carry it", async () => {
+    const original = creditSaleEvent(1, "remote-sale", 10_000);
+    const payload = original.payload as Record<string, Record<string, unknown>>;
+    const sale = { ...payload["sale"] };
+    delete sale["credit_transaction_id"];
+    const event: IncomingEvent = { ...original, payload: { ...payload, sale } };
+
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [event], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    // Waiting would not help: no later event makes this sale add up.
+    assert.equal(outcome.unusable, 1);
+    assert.equal(owedBy(CUSTOMER), 0);
+  });
+
+  it("sets aside a settled sale claiming a debt", async () => {
+    const event = creditSaleEvent(1, "remote-sale", 18_500);
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [event], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.unusable, 1);
+    assert.equal(owedBy(CUSTOMER), 0);
   });
 
   it("sets aside a payload it cannot read", async () => {

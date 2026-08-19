@@ -19,10 +19,13 @@ import (
 type saleBody struct {
 	saleID     sales.ID
 	customerID string
-	items      []map[string]any
-	payments   []map[string]any
-	movements  []map[string]any
-	discount   int64
+	// creditTransactionID is the ledger entry for what the sale leaves owing.
+	// A sale paid in full leaves it out, and one on credit must not.
+	creditTransactionID string
+	items               []map[string]any
+	payments            []map[string]any
+	movements           []map[string]any
+	discount            int64
 }
 
 func (b saleBody) payload(t *testing.T) json.RawMessage {
@@ -65,6 +68,9 @@ func (b saleBody) payload(t *testing.T) json.RawMessage {
 	}
 	if b.customerID != "" {
 		sale["customer_id"] = b.customerID
+	}
+	if b.creditTransactionID != "" {
+		sale["credit_transaction_id"] = b.creditTransactionID
 	}
 	if b.discount != 0 {
 		sale["discount_minor"] = b.discount
@@ -175,8 +181,9 @@ func TestACreditSaleNeedsItsCustomer(t *testing.T) {
 		saleID := sales.NewID()
 
 		body := saleBody{
-			saleID:     saleID,
-			customerID: customers.NewID().String(),
+			saleID:              saleID,
+			customerID:          customers.NewID().String(),
+			creditTransactionID: customers.NewTransactionID().String(),
 			payments: []map[string]any{{
 				"id":           sales.NewPaymentID().String(),
 				"account_id":   finance.NewAccountID().String(),
@@ -212,6 +219,154 @@ func TestACreditSaleNeedsItsCustomer(t *testing.T) {
 			t.Errorf("Status = %q, want rejected", got)
 		}
 	})
+}
+
+// §9's fan-out reaching §13: goods left the shop unpaid for, so the customer's
+// ledger gains the debt in the same transaction as the sale.
+func TestACreditSaleReachesTheCustomersLedger(t *testing.T) {
+	f := newFixture(t)
+
+	saleID := sales.NewID()
+	customerID := customers.NewID()
+	transactionID := customers.NewTransactionID()
+	body := saleBody{
+		saleID:              saleID,
+		customerID:          customerID.String(),
+		creditTransactionID: transactionID.String(),
+		payments: []map[string]any{{
+			"id":           sales.NewPaymentID().String(),
+			"account_id":   finance.NewAccountID().String(),
+			"amount_minor": 10_000,
+		}},
+	}
+	if got := f.push(t, f.saleEvent(1, body.payload(t))).Results[0].Status; got != syncing.Accepted {
+		t.Fatalf("Status = %q, want accepted", got)
+	}
+
+	ledger := f.store.creditOf(customerID)
+	if len(ledger) != 1 {
+		t.Fatalf("the ledger holds %d entries, want the one the sale created", len(ledger))
+	}
+	entry := ledger[0]
+	if entry.ID() != transactionID {
+		t.Errorf("entry %s, want the identifier the device drew (%s)", entry.ID(), transactionID)
+	}
+	if entry.Type() != customers.CreditSale {
+		t.Errorf("type = %s, want CREDIT_SALE", entry.Type())
+	}
+	// 18,500 sold, 10,000 paid. The debt is the sale's own arithmetic, not a
+	// figure the payload was trusted for.
+	if got := entry.Amount().Amount(); got != 8_500 {
+		t.Errorf("owed %d, want 8500", got)
+	}
+	reference, named := entry.Reference()
+	if !named || reference.Kind != "SALE" || reference.ID != saleID.String() {
+		t.Errorf("reference = %v, want the sale it came from", reference)
+	}
+	// When the sale happened, not when the server heard about it: a till
+	// offline for days must not push a week of debts into today.
+	if !entry.OccurredAt().Equal(f.store.sale(saleID).OccurredAt()) {
+		t.Errorf("the entry occurred at %s, the sale at %s",
+			entry.OccurredAt(), f.store.sale(saleID).OccurredAt())
+	}
+}
+
+// A sale that leaves something owing must say which ledger entry carries it. If
+// the server drew that identifier instead, every resent backlog would write the
+// debt again and the customer would owe twice for one purchase (§27).
+func TestACreditSaleWithoutItsLedgerEntryIsRejected(t *testing.T) {
+	f := newFixture(t)
+
+	body := saleBody{
+		customerID: customers.NewID().String(),
+		payments: []map[string]any{{
+			"id":           sales.NewPaymentID().String(),
+			"account_id":   finance.NewAccountID().String(),
+			"amount_minor": 10_000,
+		}},
+	}
+	if got := f.push(t, f.saleEvent(1, body.payload(t))).Results[0].Status; got != syncing.Rejected {
+		t.Errorf("Status = %q, want rejected", got)
+	}
+}
+
+// The other direction: a device saying a settled sale created a debt disagrees
+// with its own numbers, and is told rather than having one of the two silently
+// preferred.
+func TestASettledSaleCarryingALedgerEntryIsRejected(t *testing.T) {
+	f := newFixture(t)
+
+	body := saleBody{
+		customerID:          customers.NewID().String(),
+		creditTransactionID: customers.NewTransactionID().String(),
+	}
+	if got := f.push(t, f.saleEvent(1, body.payload(t))).Results[0].Status; got != syncing.Rejected {
+		t.Errorf("Status = %q, want rejected", got)
+	}
+}
+
+func TestACreditSaleWithAnUnreadableLedgerEntryIsRejected(t *testing.T) {
+	f := newFixture(t)
+
+	body := saleBody{
+		customerID:          customers.NewID().String(),
+		creditTransactionID: "not-an-identifier",
+		payments: []map[string]any{{
+			"id":           sales.NewPaymentID().String(),
+			"account_id":   finance.NewAccountID().String(),
+			"amount_minor": 10_000,
+		}},
+	}
+	if got := f.push(t, f.saleEvent(1, body.payload(t))).Results[0].Status; got != syncing.Rejected {
+		t.Errorf("Status = %q, want rejected", got)
+	}
+}
+
+// A cash sale creates no debt. An entry of zero would appear on a statement
+// saying nothing happened.
+func TestASalePaidInFullCreatesNoLedgerEntry(t *testing.T) {
+	f := newFixture(t)
+
+	customerID := customers.NewID()
+	body := saleBody{customerID: customerID.String()}
+	if got := f.push(t, f.saleEvent(1, body.payload(t))).Results[0].Status; got != syncing.Accepted {
+		t.Fatalf("Status = %q, want accepted", got)
+	}
+
+	if entries := f.store.creditOf(customerID); len(entries) != 0 {
+		t.Errorf("a settled sale left %d entries on the ledger", len(entries))
+	}
+}
+
+// A till resending its backlog must not put the debt on twice. The replay is
+// refused by the event identifier, and the ledger entry's own identifier is the
+// second line of defence behind it.
+func TestAReplayedCreditSaleDoesNotDoubleTheDebt(t *testing.T) {
+	f := newFixture(t)
+
+	customerID := customers.NewID()
+	body := saleBody{
+		saleID:              sales.NewID(),
+		customerID:          customerID.String(),
+		creditTransactionID: customers.NewTransactionID().String(),
+		payments: []map[string]any{{
+			"id":           sales.NewPaymentID().String(),
+			"account_id":   finance.NewAccountID().String(),
+			"amount_minor": 10_000,
+		}},
+	}
+	envelope := f.saleEvent(1, body.payload(t))
+
+	if got := f.push(t, envelope).Results[0].Status; got != syncing.Accepted {
+		t.Fatalf("Status = %q, want accepted", got)
+	}
+	if got := f.push(t, envelope).Results[0].Status; got != syncing.Duplicate {
+		t.Fatalf("Status = %q, want duplicate", got)
+	}
+
+	if entries := f.store.creditOf(customerID); len(entries) != 1 {
+		t.Errorf("the ledger holds %d entries after a resend, want 1", len(entries))
+	}
 }
 
 // Paying more than the bill is a device sending the wrong figure, and would put
@@ -394,14 +549,22 @@ func TestASaleWhollyOnCreditIsAccepted(t *testing.T) {
 	f := newFixture(t)
 
 	saleID := sales.NewID()
+	customerID := customers.NewID()
 	body := saleBody{
-		saleID:     saleID,
-		customerID: customers.NewID().String(),
-		payments:   []map[string]any{},
+		saleID:              saleID,
+		customerID:          customerID.String(),
+		creditTransactionID: customers.NewTransactionID().String(),
+		payments:            []map[string]any{},
 	}
 
 	if got := f.push(t, f.saleEvent(1, body.payload(t))).Results[0].Status; got != syncing.Accepted {
 		t.Fatalf("Status = %q, want accepted", got)
+	}
+
+	// The whole bill goes on the ledger, since none of it was paid.
+	ledger := f.store.creditOf(customerID)
+	if len(ledger) != 1 || ledger[0].Amount().Amount() != 18_500 {
+		t.Errorf("the ledger holds %v, want one entry of 18500", ledger)
 	}
 
 	settlement, err := sales.Settle(f.store.sale(saleID), f.store.paymentsOf(saleID))

@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,7 +11,9 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
+	"github.com/vanillaiice/kolo/backend/internal/domain/sales"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sync"
+	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/quantity"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres/pgtest"
@@ -291,6 +294,103 @@ func TestApplyingRefusesTheZeroScope(t *testing.T) {
 		context.Background(), business.Scope{}, f.event(t, 1),
 		postgres.Effects{Movements: []*inventory.Movement{f.movement(t, 3)}}); err == nil {
 		t.Fatal("the zero scope was accepted")
+	}
+}
+
+// A sale arriving from another till lands whole — the sale, its payment, the
+// stock it released, and the debt it left — in the one transaction that also
+// files the event.
+func TestAnAppliedSaleLandsWithItsCredit(t *testing.T) {
+	f := newSaleFixture(t)
+
+	customerID := f.customer(t, "Jean Mbarga")
+	sale := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = customerID })
+	effects := postgres.Effects{
+		Sale:      sale,
+		Payments:  []*sales.Payment{f.payment(t, sale, 10_000)},
+		Movements: []*inventory.Movement{f.soldMovement(t, sale, 2)},
+		Credit:    f.creditFor(t, sale, customerID, 3_000),
+	}
+
+	event := f.event(t, 1)
+	if _, err := f.events.RecordAndApply(f.ctx, f.scope, event, effects); err != nil {
+		t.Fatalf("RecordAndApply: %v", err)
+	}
+
+	ledger := postgres.NewCreditRepository(f.pool)
+	balance, err := ledger.BalanceOf(f.ctx, f.scope, customerID)
+	if err != nil {
+		t.Fatalf("BalanceOf: %v", err)
+	}
+	if got := balance.Outstanding; !got.Equal(money.FromXAF(3_000)) {
+		t.Errorf("outstanding = %s, want 3000 XAF", got)
+	}
+
+	// A till resending its backlog must not put the debt on twice (§27).
+	outcome, err := f.events.RecordAndApply(f.ctx, f.scope, event, effects)
+	if err != nil {
+		t.Fatalf("replaying: %v", err)
+	}
+	if outcome != postgres.AlreadyRecorded {
+		t.Errorf("outcome = %v, want AlreadyRecorded", outcome)
+	}
+	balance, err = ledger.BalanceOf(f.ctx, f.scope, customerID)
+	if err != nil {
+		t.Fatalf("BalanceOf: %v", err)
+	}
+	if balance.Entries != 1 {
+		t.Errorf("the ledger holds %d entries after a resend, want 1", balance.Entries)
+	}
+}
+
+// A debt arriving on its own would be a balance appearing from nowhere, with no
+// sale a customer could be shown to explain it.
+func TestACreditEntryWithoutItsSaleIsRefused(t *testing.T) {
+	f := newSaleFixture(t)
+
+	customerID := f.customer(t, "Jean Mbarga")
+	sale := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = customerID })
+
+	err := errFrom(f.events.RecordAndApply(f.ctx, f.scope, f.event(t, 1),
+		postgres.Effects{Credit: f.creditFor(t, sale, customerID, 3_000)}))
+	if !errors.Is(err, postgres.ErrQuery) {
+		t.Errorf("got %v, want ErrQuery", err)
+	}
+}
+
+// The entry must be against the sale the event carries. One naming a different
+// sale would put a debt on a customer for a purchase this event says nothing
+// about.
+func TestACreditEntryAgainstAnotherSaleIsRefused(t *testing.T) {
+	f := newSaleFixture(t)
+
+	customerID := f.customer(t, "Jean Mbarga")
+	sale := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = customerID })
+	elsewhere := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = customerID })
+
+	err := errFrom(f.events.RecordAndApply(f.ctx, f.scope, f.event(t, 1), postgres.Effects{
+		Sale:   sale,
+		Credit: f.creditFor(t, elsewhere, customerID, 13_000),
+	}))
+	if !errors.Is(err, postgres.ErrQuery) {
+		t.Errorf("got %v, want ErrQuery", err)
+	}
+}
+
+// Another tenant's debt cannot be written through this event, whatever the
+// payload said (ADR-008).
+func TestACreditEntryOutsideTheScopeIsRefused(t *testing.T) {
+	f, other := newSaleFixture(t), newSaleFixture(t)
+
+	customerID := other.customer(t, "Jean Mbarga")
+	sale := other.sale(t, func(s *sales.Snapshot) { s.CustomerID = customerID })
+
+	err := errFrom(f.events.RecordAndApply(f.ctx, f.scope, f.event(t, 1), postgres.Effects{
+		Sale:   f.sale(t),
+		Credit: other.creditFor(t, sale, customerID, 3_000),
+	}))
+	if !errors.Is(err, business.ErrCrossTenant) {
+		t.Errorf("got %v, want ErrCrossTenant", err)
 	}
 }
 

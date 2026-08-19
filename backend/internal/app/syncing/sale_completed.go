@@ -35,6 +35,14 @@ type SalePayload struct {
 	CustomerID string            `json:"customer_id,omitempty"`
 	Number     string            `json:"number"`
 	Items      []SaleItemPayload `json:"items"`
+	// CreditTransactionID names the customer's ledger entry for what this sale
+	// left owing, and is absent from a sale paid in full.
+	//
+	// The device draws it, as it draws every other identifier here, because
+	// that identifier is what makes a replay a duplicate (§27). A server that
+	// invented one would write a second debt every time a till resent its
+	// backlog, and the customer would owe twice for one purchase.
+	CreditTransactionID string `json:"credit_transaction_id,omitempty"`
 	// DiscountMinor is taken off the whole sale, after the lines.
 	DiscountMinor int64  `json:"discount_minor,omitempty"`
 	Note          string `json:"note,omitempty"`
@@ -113,11 +121,82 @@ func completedSale(
 	// paid more than its total, or owed with nobody to owe it, is a payload the
 	// server can read but must not store — and the device needs to be told,
 	// because it has the same numbers on its own screen.
-	if _, err := sales.Settle(sale, payments); err != nil {
+	settlement, err := sales.Settle(sale, payments)
+	if err != nil {
 		return postgres.Effects{}, fmt.Errorf("%w: %w", sync.ErrInvalidPayload, err)
 	}
 
-	return postgres.Effects{Sale: sale, Payments: payments, Movements: movements}, nil
+	credit, err := payload.Sale.toCredit(scope, envelope, sale, settlement, recordedAt)
+	if err != nil {
+		return postgres.Effects{}, err
+	}
+
+	return postgres.Effects{
+		Sale: sale, Payments: payments, Movements: movements, Credit: credit,
+	}, nil
+}
+
+// toCredit builds the ledger entry a sale left unpaid produces, and nil for one
+// paid in full.
+//
+// This is §9's fan-out reaching §13: goods left the shop and someone owes for
+// them, so the customer's ledger gains an entry in the same transaction as the
+// sale. Deriving it here rather than trusting an amount from the payload means
+// the debt is the sale's own arithmetic — a device that sent a different figure
+// could otherwise record a purchase of 25,000 as a debt of 2,500.
+//
+// Whether the sale is on credit is decided by the settlement, not by the
+// presence of an identifier. A device that disagrees with the server about
+// which of those is true is told, rather than having one of the two silently
+// preferred.
+func (s SalePayload) toCredit(
+	scope business.Scope,
+	envelope sync.Envelope,
+	sale *sales.Sale,
+	settlement sales.Settlement,
+	recordedAt time.Time,
+) (*customers.Transaction, error) {
+	if !settlement.OnCredit() {
+		if s.CreditTransactionID != "" {
+			return nil, fmt.Errorf(
+				"%w: the sale carries a credit entry but leaves nothing owing",
+				sync.ErrInvalidPayload)
+		}
+		return nil, nil
+	}
+	if s.CreditTransactionID == "" {
+		return nil, fmt.Errorf("%w: %s is left owing with no credit entry to carry it",
+			sync.ErrInvalidPayload, settlement.Outstanding)
+	}
+
+	transactionID, err := customers.ParseTransactionID(s.CreditTransactionID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", sync.ErrInvalidPayload, err)
+	}
+	// Settle has already refused an outstanding balance with nobody to owe it,
+	// so the sale names a customer by the time this runs.
+	customerID, _ := sale.Customer()
+
+	branchID, _ := scope.Branch()
+	credit, err := customers.RecordTransaction(customers.TransactionSnapshot{
+		ID:         transactionID,
+		CustomerID: customerID,
+		BusinessID: scope.Business(),
+		BranchID:   branchID,
+		Type:       customers.CreditSale,
+		Amount:     settlement.Outstanding,
+		// What caused the debt, which is how a statement line is traced back to
+		// what the customer actually took (§13, §40).
+		Reference:  customers.Reference{Kind: "SALE", ID: sale.ID().String()},
+		UserID:     envelope.UserID,
+		DeviceID:   envelope.DeviceID,
+		OccurredAt: sale.OccurredAt(),
+		RecordedAt: recordedAt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", sync.ErrInvalidPayload, err)
+	}
+	return credit, nil
 }
 
 func (s SalePayload) toSale(

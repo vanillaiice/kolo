@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
+	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sales"
@@ -30,6 +31,11 @@ type Effects struct {
 	Sale *sales.Sale
 	// Payments are what was paid against that sale.
 	Payments []*sales.Payment
+	// Credit is the ledger entry a sale left unpaid produces, and is nil for
+	// one paid in full. It belongs in this struct rather than beside it: a debt
+	// recorded without its sale, or a sale recorded without the debt, is a
+	// customer who owes a different amount than the shop believes.
+	Credit *customers.Transaction
 }
 
 // IsEmpty reports whether the event changes nothing, which is true of an event
@@ -99,6 +105,23 @@ func (r *SyncRepository) RecordAndApply(
 				ErrQuery, payment.ID())
 		}
 	}
+	if effects.Credit != nil {
+		if err := scope.Guard(effects.Credit.BusinessID(), effects.Credit.BranchID()); err != nil {
+			return Recorded, err
+		}
+		// A ledger entry travelling with an event that carries no sale would be
+		// a debt appearing from nowhere. It arrives as part of §9's fan-out or
+		// not at all.
+		if effects.Sale == nil {
+			return Recorded, fmt.Errorf("%w: credit entry %s names no sale this event carries",
+				ErrQuery, effects.Credit.ID())
+		}
+		if reference, named := effects.Credit.Reference(); !named ||
+			reference.ID != effects.Sale.ID().String() {
+			return Recorded, fmt.Errorf("%w: credit entry %s is not against sale %s",
+				ErrQuery, effects.Credit.ID(), effects.Sale.ID())
+		}
+	}
 
 	transaction, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -146,6 +169,15 @@ func (r *SyncRepository) RecordAndApply(
 	for i, payment := range effects.Payments {
 		if err := insertPayment(ctx, transaction, payment); err != nil {
 			return Recorded, fmt.Errorf("applying payment %d of event %s: %w", i, envelope.ID, err)
+		}
+	}
+	// What the sale left owing joins the same transaction. A sale that landed
+	// without its credit entry would be goods gone with nobody recorded as
+	// owing for them — and nothing afterwards could tell, because the sale
+	// itself looks complete.
+	if effects.Credit != nil {
+		if err := insertCreditTransaction(ctx, transaction, effects.Credit); err != nil {
+			return Recorded, fmt.Errorf("applying the credit of event %s: %w", envelope.ID, err)
 		}
 	}
 

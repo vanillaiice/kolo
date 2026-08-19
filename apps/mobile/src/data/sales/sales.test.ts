@@ -6,7 +6,7 @@ import { migrate } from "../database/migrations.ts";
 import { openDatabase } from "../database/node-sqlite.ts";
 import { stockOf } from "../inventory/movements.ts";
 import { pending } from "../sync/outbox.ts";
-import { completeSale, movementIdFor, SaleError, totalsOf, type Cart } from "./sales.ts";
+import { completeSale, SaleError, totalsOf, type Cart } from "./sales.ts";
 
 const BUSINESS = "11111111-1111-7111-8111-111111111111";
 const USER = "22222222-2222-7222-8222-222222222222";
@@ -15,6 +15,7 @@ const RICE = "55555555-5555-7555-8555-555555555555";
 const SUGAR = "66666666-6666-7666-8666-666666666666";
 const TILL_ACCOUNT = "77777777-7777-7777-8777-777777777777";
 const WALLET = "88888888-8888-7888-8888-888888888888";
+const CUSTOMER = "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa";
 const CREATED = "2026-08-01T08:00:00.000Z";
 const SOLD = "2026-08-14T09:30:00.000Z";
 const RECORDED = "2026-08-14T10:30:00.000Z";
@@ -38,6 +39,11 @@ function seed(): void {
        VALUES (?, ?, 'Till', 'ANDROID', ?, ?, ?)`,
       [TILL, BUSINESS, CREATED, CREATED, CREATED],
     );
+    tx.run(
+      `INSERT INTO customers (id, business_id, name, created_at, updated_at)
+       VALUES (?, ?, 'Jean Mbarga', ?, ?)`,
+      [CUSTOMER, BUSINESS, CREATED, CREATED],
+    );
     for (const [id, name, price] of [
       [RICE, "Riz parfumé 5kg", 6_500],
       [SUGAR, "Sucre 1kg", 900],
@@ -50,6 +56,21 @@ function seed(): void {
       );
     }
   });
+}
+
+/** What the ledger says the customer owes: a sum, never a stored number (§13). */
+function owed(): number {
+  return database.transaction(
+    (tx) =>
+      (tx.get(`SELECT coalesce(sum(amount_minor), 0) AS owed FROM customer_transactions`)?.[
+        "owed"
+      ] as number) ?? 0,
+  );
+}
+
+/** How many events are waiting to be sent. */
+function pendingCount(): number {
+  return database.transaction((tx) => pending(tx, 10).length);
 }
 
 let counter = 0;
@@ -67,6 +88,7 @@ function aCart(overrides: Partial<Cart> = {}): Cart {
     lines: [
       {
         id: nextId("line"),
+        movementId: nextId("mov"),
         productId: RICE,
         name: "Riz parfumé 5kg",
         unitPriceMinor: 6_500,
@@ -119,6 +141,7 @@ describe("completing a sale", () => {
       lines: [
         {
           id: nextId("line"),
+          movementId: nextId("mov"),
           productId: RICE,
           name: "Riz parfumé 5kg",
           unitPriceMinor: 6_500,
@@ -126,6 +149,7 @@ describe("completing a sale", () => {
         },
         {
           id: nextId("line"),
+          movementId: nextId("mov"),
           productId: "99999999-9999-7999-8999-999999999999",
           name: "Inconnu",
           unitPriceMinor: 500,
@@ -155,6 +179,7 @@ describe("completing a sale", () => {
         lines: [
           {
             id: nextId("line"),
+            movementId: nextId("mov"),
             productId: RICE,
             name: "Riz parfumé 5kg",
             unitPriceMinor: 6_500,
@@ -162,6 +187,7 @@ describe("completing a sale", () => {
           },
           {
             id: nextId("line"),
+            movementId: nextId("mov"),
             productId: SUGAR,
             name: "Sucre 1kg",
             unitPriceMinor: 900,
@@ -181,6 +207,7 @@ describe("completing a sale", () => {
       lines: [
         {
           id: nextId("line"),
+          movementId: nextId("mov"),
           productId: RICE,
           name: "Riz parfumé 5kg",
           unitPriceMinor: 18_500,
@@ -220,7 +247,8 @@ describe("completing a sale", () => {
     const totals = completeSale(
       database,
       aCart({
-        customerId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
+        customerId: CUSTOMER,
+        creditTransactionId: nextId("credit"),
         payments: [{ id: nextId("pay"), accountId: TILL_ACCOUNT, amountMinor: 5_000 }],
       }),
     );
@@ -231,11 +259,133 @@ describe("completing a sale", () => {
   it("completes a sale paid entirely on credit", () => {
     const totals = completeSale(
       database,
-      aCart({ customerId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa", payments: [] }),
+      aCart({ customerId: CUSTOMER, creditTransactionId: nextId("credit"), payments: [] }),
     );
 
     assert.equal(totals.paidMinor, 0);
     assert.equal(totals.outstandingMinor, 13_000);
+  });
+
+  it("puts what a credit sale left owing on the customer's ledger", () => {
+    const cart = aCart({
+      customerId: CUSTOMER,
+      creditTransactionId: nextId("credit"),
+      payments: [{ id: nextId("pay"), accountId: TILL_ACCOUNT, amountMinor: 5_000 }],
+    });
+    completeSale(database, cart);
+
+    const entry = database.transaction((tx) => ({
+      ...tx.get(
+        `SELECT id, customer_id, type, amount_minor, currency, reference_kind, reference_id
+           FROM customer_transactions`,
+      ),
+    }));
+    assert.deepEqual(entry, {
+      id: cart.creditTransactionId,
+      customer_id: CUSTOMER,
+      type: "CREDIT_SALE",
+      // 13,000 sold, 5,000 paid. Positive, because a credit sale adds to what
+      // the customer owes.
+      amount_minor: 8_000,
+      currency: "XAF",
+      reference_kind: "SALE",
+      reference_id: cart.id,
+    });
+  });
+
+  it("owes the whole bill when nothing was paid", () => {
+    completeSale(
+      database,
+      aCart({ customerId: CUSTOMER, creditTransactionId: nextId("credit"), payments: [] }),
+    );
+
+    assert.equal(owed(), 13_000);
+  });
+
+  it("leaves the ledger untouched when the sale is paid in full", () => {
+    completeSale(database, aCart({ customerId: CUSTOMER }));
+
+    // An entry of nothing would appear on a statement saying nothing happened.
+    assert.equal(owed(), 0);
+    const count = database.transaction(
+      (tx) => tx.get(`SELECT count(*) AS n FROM customer_transactions`)?.["n"],
+    );
+    assert.equal(count, 0);
+  });
+
+  it("refuses a sale that leaves a debt with no entry to carry it", () => {
+    assert.throws(
+      () =>
+        completeSale(
+          database,
+          aCart({
+            customerId: CUSTOMER,
+            payments: [{ id: nextId("pay"), accountId: TILL_ACCOUNT, amountMinor: 5_000 }],
+          }),
+        ),
+      /no ledger entry to carry it/,
+    );
+
+    assert.equal(owed(), 0);
+    assert.equal(pendingCount(), 0, "an event was queued for a sale that was refused");
+  });
+
+  it("refuses a settled sale claiming a debt", () => {
+    assert.throws(
+      () => completeSale(database, aCart({ customerId: CUSTOMER, creditTransactionId: "c-1" })),
+      /a debt it does not leave/,
+    );
+  });
+
+  it("keeps the debt and the sale in one transaction", () => {
+    // A ledger entry the database refuses must take the sale with it: a sale
+    // recorded without its debt is stock gone with nobody owing for it.
+    const first = aCart({
+      customerId: CUSTOMER,
+      creditTransactionId: "shared-credit",
+      payments: [],
+    });
+    completeSale(database, first);
+
+    const second = aCart({
+      customerId: CUSTOMER,
+      creditTransactionId: "shared-credit",
+      payments: [],
+    });
+    assert.throws(() => completeSale(database, second));
+
+    const sales = database.transaction((tx) => tx.get(`SELECT count(*) AS n FROM sales`)?.["n"]);
+    assert.equal(sales, 1, "the second sale survived a transaction that failed");
+    assert.equal(owed(), 13_000);
+  });
+
+  it("sends the ledger entry's identifier with the sale", () => {
+    const cart = aCart({
+      customerId: CUSTOMER,
+      creditTransactionId: nextId("credit"),
+      payments: [],
+    });
+    completeSale(database, cart);
+
+    const [queued] = database.transaction((tx) => pending(tx, 10));
+    const payload = queued?.payload as { sale: Record<string, unknown> };
+    // The device draws it, so a resent sale is one debt rather than two (§27).
+    assert.equal(payload.sale["credit_transaction_id"], cart.creditTransactionId);
+  });
+
+  it("keeps the credit ledger append-only, even directly", () => {
+    completeSale(
+      database,
+      aCart({ customerId: CUSTOMER, creditTransactionId: "c-immutable", payments: [] }),
+    );
+
+    for (const statement of [
+      `UPDATE customer_transactions SET amount_minor = 1`,
+      `DELETE FROM customer_transactions`,
+    ]) {
+      assert.throws(() => database.transaction((tx) => tx.run(statement)), /immutable/);
+    }
+    assert.equal(owed(), 13_000);
   });
 
   it("keeps the stock movement traceable to the sale that caused it", () => {
@@ -246,7 +396,7 @@ describe("completing a sale", () => {
       ...tx.get(`SELECT id, reference_kind, reference_id, type FROM inventory_movements`),
     }));
     assert.deepEqual(movement, {
-      id: movementIdFor(cart.lines[0]?.id ?? ""),
+      id: cart.lines[0]?.movementId,
       reference_kind: "SALE",
       reference_id: cart.id,
       type: "SALE",
@@ -258,9 +408,9 @@ describe("the arithmetic", () => {
   function totalOf(unitPriceMinor: number, quantity: number): number {
     return totalsOf(
       aCart({
-        lines: [{ id: "l", productId: RICE, name: "Riz", unitPriceMinor, quantity }],
+        lines: [{ id: "l", movementId: "l-mov", productId: RICE, name: "Riz", unitPriceMinor, quantity }],
         payments: [],
-        customerId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
+        customerId: CUSTOMER,
       }),
     ).totalMinor;
   }
@@ -290,6 +440,7 @@ describe("the arithmetic", () => {
         lines: [
           {
             id: "l",
+            movementId: "l-mov",
             productId: RICE,
             name: "Riz",
             unitPriceMinor: 10_000,
@@ -323,6 +474,7 @@ describe("refusing a sale that does not add up", () => {
             lines: [
               {
                 id: "l",
+                movementId: "l-mov",
                 productId: RICE,
                 name: "Riz",
                 unitPriceMinor: 1_000,
@@ -331,7 +483,7 @@ describe("refusing a sale that does not add up", () => {
               },
             ],
             payments: [],
-            customerId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
+            customerId: CUSTOMER,
           }),
         ),
       /exceeds the line/,
@@ -367,9 +519,9 @@ describe("refusing a sale that does not add up", () => {
         () =>
           totalsOf(
             aCart({
-              lines: [{ id: "l", productId: RICE, name: "Riz", unitPriceMinor: 100, quantity }],
+              lines: [{ id: "l", movementId: "l-mov", productId: RICE, name: "Riz", unitPriceMinor: 100, quantity }],
               payments: [],
-              customerId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
+              customerId: CUSTOMER,
             }),
           ),
         SaleError,
@@ -378,9 +530,16 @@ describe("refusing a sale that does not add up", () => {
   });
 
   it("refuses the same line or payment twice", () => {
-    const line = { id: "l", productId: RICE, name: "Riz", unitPriceMinor: 100, quantity: 1_000 };
+    const line = { id: "l", movementId: "l-mov", productId: RICE, name: "Riz", unitPriceMinor: 100, quantity: 1_000 };
     assert.throws(
-      () => totalsOf(aCart({ lines: [line, line], payments: [] , customerId: "c" })),
+      () =>
+        totalsOf(
+          aCart({
+            lines: [line, line],
+            payments: [],
+            customerId: "c",
+          }),
+        ),
       /appears twice/,
     );
 
@@ -454,6 +613,71 @@ describe("the event it queues", () => {
     ]);
   });
 
+  it("sends identifiers the server can read", () => {
+    // The server parses every identifier in this payload as a UUID and rejects
+    // the event if one does not (ADR-011). Nothing else holds the two halves of
+    // this wire format together, so a derived identifier — a line's with a
+    // suffix, say — would be refused on arrival with the sale already recorded
+    // here and nothing on the till to explain it.
+    const uuid = (): string => crypto.randomUUID();
+    const customerId = uuid();
+    database.transaction((tx) =>
+      tx.run(
+        `INSERT INTO customers (id, business_id, name, created_at, updated_at)
+         VALUES (?, ?, 'Alice Ngo', ?, ?)`,
+        [customerId, BUSINESS, CREATED, CREATED],
+      ),
+    );
+
+    const cart: Cart = {
+      id: uuid(),
+      businessId: BUSINESS,
+      customerId,
+      creditTransactionId: uuid(),
+      number: `V-${uuid()}`,
+      lines: [
+        {
+          id: uuid(),
+          movementId: uuid(),
+          productId: RICE,
+          name: "Riz parfumé 5kg",
+          unitPriceMinor: 6_500,
+          quantity: 2_000,
+        },
+      ],
+      payments: [{ id: uuid(), accountId: uuid(), amountMinor: 5_000 }],
+      userId: USER,
+      deviceId: TILL,
+      occurredAt: SOLD,
+      recordedAt: RECORDED,
+      eventId: uuid(),
+    };
+    completeSale(database, cart);
+
+    const [queued] = database.transaction((tx) => pending(tx, 10));
+    const payload = queued?.payload as {
+      sale: Record<string, unknown> & { items: Record<string, unknown>[] };
+      payments: Record<string, unknown>[];
+      movements: Record<string, unknown>[];
+    };
+
+    const identifiers = [
+      payload.sale["id"],
+      payload.sale["customer_id"],
+      payload.sale["credit_transaction_id"],
+      ...payload.sale.items.flatMap((item) => [item["id"], item["product_id"]]),
+      ...payload.payments.flatMap((payment) => [payment["id"], payment["account_id"]]),
+      ...payload.movements.flatMap((movement) => [movement["id"], movement["product_id"]]),
+    ];
+    for (const identifier of identifiers) {
+      assert.match(
+        String(identifier),
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+        `${identifier} is not an identifier the server can parse`,
+      );
+    }
+  });
+
   it("sends the movement negative, matching what it wrote locally", () => {
     const cart = aCart();
     completeSale(database, cart);
@@ -464,7 +688,7 @@ describe("the event it queues", () => {
     assert.equal(payload.movements[0]?.quantity, -2_000);
     // The same identifier the local ledger holds, so the sale coming back from
     // the server is recognised rather than applied a second time.
-    assert.equal(payload.movements[0]?.id, movementIdFor(cart.lines[0]?.id ?? ""));
+    assert.equal(payload.movements[0]?.id, cart.lines[0]?.movementId);
   });
 });
 

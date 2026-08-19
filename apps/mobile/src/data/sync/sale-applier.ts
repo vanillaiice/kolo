@@ -10,6 +10,7 @@
  */
 
 import type { Queryable } from "../database/driver.ts";
+import { subtotalOf } from "../sales/sales.ts";
 import { UnusableEvent, type EventApplier } from "./engine.ts";
 import type { InboxEvent } from "./inbox.ts";
 
@@ -102,6 +103,8 @@ export const saleApplier: EventApplier = {
       );
     }
 
+    applyCredit(tx, event, body, sale, saleId);
+
     for (const line of listOf(body["movements"], "a sale's movements")) {
       const movement = objectOf(line, "a movement");
       tx.run(
@@ -129,6 +132,83 @@ export const saleApplier: EventApplier = {
     }
   },
 };
+
+/**
+ * Writes what the sale left owing onto the customer's ledger.
+ *
+ * The debt is worked out here rather than read from the payload, by the same
+ * arithmetic the till that sold it used. Trusting a figure on the wire would
+ * let a device with a rounding bug — or a garbled resend — put a different
+ * number on the customer's account than the receipt in their hand says.
+ *
+ * INSERT OR IGNORE, as everywhere in this applier: the entry's own identifier
+ * came from the device that made the sale, so a sale arriving twice leaves one
+ * debt (§27).
+ */
+function applyCredit(
+  tx: Queryable,
+  event: InboxEvent,
+  body: Wire,
+  sale: Wire,
+  saleId: string,
+): void {
+  const lines = listOf(sale["items"], "a sale's items").map((line) => {
+    const item = objectOf(line, "a sale item");
+    return {
+      unitPriceMinor: wholeNumber(item, "unit_price_minor") ?? 0,
+      quantity: wholeNumber(item, "quantity") ?? 0,
+      discountMinor: wholeNumber(item, "discount_minor") ?? 0,
+    };
+  });
+
+  let paidMinor = 0;
+  for (const line of listOf(body["payments"], "a sale's payments")) {
+    paidMinor += wholeNumber(objectOf(line, "a payment"), "amount_minor") ?? 0;
+  }
+
+  let outstandingMinor: number;
+  try {
+    outstandingMinor = subtotalOf(lines) - (wholeNumber(sale, "discount_minor") ?? 0) - paidMinor;
+  } catch (cause) {
+    // A sale whose arithmetic this device cannot do is unusable rather than
+    // deferred: waiting will not make it add up.
+    throw new UnusableEvent("a sale's total cannot be worked out", { cause });
+  }
+
+  const transactionId = optional(sale, "credit_transaction_id");
+  if (outstandingMinor <= 0) {
+    if (transactionId !== null) {
+      throw new UnusableEvent("a settled sale carries a ledger entry for a debt it does not leave");
+    }
+    return;
+  }
+  if (transactionId === null) {
+    throw new UnusableEvent(`${outstandingMinor} is left owing with no ledger entry to carry it`);
+  }
+  const customerId = optional(sale, "customer_id");
+  if (customerId === null) {
+    throw new UnusableEvent(`${outstandingMinor} is left owing with no customer to owe it`);
+  }
+
+  tx.run(
+    `INSERT OR IGNORE INTO customer_transactions
+       (id, customer_id, business_id, branch_id, type, amount_minor, currency,
+        reference_kind, reference_id, reason, user_id, device_id, occurred_at, recorded_at)
+     VALUES (?, ?, ?, NULL, 'CREDIT_SALE', ?, ?, 'SALE', ?, NULL, ?, ?, ?, ?)`,
+    [
+      transactionId,
+      customerId,
+      event.businessId,
+      outstandingMinor,
+      CURRENCY,
+      saleId,
+      event.userId,
+      event.deviceId,
+      optional(sale, "occurred_at") ?? event.occurredAt,
+      new Date().toISOString(),
+    ],
+  );
+}
 
 type Wire = Record<string, unknown>;
 

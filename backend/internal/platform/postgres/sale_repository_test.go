@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -35,6 +36,29 @@ func newSaleFixture(t *testing.T) *saleFixture {
 }
 
 var soldAt = time.Date(2026, 8, 14, 9, 30, 0, 0, time.UTC)
+
+// customer registers someone for the sale to be owed by.
+//
+// A sale may name a customer, and since 00008 the reference is a real one: a
+// sale owed by nobody on the books would leave a debt with no ledger to carry
+// it.
+func (f *saleFixture) customer(t *testing.T, name string) customers.ID {
+	t.Helper()
+
+	customer, err := customers.New(customers.Snapshot{
+		ID:         customers.NewID(),
+		BusinessID: f.tenant,
+		Name:       name,
+		CreatedAt:  soldAt,
+	})
+	if err != nil {
+		t.Fatalf("customers.New: %v", err)
+	}
+	if err := postgres.NewCustomerRepository(f.pool).Create(f.ctx, f.scope, customer); err != nil {
+		t.Fatalf("creating the customer: %v", err)
+	}
+	return customer.ID()
+}
 
 // sale builds a one-line sale for the fixture's product.
 func (f *saleFixture) sale(t *testing.T, mutate ...func(*sales.Snapshot)) *sales.Sale {
@@ -121,7 +145,7 @@ func TestASaleAndEverythingItProducedLandTogether(t *testing.T) {
 	payments := []*sales.Payment{f.payment(t, sale, 10_000), f.payment(t, sale, 3_000)}
 	movements := []*inventory.Movement{f.soldMovement(t, sale, 2)}
 
-	if err := f.repo.Record(f.ctx, f.scope, sale, payments, movements); err != nil {
+	if err := f.repo.Record(f.ctx, f.scope, sale, payments, movements, nil); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 
@@ -184,7 +208,7 @@ func TestASaleIsNotRecordedWhenItsMovementsCannotBe(t *testing.T) {
 
 	err = f.repo.Record(f.ctx, f.scope, sale,
 		[]*sales.Payment{f.payment(t, sale, 13_000)},
-		[]*inventory.Movement{f.soldMovement(t, sale, 2), orphan})
+		[]*inventory.Movement{f.soldMovement(t, sale, 2), orphan}, nil)
 	if err == nil {
 		t.Fatal("a sale with an impossible movement was recorded")
 	}
@@ -213,7 +237,7 @@ func TestASaleIsNotRecordedWhenItsPaymentsCannotBe(t *testing.T) {
 
 	err := f.repo.Record(f.ctx, f.scope, sale,
 		[]*sales.Payment{duplicate, duplicate},
-		[]*inventory.Movement{f.soldMovement(t, sale, 2)})
+		[]*inventory.Movement{f.soldMovement(t, sale, 2)}, nil)
 	if err == nil {
 		t.Fatal("a sale with a duplicated payment was recorded")
 	}
@@ -233,7 +257,7 @@ func TestASaleCannotBeChangedOrDeleted(t *testing.T) {
 	sale := f.sale(t)
 	if err := f.repo.Record(f.ctx, f.scope, sale,
 		[]*sales.Payment{f.payment(t, sale, 13_000)},
-		[]*inventory.Movement{f.soldMovement(t, sale, 2)}); err != nil {
+		[]*inventory.Movement{f.soldMovement(t, sale, 2)}, nil); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 
@@ -264,7 +288,7 @@ func TestASaleFromAnotherBusinessIsNotFound(t *testing.T) {
 	sale := f.sale(t)
 	if err := f.repo.Record(f.ctx, f.scope, sale,
 		[]*sales.Payment{f.payment(t, sale, 13_000)},
-		[]*inventory.Movement{f.soldMovement(t, sale, 2)}); err != nil {
+		[]*inventory.Movement{f.soldMovement(t, sale, 2)}, nil); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 
@@ -286,7 +310,7 @@ func TestASaleCannotBeRecordedIntoAnotherBusiness(t *testing.T) {
 	f, stranger := newSaleFixture(t), newSaleFixture(t)
 
 	sale := f.sale(t)
-	if err := stranger.repo.Record(stranger.ctx, stranger.scope, sale, nil, nil); err == nil {
+	if err := stranger.repo.Record(stranger.ctx, stranger.scope, sale, nil, nil, nil); err == nil {
 		t.Fatal("a sale was recorded into another business")
 	}
 	if _, err := f.repo.Get(f.ctx, f.scope, sale.ID()); err == nil {
@@ -300,7 +324,7 @@ func TestAPaymentForAnotherSaleIsRefusedAtTheRepository(t *testing.T) {
 	f := newSaleFixture(t)
 
 	sale, other := f.sale(t), f.sale(t)
-	err := f.repo.Record(f.ctx, f.scope, sale, []*sales.Payment{f.payment(t, other, 1_000)}, nil)
+	err := f.repo.Record(f.ctx, f.scope, sale, []*sales.Payment{f.payment(t, other, 1_000)}, nil, nil)
 	if err == nil {
 		t.Fatal("a payment for another sale was accepted")
 	}
@@ -312,18 +336,145 @@ func TestAReceiptNumberIsUniquePerBusiness(t *testing.T) {
 	f, other := newSaleFixture(t), newSaleFixture(t)
 
 	first := f.sale(t, func(s *sales.Snapshot) { s.Number = "V-000001" })
-	if err := f.repo.Record(f.ctx, f.scope, first, nil, nil); err != nil {
+	if err := f.repo.Record(f.ctx, f.scope, first, nil, nil, nil); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 
 	clash := f.sale(t, func(s *sales.Snapshot) { s.Number = "V-000001" })
-	if err := f.repo.Record(f.ctx, f.scope, clash, nil, nil); err == nil {
+	if err := f.repo.Record(f.ctx, f.scope, clash, nil, nil, nil); err == nil {
 		t.Error("the same receipt number was reused within one business")
 	}
 
 	elsewhere := other.sale(t, func(s *sales.Snapshot) { s.Number = "V-000001" })
-	if err := other.repo.Record(other.ctx, other.scope, elsewhere, nil, nil); err != nil {
+	if err := other.repo.Record(other.ctx, other.scope, elsewhere, nil, nil, nil); err != nil {
 		t.Errorf("another business could not use the same number: %v", err)
+	}
+}
+
+// creditFor builds the ledger entry a sale left unpaid produces.
+func (f *saleFixture) creditFor(
+	t *testing.T, sale *sales.Sale, customerID customers.ID, minor int64,
+) *customers.Transaction {
+	t.Helper()
+
+	credit, err := customers.RecordTransaction(customers.TransactionSnapshot{
+		ID:         customers.NewTransactionID(),
+		CustomerID: customerID,
+		BusinessID: f.tenant,
+		Type:       customers.CreditSale,
+		Amount:     money.FromXAF(minor),
+		Reference:  customers.Reference{Kind: "SALE", ID: sale.ID().String()},
+		UserID:     f.user,
+		DeviceID:   f.till,
+		OccurredAt: soldAt,
+		RecordedAt: soldAt.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("customers.RecordTransaction: %v", err)
+	}
+	return credit
+}
+
+// §9's fan-out reaching §13: the sale, its stock, its payment, and the debt it
+// left all land in one transaction, and the customer's balance is that debt.
+func TestACreditSaleLandsWithTheDebtItLeft(t *testing.T) {
+	f := newSaleFixture(t)
+
+	customerID := f.customer(t, "Jean Mbarga")
+	sale := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = customerID })
+	payments := []*sales.Payment{f.payment(t, sale, 10_000)}
+	movements := []*inventory.Movement{f.soldMovement(t, sale, 2)}
+	// 2 at 6,500 is 13,000, of which 10,000 was paid.
+	credit := f.creditFor(t, sale, customerID, 3_000)
+
+	if err := f.repo.Record(f.ctx, f.scope, sale, payments, movements, credit); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	balance, err := postgres.NewCreditRepository(f.pool).BalanceOf(f.ctx, f.scope, customerID)
+	if err != nil {
+		t.Fatalf("BalanceOf: %v", err)
+	}
+	if got := balance.Outstanding; !got.Equal(money.FromXAF(3_000)) {
+		t.Errorf("outstanding = %s, want 3000 XAF", got)
+	}
+	if balance.Entries != 1 {
+		t.Errorf("entries = %d, want the one the sale created", balance.Entries)
+	}
+}
+
+// The debt cannot land without the sale. A ledger entry the database refuses
+// takes the whole sale with it, because a sale recorded without its debt is
+// goods gone with nobody owing for them — and nothing afterwards could tell.
+func TestASaleIsNotRecordedWhenItsCreditCannotBe(t *testing.T) {
+	f := newSaleFixture(t)
+
+	customerID := f.customer(t, "Jean Mbarga")
+	first := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = customerID })
+	credit := f.creditFor(t, first, first.Snapshot().CustomerID, 3_000)
+	if err := f.repo.Record(f.ctx, f.scope, first,
+		[]*sales.Payment{f.payment(t, first, 10_000)},
+		[]*inventory.Movement{f.soldMovement(t, first, 2)}, credit); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	// A second sale reusing the ledger entry's identifier, which is what a
+	// device that garbled a resend would send.
+	second := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = customerID })
+	if err := f.repo.Record(f.ctx, f.scope, second,
+		[]*sales.Payment{f.payment(t, second, 10_000)},
+		[]*inventory.Movement{f.soldMovement(t, second, 2)}, credit); err == nil {
+		t.Fatal("a sale reusing a ledger entry was recorded")
+	}
+
+	if _, err := f.repo.Get(f.ctx, f.scope, second.ID()); err == nil {
+		t.Error("the sale survived a transaction that failed")
+	}
+	if got := f.stock(t); got != -2_000 {
+		t.Errorf("stock = %d, want only the first sale's movement", got)
+	}
+}
+
+// A debt has to be owed by the person the sale names, or one customer's
+// purchase lands on another's account.
+func TestACreditEntryMustBelongToTheSalesCustomer(t *testing.T) {
+	f := newSaleFixture(t)
+
+	buyer := f.customer(t, "Jean Mbarga")
+	someoneElse := f.customer(t, "Alice Ngo")
+
+	sale := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = buyer })
+	stray := f.creditFor(t, sale, someoneElse, 3_000)
+	if err := f.repo.Record(f.ctx, f.scope, sale,
+		[]*sales.Payment{f.payment(t, sale, 10_000)}, nil, stray); !errors.Is(err, postgres.ErrQuery) {
+		t.Errorf("got %v, want ErrQuery", err)
+	}
+
+	// And a cash sale that names nobody cannot carry a debt at all.
+	cash := f.sale(t)
+	orphan := f.creditFor(t, cash, buyer, 3_000)
+	if err := f.repo.Record(f.ctx, f.scope, cash, nil, nil, orphan); !errors.Is(err, postgres.ErrQuery) {
+		t.Errorf("got %v, want ErrQuery", err)
+	}
+}
+
+// A sale can be owed by a customer, but only by one on this business's books.
+// The alternative is a debt with no ledger to carry it, and — worse — a sale
+// pointing at another tenant's customer.
+func TestASaleCannotNameACustomerWhoIsNotOnTheBooks(t *testing.T) {
+	f := newSaleFixture(t)
+	other := newSaleFixture(t)
+
+	unknown := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = customers.NewID() })
+	if err := f.repo.Record(f.ctx, f.scope, unknown, nil, nil, nil); !errors.Is(err, postgres.ErrConflict) {
+		t.Errorf("a sale named a customer who does not exist: %v", err)
+	}
+
+	elsewhere := f.sale(t, func(s *sales.Snapshot) {
+		s.CustomerID = other.customer(t, "Alice Ngo")
+	})
+	if err := f.repo.Record(f.ctx, f.scope, elsewhere, nil, nil, nil); !errors.Is(err, postgres.ErrConflict) {
+		t.Errorf("a sale named another business's customer: %v", err)
 	}
 }
 
@@ -331,7 +482,7 @@ func TestAReceiptNumberIsUniquePerBusiness(t *testing.T) {
 func TestASaleRoundTripsThroughStorage(t *testing.T) {
 	f := newSaleFixture(t)
 
-	customerID := customers.NewID()
+	customerID := f.customer(t, "Jean Mbarga")
 	sale := f.sale(t, func(s *sales.Snapshot) {
 		s.CustomerID = customerID
 		s.Note = "livraison samedi"
@@ -357,7 +508,7 @@ func TestASaleRoundTripsThroughStorage(t *testing.T) {
 		}
 	})
 
-	if err := f.repo.Record(f.ctx, f.scope, sale, nil, nil); err != nil {
+	if err := f.repo.Record(f.ctx, f.scope, sale, nil, nil, nil); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 
@@ -415,7 +566,7 @@ func TestAnUnknownCostStaysUnknownThroughStorage(t *testing.T) {
 			Quantity:  quantity.MustFromUnits(1),
 		}}
 	})
-	if err := f.repo.Record(f.ctx, f.scope, sale, nil, nil); err != nil {
+	if err := f.repo.Record(f.ctx, f.scope, sale, nil, nil, nil); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 
@@ -442,7 +593,7 @@ func TestSalesAreListedByWhenTheyHappened(t *testing.T) {
 			s.OccurredAt = when
 			s.RecordedAt = soldAt.Add(time.Hour)
 		})
-		if err := f.repo.Record(f.ctx, f.scope, sale, nil, nil); err != nil {
+		if err := f.repo.Record(f.ctx, f.scope, sale, nil, nil, nil); err != nil {
 			t.Fatalf("Record: %v", err)
 		}
 	}
@@ -485,7 +636,7 @@ func TestBetweenDoesNotCrossTenants(t *testing.T) {
 	f, stranger := newSaleFixture(t), newSaleFixture(t)
 
 	sale := f.sale(t)
-	if err := f.repo.Record(f.ctx, f.scope, sale, nil, nil); err != nil {
+	if err := f.repo.Record(f.ctx, f.scope, sale, nil, nil, nil); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 
@@ -504,7 +655,7 @@ func TestTheSaleRepositoryRefusesTheZeroScope(t *testing.T) {
 	f := newSaleFixture(t)
 	sale := f.sale(t)
 
-	if err := f.repo.Record(context.Background(), business.Scope{}, sale, nil, nil); err == nil {
+	if err := f.repo.Record(context.Background(), business.Scope{}, sale, nil, nil, nil); err == nil {
 		t.Error("Record accepted the zero scope")
 	}
 	if _, err := f.repo.Get(context.Background(), business.Scope{}, sale.ID()); err == nil {
@@ -523,15 +674,15 @@ func TestTheSaleRepositoryRefusesTheZeroScope(t *testing.T) {
 func TestRecordingNothingIsRefused(t *testing.T) {
 	f := newSaleFixture(t)
 
-	if err := f.repo.Record(f.ctx, f.scope, nil, nil, nil); err == nil {
+	if err := f.repo.Record(f.ctx, f.scope, nil, nil, nil, nil); err == nil {
 		t.Error("a nil sale was accepted")
 	}
 
 	sale := f.sale(t)
-	if err := f.repo.Record(f.ctx, f.scope, sale, []*sales.Payment{nil}, nil); err == nil {
+	if err := f.repo.Record(f.ctx, f.scope, sale, []*sales.Payment{nil}, nil, nil); err == nil {
 		t.Error("a nil payment was accepted")
 	}
-	if err := f.repo.Record(f.ctx, f.scope, sale, nil, []*inventory.Movement{nil}); err == nil {
+	if err := f.repo.Record(f.ctx, f.scope, sale, nil, []*inventory.Movement{nil}, nil); err == nil {
 		t.Error("a nil movement was accepted")
 	}
 }

@@ -439,6 +439,103 @@ export const MIGRATIONS: readonly Migration[] = [
       ]),
     ],
   },
+
+  {
+    version: 7,
+    name: "customers and their credit ledger",
+    statements: [
+      // A customer needs only a name. Someone putting a regular on credit at
+      // the counter should not have to fill in an address first (§12).
+      //
+      // No balance column: what a customer owes is the sum of the ledger below,
+      // exactly as stock is the sum of its movements (§13, §59).
+      `CREATE TABLE customers (
+         id                    TEXT    PRIMARY KEY,
+         business_id           TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         name                  TEXT    NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 120),
+         phone                 TEXT,
+         address               TEXT,
+         notes                 TEXT,
+         -- Null when no limit has been set, which is not the same as a limit of
+         -- zero: null means the shopkeeper has not decided, zero means this
+         -- customer may not have credit.
+         credit_limit_minor    INTEGER CHECK (credit_limit_minor IS NULL OR credit_limit_minor >= 0),
+         credit_limit_currency TEXT    CHECK (credit_limit_currency IS NULL
+                                              OR length(credit_limit_currency) = 3),
+         active                INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+         created_at            TEXT    NOT NULL,
+         updated_at            TEXT    NOT NULL,
+
+         CHECK ((credit_limit_minor IS NULL) = (credit_limit_currency IS NULL)),
+         CHECK (updated_at >= created_at)
+       ) STRICT`,
+
+      `CREATE INDEX customers_by_business ON customers (business_id, name)`,
+      // A lookup, not an identity: a household shares one number, and refusing
+      // the second person would leave them out of the credit book they are
+      // already in on paper. So this index is deliberately not unique.
+      `CREATE INDEX customers_by_phone ON customers (business_id, phone)
+         WHERE phone IS NOT NULL`,
+
+      `CREATE TABLE customer_transactions (
+         id             TEXT    PRIMARY KEY,
+         customer_id    TEXT    NOT NULL REFERENCES customers (id) ON DELETE RESTRICT,
+         business_id    TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         branch_id      TEXT    REFERENCES branches (id) ON DELETE RESTRICT,
+         type           TEXT    NOT NULL CHECK (type IN ('CREDIT_SALE', 'PAYMENT', 'RETURN',
+                                                         'ADJUSTMENT', 'OPENING_BALANCE',
+                                                         'WRITE_OFF')),
+         -- Signed minor units: positive adds to what is owed, negative reduces
+         -- it. Summing a ledger is then plain addition.
+         amount_minor   INTEGER NOT NULL CHECK (amount_minor <> 0),
+         currency       TEXT    NOT NULL CHECK (length(currency) = 3),
+         reference_kind TEXT,
+         reference_id   TEXT,
+         reason         TEXT,
+         user_id        TEXT    NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+         device_id      TEXT    NOT NULL REFERENCES devices (id) ON DELETE RESTRICT,
+         occurred_at    TEXT    NOT NULL,
+         recorded_at    TEXT    NOT NULL,
+
+         -- A payment that increased a debt is invisible in a total and
+         -- unarguable in a statement, so the sign has to agree with the type
+         -- here as it does on the server. Corrections go either way.
+         CHECK (
+           (type IN ('CREDIT_SALE', 'OPENING_BALANCE') AND amount_minor > 0)
+           OR (type IN ('PAYMENT', 'RETURN', 'WRITE_OFF') AND amount_minor < 0)
+           OR type = 'ADJUSTMENT'
+         ),
+         CHECK (type NOT IN ('ADJUSTMENT', 'WRITE_OFF')
+                OR length(trim(coalesce(reason, ''))) > 0),
+         CHECK (type NOT IN ('CREDIT_SALE', 'RETURN')
+                OR (reference_kind IS NOT NULL AND reference_id IS NOT NULL)),
+         CHECK ((reference_kind IS NULL) = (reference_id IS NULL)),
+         CHECK (recorded_at >= occurred_at)
+       ) STRICT`,
+
+      // Deriving a balance is a sum over one customer's entries, and a
+      // statement is the same rows in the order things happened.
+      `CREATE INDEX customer_transactions_by_customer
+         ON customer_transactions (business_id, customer_id, occurred_at, id)`,
+      `CREATE INDEX customer_transactions_by_reference
+         ON customer_transactions (business_id, reference_kind, reference_id)
+         WHERE reference_kind IS NOT NULL`,
+
+      // The ledger is append-only here as on the server (§13, §41, ADR-007). A
+      // correction is a compensating entry, and a future screen must not be
+      // able to reach past that.
+      `CREATE TRIGGER customer_transactions_no_update
+         BEFORE UPDATE ON customer_transactions
+       BEGIN
+         SELECT RAISE(ABORT, 'customer_transactions is immutable: record a compensating transaction');
+       END`,
+      `CREATE TRIGGER customer_transactions_no_delete
+         BEFORE DELETE ON customer_transactions
+       BEGIN
+         SELECT RAISE(ABORT, 'customer_transactions is immutable: record a compensating transaction');
+       END`,
+    ],
+  },
 ];
 
 /** The version the code in this build expects. */

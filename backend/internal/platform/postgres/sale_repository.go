@@ -56,16 +56,22 @@ const salePaymentColumns = `id, sale_id, business_id, branch_id, account_id,
 // something that did not happen: money taken for stock still on the shelf, or
 // stock gone with no record of who paid for it.
 //
-// The movements are passed in rather than derived here. Working out what a sale
-// moves is a business decision — which is a return, which was already
-// delivered — and belongs above this layer (ADR-005). This decides only that
-// they land together.
+// The movements and the credit entry are passed in rather than derived here.
+// Working out what a sale moves and what it leaves owing is a business decision
+// — which is a return, which was already delivered — and belongs above this
+// layer (ADR-005). This decides only that they land together.
+//
+// credit is nil for a sale paid in full, and is the customer's ledger entry for
+// one that is not. A sale stored without it would be goods gone with nobody
+// recorded as owing for them, which no report could detect afterwards: the sale
+// looks complete on its own.
 func (r *SaleRepository) Record(
 	ctx context.Context,
 	scope business.Scope,
 	sale *sales.Sale,
 	payments []*sales.Payment,
 	movements []*inventory.Movement,
+	credit *customers.Transaction,
 ) error {
 	if err := requireScope(scope); err != nil {
 		return err
@@ -100,6 +106,17 @@ func (r *SaleRepository) Record(
 			return err
 		}
 	}
+	if credit != nil {
+		if err := scope.Guard(credit.BusinessID(), credit.BranchID()); err != nil {
+			return err
+		}
+		// The debt belongs to the person the sale names. An entry against
+		// anyone else would put one customer's purchase on another's account.
+		if named, is := sale.Customer(); !is || credit.CustomerID() != named {
+			return fmt.Errorf("%w: credit entry %s is not owed by the sale's customer",
+				ErrQuery, credit.ID())
+		}
+	}
 
 	transaction, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -121,6 +138,15 @@ func (r *SaleRepository) Record(
 	for i, movement := range movements {
 		if err := insertMovement(ctx, transaction, movement); err != nil {
 			return fmt.Errorf("movement %d of sale %s: %w", i, sale.ID(), err)
+		}
+	}
+
+	// The credit entry is part of the same fan-out. §13's balance is the sum of
+	// this ledger, so an entry that did not land is a customer who owes less
+	// than they took, in a total nobody can reconcile against the sale.
+	if credit != nil {
+		if err := insertCreditTransaction(ctx, transaction, credit); err != nil {
+			return fmt.Errorf("the credit of sale %s: %w", sale.ID(), err)
 		}
 	}
 
@@ -156,7 +182,7 @@ func insertSale(ctx context.Context, exec executor, sale *sales.Sale) error {
 	}
 
 	for i, item := range snapshot.Items {
-		cost, _ := optionalCost(item.UnitCost)
+		cost, _ := optionalMoney(item.UnitCost)
 		if _, err := exec.Exec(ctx, `
 			INSERT INTO sale_items (`+saleItemColumns+`)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,

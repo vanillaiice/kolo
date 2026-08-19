@@ -49,7 +49,7 @@ const movementInsert = `
 // movementValues lays a movement out in the order movementInsert expects.
 func movementValues(movement *inventory.Movement) []any {
 	snapshot := movement.Snapshot()
-	cost, currency := optionalCost(snapshot.UnitCost)
+	cost, currency := optionalMoney(snapshot.UnitCost)
 	referenceKind, referenceID := optionalReference(snapshot.Reference)
 
 	return []any{
@@ -353,14 +353,18 @@ func scanMovement(row pgx.Row) (*inventory.Movement, error) {
 	return inventory.Restore(snapshot)
 }
 
-// optionalCost splits a money value into the two nullable columns that hold it.
-func optionalCost(cost money.Money) (*int64, *string) {
-	if !cost.Valid() {
+// optionalMoney splits a money value into the two nullable columns that hold it.
+//
+// An invalid Money is not zero: it is an amount nobody recorded — a cost the
+// business does not know, a credit limit nobody has set — and storing it as
+// null keeps that gap honest rather than inventing a zero.
+func optionalMoney(amount money.Money) (*int64, *string) {
+	if !amount.Valid() {
 		return nil, nil
 	}
-	amount := cost.Amount()
-	code := cost.Currency().Code()
-	return &amount, &code
+	minor := amount.Amount()
+	code := amount.Currency().Code()
+	return &minor, &code
 }
 
 func optionalReference(reference inventory.Reference) (*string, *string) {

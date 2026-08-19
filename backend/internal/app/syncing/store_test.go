@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
+	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
@@ -48,6 +49,9 @@ type fakeStore struct {
 	// second one under the same identifier is refused as the primary key would.
 	sales        map[sales.ID]*sales.Sale
 	salePayments map[sales.ID][]*sales.Payment
+	// credit is the customer ledger, keyed as the real table is: by the entry's
+	// own identifier, so a replay collides rather than doubling a debt.
+	credit map[customers.TransactionID]*customers.Transaction
 
 	failRecord       bool
 	failLatest       bool
@@ -65,6 +69,7 @@ func newFakeStore() *fakeStore {
 		products:     make(map[products.ID]*products.Product),
 		sales:        make(map[sales.ID]*sales.Sale),
 		salePayments: make(map[sales.ID][]*sales.Payment),
+		credit:       make(map[customers.TransactionID]*customers.Transaction),
 	}
 }
 
@@ -160,6 +165,17 @@ func (f *fakeStore) RecordAndApply(
 		f.sales[saleID] = effects.Sale
 		f.salePayments[saleID] = effects.Payments
 	}
+	if effects.Credit != nil {
+		if err := scope.Guard(effects.Credit.BusinessID(), effects.Credit.BranchID()); err != nil {
+			return postgres.Recorded, err
+		}
+		if _, exists := f.credit[effects.Credit.ID()]; exists {
+			// The ledger is append-only, so a second entry under one identifier
+			// is the primary key's answer rather than an overwrite (§13, §41).
+			return postgres.Recorded, &pgconn.PgError{Code: "23505", ConstraintName: "customer_transactions_pkey"}
+		}
+		f.credit[effects.Credit.ID()] = effects.Credit
+	}
 
 	f.sequence++
 	f.events = append(f.events, envelope)
@@ -210,6 +226,20 @@ func (f *fakeStore) paymentsOf(id sales.ID) []*sales.Payment {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.salePayments[id]
+}
+
+// creditOf returns the ledger entries recorded against a customer.
+func (f *fakeStore) creditOf(customerID customers.ID) []*customers.Transaction {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	found := make([]*customers.Transaction, 0, len(f.credit))
+	for _, entry := range f.credit {
+		if entry.CustomerID() == customerID {
+			found = append(found, entry)
+		}
+	}
+	return found
 }
 
 // applied reports how many movements an event was recorded as having moved.

@@ -25,7 +25,7 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `auth` — proves who a user is (ADR-012). `PINHash` (bcrypt, slow, for a low-entropy secret), `Token`/`TokenHash` (32 random bytes, SHA-256, fast — checked on every request), and `Session`, bound to one user/business/device and renewed on sync
 - `inventory` — the stock ledger (§7, ADR-009). **Stock is never stored; it is the sum of append-only movements.** Two devices selling the last unit offline both stand, and the total goes to −1 — a true statement, surfaced rather than hidden
 - `products` — what a business sells (§6). Only a name, unit, and selling price are required; SKU, barcode, category, brand, and purchase price are filled in as the business learns them. Carries **no stock level** — that is the ledger's job
-- `sales` — what was sold and what was paid (§9–§11). A sale is immutable and holds its lines; **it has no payment method and no paid amount**, because §11 gives a sale many payments and what has been paid is their sum. Line totals are `price × quantity/1000` rounded half up, since quantity is thousandths and XAF has no subunit. `Settle` derives where a sale stands, and refuses an unpaid balance with no customer to owe it
+- `sales` — what was sold and what was paid (§9–§11). A sale that leaves a balance also produces a `customers.Transaction`, built in `app/syncing` from the sale's own arithmetic rather than from a figure on the wire, and written in the same database transaction as the sale. A sale is immutable and holds its lines; **it has no payment method and no paid amount**, because §11 gives a sale many payments and what has been paid is their sum. Line totals are `price × quantity/1000` rounded half up, since quantity is thousandths and XAF has no subunit. `Settle` derives where a sale stands, and refuses an unpaid balance with no customer to owe it
 - `finance` — where money sits (§17). `AccountKind` and `AccountID` so far. **Mobile Money providers are accounts, not kinds** — that is what makes adding Orange a row rather than a release (§10)
 - `customers` — who a business sells to, and what they owe (§12, §13). The `Customer` entity needs only a name; everything else is filled in as the shopkeeper learns it. **Credit is an append-only ledger**, exactly like stock: a balance is the sum of transactions and is never stored. `CheckCreditLimit` is a *question*, not a rule the ledger enforces — letting a regular go over their limit is the shopkeeper's decision to make. A limit of zero and no limit at all are deliberately distinct
 - `sync` — what devices send each other (§26). Events, not state: two devices pushing "three were sold" lose nothing, while two pushing "stock is 47" must lose one
@@ -36,7 +36,7 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `syncing` — push and pull (§36). Owns what happens to an event the server cannot use: a replay is a success, a bad event fails alone, a rejection is kept
 - `authn` — login, authenticate, logout. Owns what a failure reveals: an unknown number and a wrong PIN are the same error and cost the same time; a suspended account is distinguished only *after* the PIN is right
 
-`apps/mobile/src/data/` — the client's SQLite layer (ADR-002, ADR-014):
+`apps/mobile/src/data/` — the client's SQLite layer (ADR-002, ADR-014). Migration 7 adds `customers` and their `customer_transactions`, append-only by SQLite trigger exactly as the server's are:
 
 - `database/` — a deliberately narrow driver interface, a `node:sqlite` adapter for tests, and forward-only migrations that catch a device up across any number of versions
 - `sync/outbox.ts` — the queue of events waiting for the server. **A business write and its event commit in one transaction, or neither does.** `enqueue` takes a transaction, not a database, so it cannot be called on its own
@@ -47,8 +47,8 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `sync/stock-applier.ts` — applies a pulled `STOCK_MOVED` to the local ledger, `INSERT OR IGNORE` on the movement ID so re-applying cannot double stock
 - `sync/product-applier.ts` — applies a pulled `PRODUCT_SAVED`, which is what unblocks movements deferred waiting on their product
 - `products/products.ts` — products on the device, with the last-write-wins upsert. A losing edit is a `false` return, never an error
-- `sales/sales.ts` — **the POS fan-out** (§9). `completeSale` writes the sale, its lines, the stock they released, the payments, and the outbox event in one transaction. `totalsOf` is exported so a till shows a running total from *this* arithmetic — a second implementation in the UI is how the screen comes to disagree with the receipt
-- `sync/sale-applier.ts` — applies a pulled `SALE_COMPLETED`, `INSERT OR IGNORE` throughout so a replay cannot double a day's takings
+- `sales/sales.ts` — **the POS fan-out** (§9). `completeSale` writes the sale, its lines, the stock they released, the payments, the customer ledger entry for anything left owing, and the outbox event in one transaction. `totalsOf` is exported so a till shows a running total from *this* arithmetic — a second implementation in the UI is how the screen comes to disagree with the receipt. `subtotalOf` is exported for the same reason, so the applier that receives a sale from another till works out the debt the way the till that sold it did
+- `sync/sale-applier.ts` — applies a pulled `SALE_COMPLETED`, `INSERT OR IGNORE` throughout so a replay cannot double a day's takings or a customer's debt. A sale for a customer this device has never seen is **deferred, not dropped**: the debt waits for the customer rather than being lost
 
 Line totals are `price × quantity / 1000` rounded **half away from zero**, matching the server's `MulRatio(..., RoundHalfUp)` exactly. `Math.round` is wrong here — it breaks ties toward positive infinity, so it would agree today and diverge the moment a negative line existed. A device and a server that round differently disagree by a franc a line and nobody can say which is right.
 
@@ -62,7 +62,11 @@ Endpoints: `/auth/login`, `/auth/logout`, `/auth/me`, `/sync/push`, `/sync/pull`
 
 `backend/internal/platform/postgres/` — the driver edge (ADR-013). pgx v5, goose migrations embedded from `backend/migrations/`, and repositories that take a `business.Scope` bound into the query. `pgtest` gives tests a migrated database. Domain types cross into driver types here and nowhere else.
 
-`inventory_movements`, `sales`, `sale_items`, and `sale_payments` are append-only **in the database**, not just the domain: triggers refuse UPDATE and DELETE, so a correction has to be a compensating transaction even for a migration or a support script. Stock and sale totals are derived, never stored.
+`inventory_movements`, `sales`, `sale_items`, `sale_payments`, and `customer_transactions` are append-only **in the database**, not just the domain: triggers refuse UPDATE and DELETE, so a correction has to be a compensating transaction even for a migration or a support script. Stock, sale totals, and what a customer owes are derived, never stored.
+
+A balance is a `sum()` in the database rather than a fetch-and-add in Go, for the same reason stock is: a regular who has bought on credit for two years has hundreds of entries, and a cashier asking what they owe must not pay for all of them. The two must agree exactly — `credit_repository_test.go` sums the same ledger both ways and compares, because a shopkeeper and a customer reading different numbers is the failure this domain exists to prevent.
+
+A customer's phone is a lookup, not an identity: the index on `(business_id, phone)` is deliberately **not** unique, because a household shares one number and refusing the second person would leave them out of the credit book they are already in on paper. `FindByPhone` returns everyone on the number and the caller chooses.
 
 `SaleRepository.Record` is §9's fan-out: the sale, its lines, its payments, and the stock it released, in one transaction. Half of it landing describes something that did not happen — money taken for goods still on the shelf, or stock gone with nobody recorded as paying.
 
@@ -93,7 +97,7 @@ Backend-only, from `backend/`: `go test ./... -race -cover`, `go vet ./...`, `go
 
 ### Testing expectations
 
-Tests must pass under `-race`. `kernel/` and `domain/` are held at **100% statement coverage** — except `domain/sales` at ~97%, where the remainder is error propagation from money arithmetic that `Record` has already proved cannot fail, unreachable because the entity's fields are unexported; `platform/postgres` sits at ~96%, the remainder being driver-error branches that cannot be reached with constants we control. Comprehensiveness is not satisfied by covering the spec's worked examples — those are a floor. Also cover boundary and overflow values, degenerate and malformed input, concurrency, and the invalid zero-value surface of each type. Prefer property-based tests, Go native fuzz targets, and — where a correct answer is independently computable — an oracle built a structurally different way from the implementation (see `money/oracle_test.go`).
+Tests must pass under `-race`. `kernel/` and `domain/` are held at **100% statement coverage** — except `domain/sales` at ~97%, where the remainder is error propagation from money arithmetic that `Record` has already proved cannot fail, unreachable because the entity's fields are unexported; `platform/postgres` sits at ~92%, the remainder being driver-error branches that cannot be reached with constants we control. Comprehensiveness is not satisfied by covering the spec's worked examples — those are a floor. Also cover boundary and overflow values, degenerate and malformed input, concurrency, and the invalid zero-value surface of each type. Prefer property-based tests, Go native fuzz targets, and — where a correct answer is independently computable — an oracle built a structurally different way from the implementation (see `money/oracle_test.go`).
 
 The client is tested the same way and for the same reason: `node:sqlite` is real SQLite, so the schema, constraints, and queries are exercised rather than simulated. What that does not cover is the native driver the app loads, which needs a device.
 
@@ -176,7 +180,7 @@ Inspect existing architecture and files before changing them, and prefer the sma
 
 A pushed event is **recorded and applied in one transaction** (`SyncRepository.RecordAndApply`, taking an `Effects`). Recording without applying is the failure mode to watch for: the device is told "accepted", stops resending, and the stock never lands — undetectable afterwards, since the log says the event arrived. A new applied event type adds a field to `Effects` and a write inside that transaction, never a second write beside it.
 
-Applied types so far: `STOCK_MOVED` (append), `PRODUCT_SAVED` (last-write-wins upsert, ADR-015), and `SALE_COMPLETED` (immutable insert of the whole fan-out). Conflict policy is per type and deliberately different — two devices' movements both stand, but only one product edit can.
+Applied types so far: `STOCK_MOVED` (append), `PRODUCT_SAVED` (last-write-wins upsert, ADR-015), and `SALE_COMPLETED` (immutable insert of the whole fan-out, **including the customer ledger entry for what the sale left owing**). Conflict policy is per type and deliberately different — two devices' movements both stand, but only one product edit can.
 
 Payload structs live in `app/syncing` (`StockMovedPayload`), not in `postgres` — they are the wire contract, and their JSON names are a protocol version. A movement's tenant, branch, device, and user come from the authenticated envelope; only the movement's own ID comes from the payload, because that ID is what makes a replay a duplicate.
 
@@ -188,6 +192,8 @@ Forward compatibility runs in two directions, and they are opposite on purpose:
 ### The client/server payload contract
 
 `StockMovedPayload` in `app/syncing` and `describe()` in the client's `movements.ts` are two halves of one wire format, and nothing but a test holds them together. The server refuses a payload carrying a field it does not know, so a field added to one side and not the other **rejects every event from that client**.
+
+The same applies to identifiers, and less visibly. Every identifier in a payload is parsed as a UUID on arrival (ADR-011), so a client that *derives* one — a line's identifier with a suffix, say — has its events rejected with the sale already recorded on the till and nothing there to explain it. Identifiers are drawn, never composed. `sales.test.ts` asserts the shape of every identifier a completed sale sends, which is the only thing standing between that rule and a silent one-way sync.
 
 The payload carries no business, branch, device, or user, and no currency: identity comes from the authenticated envelope (ADR-008) and everything is XAF (§46). Only the movement's own ID travels, because that ID is what makes a replay a duplicate.
 
