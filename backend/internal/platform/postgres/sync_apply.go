@@ -9,6 +9,7 @@ import (
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
+	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sales"
@@ -29,6 +30,9 @@ type Effects struct {
 	// Customers are upserted the same way and for the same reason. A customer's
 	// details are state; what they owe is not, and travels as ledger entries.
 	Customers []*customers.Customer
+	// Accounts are upserted the same way again. What an account holds is not
+	// state either — it is the sum of what moved through it (§18).
+	Accounts []*finance.Account
 	// Sale is a completed sale with its lines. Immutable: a replay is refused
 	// by the primary key rather than overwriting financial history (§41).
 	Sale *sales.Sale
@@ -48,8 +52,8 @@ type Effects struct {
 // IsEmpty reports whether the event changes nothing, which is true of an event
 // type this build records and relays without applying.
 func (e Effects) IsEmpty() bool {
-	return len(e.Movements) == 0 && len(e.Products) == 0 &&
-		len(e.Customers) == 0 && len(e.Credit) == 0 && e.Sale == nil
+	return len(e.Movements) == 0 && len(e.Products) == 0 && len(e.Customers) == 0 &&
+		len(e.Accounts) == 0 && len(e.Credit) == 0 && e.Sale == nil
 }
 
 // RecordAndApply stores an event and everything it changes, in one transaction.
@@ -101,6 +105,14 @@ func (r *SyncRepository) RecordAndApply(
 			return Recorded, fmt.Errorf("%w: customer %d is missing", ErrQuery, i)
 		}
 		if err := scope.Guard(customer.BusinessID(), business.BranchID{}); err != nil {
+			return Recorded, err
+		}
+	}
+	for i, account := range effects.Accounts {
+		if account == nil {
+			return Recorded, fmt.Errorf("%w: account %d is missing", ErrQuery, i)
+		}
+		if err := scope.Guard(account.BusinessID(), account.BranchID()); err != nil {
 			return Recorded, err
 		}
 	}
@@ -181,12 +193,17 @@ func (r *SyncRepository) RecordAndApply(
 			return Recorded, fmt.Errorf("applying product %d of event %s: %w", i, envelope.ID, err)
 		}
 	}
-	// Customers before the sale, deliberately: a credit sale names the customer
-	// it is owed by, and an event carrying both must not depend on which
-	// arrived first.
+	// Customers and accounts before the sale, deliberately: a credit sale names
+	// the customer it is owed by and its payments name the accounts they went
+	// into, and an event carrying them must not depend on which arrived first.
 	for i, customer := range effects.Customers {
 		if err := upsertCustomer(ctx, transaction, customer); err != nil {
 			return Recorded, fmt.Errorf("applying customer %d of event %s: %w", i, envelope.ID, err)
+		}
+	}
+	for i, account := range effects.Accounts {
+		if err := upsertAccount(ctx, transaction, account); err != nil {
+			return Recorded, fmt.Errorf("applying account %d of event %s: %w", i, envelope.ID, err)
 		}
 	}
 	// A sale and its payments join the same transaction as the event and the

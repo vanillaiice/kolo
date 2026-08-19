@@ -11,7 +11,6 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
-	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sales"
@@ -415,7 +414,7 @@ func TestAPaymentAppliesWithoutASale(t *testing.T) {
 		BusinessID: f.tenant,
 		Type:       customers.Payment,
 		Amount:     money.FromXAF(-5_000),
-		AccountID:  finance.NewAccountID(),
+		AccountID:  f.account,
 		UserID:     f.user,
 		DeviceID:   f.till,
 		OccurredAt: soldAt,

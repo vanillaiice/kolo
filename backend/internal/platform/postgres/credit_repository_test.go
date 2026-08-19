@@ -33,6 +33,8 @@ type creditFixture struct {
 	user     users.ID
 	till     devices.ID
 	customer customers.ID
+	// account is where a payment's money lands.
+	account finance.AccountID
 }
 
 func newCreditFixture(t *testing.T) *creditFixture {
@@ -68,6 +70,7 @@ func newCreditFixtureOn(t *testing.T, pool *pgxpool.Pool) *creditFixture {
 		user:      user.ID(),
 		till:      device.ID(),
 	}
+	f.account = openAccount(t, pool, ctx, scope, tenant.ID(), "Caisse")
 	f.customer = f.newCustomer(t, "Jean Mbarga").ID()
 	return f
 }
@@ -114,7 +117,7 @@ func (f *creditFixture) entry(
 	}
 	if transactionType.MovesMoney() {
 		// A payment names where the money went, and only a payment does.
-		snapshot.AccountID = finance.NewAccountID()
+		snapshot.AccountID = f.account
 	}
 	if transactionType.RequiresReference() {
 		snapshot.Reference = customers.Reference{Kind: "SALE", ID: customers.NewTransactionID().String()}

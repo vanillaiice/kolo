@@ -9,7 +9,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/vanillaiice/kolo/backend/internal/domain/business"
+	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/id"
+	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
+	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
 )
 
 // These helpers insert rows with raw SQL rather than through a repository, so
@@ -58,6 +62,34 @@ func insertUser(t *testing.T, pool *pgxpool.Pool, tenant uuid.UUID) uuid.UUID {
 		t.Fatalf("inserting a user: %v", err)
 	}
 	return user
+}
+
+// openAccount creates a financial account for money to land in.
+//
+// Since 00010 a payment names a real account, so every test that takes money
+// needs one. Created through the repository rather than by raw SQL, because
+// what is under test here is the payment, not the account.
+func openAccount(
+	t *testing.T, pool *pgxpool.Pool, ctx context.Context,
+	scope business.Scope, tenant business.ID, name string,
+) finance.AccountID {
+	t.Helper()
+
+	account, err := finance.NewAccount(finance.AccountSnapshot{
+		ID:         finance.NewAccountID(),
+		BusinessID: tenant,
+		Name:       name,
+		Kind:       finance.Cash,
+		Currency:   money.XAF,
+		CreatedAt:  createdAt,
+	})
+	if err != nil {
+		t.Fatalf("finance.NewAccount: %v", err)
+	}
+	if err := postgres.NewAccountRepository(pool).Create(ctx, scope, account); err != nil {
+		t.Fatalf("creating an account: %v", err)
+	}
+	return account.ID()
 }
 
 // isForeignKeyViolation distinguishes a referential failure from any other

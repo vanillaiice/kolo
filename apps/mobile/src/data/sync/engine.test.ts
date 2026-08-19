@@ -10,6 +10,7 @@ import { cursor, deferredCount, unusable } from "./inbox.ts";
 import { pending, pendingCount, rejected } from "./outbox.ts";
 import { stockApplier, STOCK_MOVED } from "./stock-applier.ts";
 import { CUSTOMER_SAVED, customerApplier } from "./customer-applier.ts";
+import { ACCOUNT_SAVED, accountApplier } from "./account-applier.ts";
 import { CUSTOMER_PAYMENT, paymentApplier } from "./payment-applier.ts";
 import { PRODUCT_SAVED, productApplier } from "./product-applier.ts";
 import { SALE_COMPLETED, saleApplier } from "./sale-applier.ts";
@@ -78,6 +79,7 @@ function newEngine(
     saleApplier,
     customerApplier,
     paymentApplier,
+    accountApplier,
   ],
 ): SyncEngine {
   return new SyncEngine({
@@ -1348,6 +1350,70 @@ describe("a sale from the other till", () => {
 
     assert.equal(outcome.unusable, 1);
     assert.equal(owedBy(CUSTOMER), 0);
+  });
+
+  it("takes an account opened on another device", async () => {
+    // §10 in practice: the owner opens Orange Money on their phone and the till
+    // can take money into it after the next sync, with no new build.
+    const wallet = "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa";
+    const opened: IncomingEvent = {
+      event_id: "account-event",
+      device_id: OTHER_DEVICE,
+      user_id: USER,
+      type: ACCOUNT_SAVED,
+      payload: {
+        account: {
+          id: wallet,
+          name: "Orange Money",
+          kind: "MOBILE_MONEY",
+          number: "+237699000000",
+          created_at: AT,
+          updated_at: AT,
+        },
+      },
+      occurred_at: AT,
+      sequence: 1,
+    };
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [opened], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.applied, 1);
+    const stored = database.transaction((tx) => ({
+      ...tx.get(`SELECT name, kind, currency FROM financial_accounts WHERE id = ?`, [wallet]),
+    }));
+    assert.deepEqual(stored, { name: "Orange Money", kind: "MOBILE_MONEY", currency: "XAF" });
+  });
+
+  it("sets aside an account of a kind it does not know", async () => {
+    const unknown: IncomingEvent = {
+      event_id: "account-event",
+      device_id: OTHER_DEVICE,
+      user_id: USER,
+      type: ACCOUNT_SAVED,
+      payload: {
+        account: {
+          id: "bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
+          name: "Portefeuille crypto",
+          // The kind decides whether the account is counted against a drawer,
+          // so guessing at one this build does not know would be worse than
+          // refusing it.
+          kind: "CRYPTO",
+          created_at: AT,
+          updated_at: AT,
+        },
+      },
+      occurred_at: AT,
+      sequence: 1,
+    };
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [unknown], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.unusable, 1);
+    assert.equal(outcome.stillDeferred, 0);
   });
 
   it("sets aside a payload it cannot read", async () => {

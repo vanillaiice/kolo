@@ -25,6 +25,9 @@ type saleFixture struct {
 	*applyFixture
 	repo *postgres.SaleRepository
 	pool *pgxpool.Pool
+	// account is where the money a sale takes lands. Since 00010 a payment
+	// names a real one.
+	account finance.AccountID
 }
 
 func newSaleFixture(t *testing.T) *saleFixture {
@@ -32,7 +35,12 @@ func newSaleFixture(t *testing.T) *saleFixture {
 
 	base := newApplyFixture(t)
 	pool := pgtest.Pool(t)
-	return &saleFixture{applyFixture: base, repo: postgres.NewSaleRepository(pool), pool: pool}
+	return &saleFixture{
+		applyFixture: base,
+		repo:         postgres.NewSaleRepository(pool),
+		pool:         pool,
+		account:      openAccount(t, pool, base.ctx, base.scope, base.tenant, "Caisse"),
+	}
 }
 
 var soldAt = time.Date(2026, 8, 14, 9, 30, 0, 0, time.UTC)
@@ -94,15 +102,24 @@ func (f *saleFixture) sale(t *testing.T, mutate ...func(*sales.Snapshot)) *sales
 	return sale
 }
 
-// payment builds a payment against a sale.
+// payment builds a payment against a sale, into the fixture's account.
 func (f *saleFixture) payment(t *testing.T, sale *sales.Sale, amount int64) *sales.Payment {
+	t.Helper()
+	return f.paymentInto(t, sale, amount, f.account)
+}
+
+// paymentInto builds a payment into a named account, for the tests whose
+// subject is which account the money went to.
+func (f *saleFixture) paymentInto(
+	t *testing.T, sale *sales.Sale, amount int64, account finance.AccountID,
+) *sales.Payment {
 	t.Helper()
 
 	payment, err := sales.RecordPayment(sales.PaymentSnapshot{
 		ID:         sales.NewPaymentID(),
 		SaleID:     sale.ID(),
 		BusinessID: f.tenant,
-		AccountID:  finance.NewAccountID(),
+		AccountID:  account,
 		Amount:     money.FromXAF(amount),
 		UserID:     f.user,
 		DeviceID:   f.till,

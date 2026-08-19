@@ -583,6 +583,49 @@ export const MIGRATIONS: readonly Migration[] = [
          WHERE account_id IS NOT NULL`,
     ],
   },
+
+  {
+    version: 10,
+    name: "financial accounts",
+    statements: [
+      // Where the business's money sits (§17). Two tables have been naming an
+      // account with nothing behind the column; this is that something.
+      //
+      // No balance column: what an account holds is the sum of what moved
+      // through it, and §18 compares that against the drawer. A stored balance
+      // would be both the number being checked and the number checking (§59).
+      //
+      // Which provider a wallet belongs to is its name, never its kind. That is
+      // what makes adding Orange Money a row rather than a release (§10).
+      `CREATE TABLE financial_accounts (
+         id                TEXT    PRIMARY KEY,
+         business_id       TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         -- A till belongs to a branch, a bank account to the business (§42).
+         branch_id         TEXT    REFERENCES branches (id) ON DELETE RESTRICT,
+         name              TEXT    NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 120),
+         kind              TEXT    NOT NULL CHECK (kind IN ('CASH', 'MOBILE_MONEY', 'BANK',
+                                                            'CARD', 'OTHER')),
+         currency          TEXT    NOT NULL CHECK (length(currency) = 3),
+         -- The wallet number, bank number, or till label.
+         number            TEXT,
+         notes             TEXT,
+         active            INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+         created_at        TEXT    NOT NULL,
+         updated_at        TEXT    NOT NULL,
+         -- An account is state, and settles like a product and a customer:
+         -- last-write-wins ordered by (updated_at, updated_by_device).
+         updated_by_device TEXT    REFERENCES devices (id) ON DELETE RESTRICT,
+
+         CHECK (updated_at >= created_at)
+       ) STRICT`,
+
+      // A cashier choosing between two accounts called the same thing is
+      // choosing at random, and the money goes wherever they happened to tap.
+      `CREATE UNIQUE INDEX financial_accounts_name_per_business
+         ON financial_accounts (business_id, lower(trim(name)))`,
+      `CREATE INDEX financial_accounts_by_business ON financial_accounts (business_id, name)`,
+    ],
+  },
 ];
 
 /** The version the code in this build expects. */

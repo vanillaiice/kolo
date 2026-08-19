@@ -88,9 +88,15 @@ const (
 	// An entry in their ledger, appended like a stock movement: two devices
 	// each taking a payment both stand, and the balance is their sum (§13).
 	CustomerPaid Type = "CUSTOMER_PAYMENT"
+	// AccountSaved carries a financial account a device opened or edited. State,
+	// like a product and a customer, and resolved the same way. This is what
+	// makes a Mobile Money provider a row rather than a release (§10, §17).
+	AccountSaved Type = "ACCOUNT_SAVED"
 )
 
-var knownTypes = []Type{StockMoved, SaleCompleted, ProductSaved, CustomerSaved, CustomerPaid}
+var knownTypes = []Type{
+	StockMoved, SaleCompleted, ProductSaved, CustomerSaved, CustomerPaid, AccountSaved,
+}
 
 // Types returns every event type this server understands, in a stable order.
 func Types() []Type { return slices.Clone(knownTypes) }

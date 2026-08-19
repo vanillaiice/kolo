@@ -10,6 +10,7 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sales"
@@ -48,6 +49,8 @@ type fakeStore struct {
 	// customerRecords is the customer table, likewise holding the winning edit.
 	// Distinct from credit below: a customer is state, their debts are not.
 	customerRecords map[customers.ID]*customers.Customer
+	// accounts is the financial account table, resolved the same way again.
+	accounts map[finance.AccountID]*finance.Account
 	// sales and salePayments are the sale tables. A sale is immutable, so a
 	// second one under the same identifier is refused as the primary key would.
 	sales        map[sales.ID]*sales.Sale
@@ -71,6 +74,7 @@ func newFakeStore() *fakeStore {
 		appliedIDs:      make(map[inventory.MovementID]bool),
 		products:        make(map[products.ID]*products.Product),
 		customerRecords: make(map[customers.ID]*customers.Customer),
+		accounts:        make(map[finance.AccountID]*finance.Account),
 		sales:           make(map[sales.ID]*sales.Sale),
 		salePayments:    make(map[sales.ID][]*sales.Payment),
 		credit:          make(map[customers.TransactionID]*customers.Transaction),
@@ -212,7 +216,33 @@ func (f *fakeStore) RecordAndApply(
 		}
 		f.customerRecords[customer.ID()] = customer
 	}
+
+	for _, account := range effects.Accounts {
+		if err := scope.Guard(account.BusinessID(), account.BranchID()); err != nil {
+			return postgres.Recorded, err
+		}
+		held, seen := f.accounts[account.ID()]
+		if seen && !accountWins(account, held) {
+			continue
+		}
+		f.accounts[account.ID()] = account
+	}
 	return postgres.Recorded, nil
+}
+
+// accountWins is the same comparison over an account's two fields.
+func accountWins(incoming, held *finance.Account) bool {
+	if !incoming.UpdatedAt().Equal(held.UpdatedAt()) {
+		return incoming.UpdatedAt().After(held.UpdatedAt())
+	}
+	return incoming.UpdatedByDevice().String() > held.UpdatedByDevice().String()
+}
+
+// account returns the account the store holds, if any.
+func (f *fakeStore) account(id finance.AccountID) *finance.Account {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.accounts[id]
 }
 
 // customerWins is the product comparison over a customer's two fields.
