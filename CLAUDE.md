@@ -27,7 +27,7 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `products` — what a business sells (§6). Only a name, unit, and selling price are required; SKU, barcode, category, brand, and purchase price are filled in as the business learns them. Carries **no stock level** — that is the ledger's job
 - `sales` — what was sold and what was paid (§9–§11). A sale that leaves a balance also produces a `customers.Transaction`, built in `app/syncing` from the sale's own arithmetic rather than from a figure on the wire, and written in the same database transaction as the sale. A sale is immutable and holds its lines; **it has no payment method and no paid amount**, because §11 gives a sale many payments and what has been paid is their sum. Line totals are `price × quantity/1000` rounded half up, since quantity is thousandths and XAF has no subunit. `Settle` derives where a sale stands, and refuses an unpaid balance with no customer to owe it
 - `finance` — where money sits (§17). `AccountKind` and `AccountID` so far. **Mobile Money providers are accounts, not kinds** — that is what makes adding Orange a row rather than a release (§10)
-- `customers` — who a business sells to, and what they owe (§12, §13). The `Customer` entity needs only a name; everything else is filled in as the shopkeeper learns it. **Credit is an append-only ledger**, exactly like stock: a balance is the sum of transactions and is never stored. `CheckCreditLimit` is a *question*, not a rule the ledger enforces — letting a regular go over their limit is the shopkeeper's decision to make. A limit of zero and no limit at all are deliberately distinct
+- `customers` — who a business sells to, and what they owe (§12, §13). The `Customer` entity needs only a name; everything else is filled in as the shopkeeper learns it. **Credit is an append-only ledger**, exactly like stock: a balance is the sum of transactions and is never stored. A customer's record is state and settles by last-write-wins like a product's, which is what `UpdatedByDevice` is for. `CheckCreditLimit` is a *question*, not a rule the ledger enforces — letting a regular go over their limit is the shopkeeper's decision to make. A limit of zero and no limit at all are deliberately distinct
 - `sync` — what devices send each other (§26). Events, not state: two devices pushing "three were sold" lose nothing, while two pushing "stock is 47" must lose one
 - `devices` — an installation of the app (§28): its business, optional branch, label, and platform. A session binds to one, and an audit record names one. Its sync-specific state arrives with the sync phase
 
@@ -46,6 +46,8 @@ Progress against the Foundation phase (spec §51): project structure, authentica
 - `sync/engine.ts` — drains both queues. An event leaves the outbox only when the server says it has it; anything else keeps it queued. A rejection is set aside rather than retried forever, since retrying blocks everything behind it
 - `sync/stock-applier.ts` — applies a pulled `STOCK_MOVED` to the local ledger, `INSERT OR IGNORE` on the movement ID so re-applying cannot double stock
 - `sync/product-applier.ts` — applies a pulled `PRODUCT_SAVED`, which is what unblocks movements deferred waiting on their product
+- `customers/customers.ts` — customers on the device. Their details are state and settle by last-write-wins; what they owe is `balanceOf`, a SQL sum over the ledger and never a column. `wouldExceedCreditLimit` is a question, not a rule this layer enforces
+- `sync/customer-applier.ts` — applies a pulled `CUSTOMER_SAVED`, which is what unblocks a credit sale deferred waiting on its customer
 - `products/products.ts` — products on the device, with the last-write-wins upsert. A losing edit is a `false` return, never an error
 - `sales/sales.ts` — **the POS fan-out** (§9). `completeSale` writes the sale, its lines, the stock they released, the payments, the customer ledger entry for anything left owing, and the outbox event in one transaction. `totalsOf` is exported so a till shows a running total from *this* arithmetic — a second implementation in the UI is how the screen comes to disagree with the receipt. `subtotalOf` is exported for the same reason, so the applier that receives a sale from another till works out the debt the way the till that sold it did
 - `sync/sale-applier.ts` — applies a pulled `SALE_COMPLETED`, `INSERT OR IGNORE` throughout so a replay cannot double a day's takings or a customer's debt. A sale for a customer this device has never seen is **deferred, not dropped**: the debt waits for the customer rather than being lost
@@ -180,7 +182,7 @@ Inspect existing architecture and files before changing them, and prefer the sma
 
 A pushed event is **recorded and applied in one transaction** (`SyncRepository.RecordAndApply`, taking an `Effects`). Recording without applying is the failure mode to watch for: the device is told "accepted", stops resending, and the stock never lands — undetectable afterwards, since the log says the event arrived. A new applied event type adds a field to `Effects` and a write inside that transaction, never a second write beside it.
 
-Applied types so far: `STOCK_MOVED` (append), `PRODUCT_SAVED` (last-write-wins upsert, ADR-015), and `SALE_COMPLETED` (immutable insert of the whole fan-out, **including the customer ledger entry for what the sale left owing**). Conflict policy is per type and deliberately different — two devices' movements both stand, but only one product edit can.
+Applied types so far: `STOCK_MOVED` (append), `PRODUCT_SAVED` and `CUSTOMER_SAVED` (last-write-wins upserts, ADR-015), and `SALE_COMPLETED` (immutable insert of the whole fan-out, **including the customer ledger entry for what the sale left owing**). Conflict policy is per type and deliberately different — two devices' movements both stand, but only one product edit can.
 
 Payload structs live in `app/syncing` (`StockMovedPayload`), not in `postgres` — they are the wire contract, and their JSON names are a protocol version. A movement's tenant, branch, device, and user come from the authenticated envelope; only the movement's own ID comes from the payload, because that ID is what makes a replay a duplicate.
 
@@ -197,12 +199,12 @@ The same applies to identifiers, and less visibly. Every identifier in a payload
 
 The payload carries no business, branch, device, or user, and no currency: identity comes from the authenticated envelope (ADR-008) and everything is XAF (§46). Only the movement's own ID travels, because that ID is what makes a replay a duplicate.
 
-### Product conflicts
+### Product and customer conflicts
 
-Products are last-write-wins ordered by **`(updated_at, updated_by_device)`** (ADR-015). The tie-break is not decoration: without it, two devices holding the same two edits could settle on different prices depending on arrival order, permanently and undetectably. Because the comparison reads only the two rows, applying edits in any order gives the same answer everywhere.
+Products **and customers** are last-write-wins ordered by **`(updated_at, updated_by_device)`** (ADR-015). They are the two things here that are *state*: a name or a price has one current value, so one edit has to win. What a customer owes is not state and is never resolved this way — it is a ledger, and both devices' entries stand. The tie-break is not decoration: without it, two devices holding the same two edits could settle on different prices depending on arrival order, permanently and undetectably. Because the comparison reads only the two rows, applying edits in any order gives the same answer everywhere.
 
 The rule is written twice — once in PostgreSQL, once in SQLite — because a device must resolve a conflict with no network. Both sides are tested against the same cases, including the order-independence property itself.
 
-A losing edit is **discarded, not an error**. On the client `saveProduct` returns `false`; treating it as a failure would defer the event forever.
+A losing edit is **discarded, not an error**. On the client `saveProduct` and `saveCustomer` return `false`; treating it as a failure would defer the event forever.
 
 Timestamps come from the device, never the server: an edit made offline on Monday and synced on Friday must not beat one made on Wednesday.

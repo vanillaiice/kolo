@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
+	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/phone"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/validate"
@@ -44,22 +45,27 @@ type Customer struct {
 	// CreditLimit.
 	creditLimit money.Money
 	active      bool
-	createdAt   time.Time
-	updatedAt   time.Time
+	// updatedByDevice is the device whose edit is currently in force. It breaks
+	// a tie between two edits stamped the same instant, which is what makes the
+	// conflict rule give every device the same answer (ADR-015).
+	updatedByDevice devices.ID
+	createdAt       time.Time
+	updatedAt       time.Time
 }
 
 // Snapshot is the flat representation of a Customer.
 type Snapshot struct {
-	ID          ID
-	BusinessID  business.ID
-	Name        string
-	Phone       phone.Number
-	Address     string
-	Notes       string
-	CreditLimit money.Money
-	Active      bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID              ID
+	BusinessID      business.ID
+	Name            string
+	Phone           phone.Number
+	Address         string
+	Notes           string
+	CreditLimit     money.Money
+	Active          bool
+	UpdatedByDevice devices.ID
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // New creates a customer, active from the given moment.
@@ -75,6 +81,7 @@ func New(snapshot Snapshot) (*Customer, error) {
 	moment := snapshot.CreatedAt.UTC()
 	customer := build(cleaned)
 	customer.active = true
+	customer.updatedByDevice = snapshot.UpdatedByDevice
 	customer.createdAt = moment
 	customer.updatedAt = moment
 	return customer, nil
@@ -92,6 +99,7 @@ func Restore(snapshot Snapshot) (*Customer, error) {
 
 	customer := build(cleaned)
 	customer.active = snapshot.Active
+	customer.updatedByDevice = snapshot.UpdatedByDevice
 	customer.createdAt = snapshot.CreatedAt.UTC()
 	customer.updatedAt = snapshot.UpdatedAt.UTC()
 	return customer, nil
@@ -133,16 +141,17 @@ func validateSnapshot(snapshot Snapshot) (Snapshot, error) {
 // Snapshot returns the flat representation of the customer.
 func (c *Customer) Snapshot() Snapshot {
 	return Snapshot{
-		ID:          c.id,
-		BusinessID:  c.businessID,
-		Name:        c.name,
-		Phone:       c.number,
-		Address:     c.address,
-		Notes:       c.notes,
-		CreditLimit: c.creditLimit,
-		Active:      c.active,
-		CreatedAt:   c.createdAt,
-		UpdatedAt:   c.updatedAt,
+		ID:              c.id,
+		BusinessID:      c.businessID,
+		Name:            c.name,
+		Phone:           c.number,
+		Address:         c.address,
+		Notes:           c.notes,
+		CreditLimit:     c.creditLimit,
+		Active:          c.active,
+		UpdatedByDevice: c.updatedByDevice,
+		CreatedAt:       c.createdAt,
+		UpdatedAt:       c.updatedAt,
 	}
 }
 
@@ -178,6 +187,10 @@ func (c *Customer) CreditLimit() (money.Money, bool) {
 
 // Active reports whether the customer is still on the books.
 func (c *Customer) Active() bool { return c.active }
+
+// UpdatedByDevice returns the device that last edited the record, which may be
+// zero for one written before the column existed or created on the server.
+func (c *Customer) UpdatedByDevice() devices.ID { return c.updatedByDevice }
 
 // CreatedAt returns when the record was made, in UTC.
 func (c *Customer) CreatedAt() time.Time { return c.createdAt }

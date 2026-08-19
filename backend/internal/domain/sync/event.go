@@ -79,9 +79,14 @@ const (
 	// movement, which is appended, this is state: the newest edit wins, ordered
 	// so that every device agrees which that is (ADR-015).
 	ProductSaved Type = "PRODUCT_SAVED"
+	// CustomerSaved carries a customer a device created or edited. State, like
+	// a product, and resolved the same way: the newest edit wins, ordered so
+	// that every device agrees which that is (ADR-015). What the customer owes
+	// is not here — that is a ledger, and it arrives as transactions.
+	CustomerSaved Type = "CUSTOMER_SAVED"
 )
 
-var knownTypes = []Type{StockMoved, SaleCompleted, ProductSaved}
+var knownTypes = []Type{StockMoved, SaleCompleted, ProductSaved, CustomerSaved}
 
 // Types returns every event type this server understands, in a stable order.
 func Types() []Type { return slices.Clone(knownTypes) }

@@ -536,6 +536,22 @@ export const MIGRATIONS: readonly Migration[] = [
        END`,
     ],
   },
+
+  {
+    version: 8,
+    name: "which device's customer edit is in force",
+    statements: [
+      // The tie-break for two edits stamped the same instant, exactly as
+      // version 5 added for products (ADR-015). Without it, two devices holding
+      // the same two edits could settle on different names, permanently, with
+      // nothing able to detect it.
+      //
+      // Nullable for rows written before this, and a null sorts below any
+      // device, so a real edit always beats one from before the column existed.
+      `ALTER TABLE customers ADD COLUMN updated_by_device TEXT
+         REFERENCES devices (id) ON DELETE RESTRICT`,
+    ],
+  },
 ];
 
 /** The version the code in this build expects. */

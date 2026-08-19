@@ -9,6 +9,7 @@ import { SyncEngine, UnusableEvent, type EventApplier } from "./engine.ts";
 import { cursor, deferredCount, unusable } from "./inbox.ts";
 import { pending, pendingCount, rejected } from "./outbox.ts";
 import { stockApplier, STOCK_MOVED } from "./stock-applier.ts";
+import { CUSTOMER_SAVED, customerApplier } from "./customer-applier.ts";
 import { PRODUCT_SAVED, productApplier } from "./product-applier.ts";
 import { SALE_COMPLETED, saleApplier } from "./sale-applier.ts";
 import { productOf } from "../products/products.ts";
@@ -70,7 +71,12 @@ let database: Database;
 let transport: FakeTransport;
 
 function newEngine(
-  appliers: readonly EventApplier[] = [stockApplier, productApplier, saleApplier],
+  appliers: readonly EventApplier[] = [
+    stockApplier,
+    productApplier,
+    saleApplier,
+    customerApplier,
+  ],
 ): SyncEngine {
   return new SyncEngine({
     database,
@@ -1195,6 +1201,60 @@ describe("a sale from the other till", () => {
 
     assert.equal(outcome.unusable, 1);
     assert.equal(owedBy(CUSTOMER), 0);
+  });
+
+  it("applies a deferred credit sale once the customer arrives", async () => {
+    // The whole reason CUSTOMER_SAVED exists: a till that sells to a customer
+    // the other till has never heard of must not lose the debt.
+    const late = "88888888-8888-7888-8888-888888888888";
+    const original = creditSaleEvent(1, "remote-sale", 10_000);
+    const payload = original.payload as Record<string, Record<string, unknown>>;
+    const stranger: IncomingEvent = {
+      ...original,
+      payload: { ...payload, sale: { ...payload["sale"], customer_id: late } },
+    };
+
+    let customerSent = false;
+    transport.pullHandler = (from) => {
+      if (from === 0) {
+        return { events: [stranger], cursor: 1, has_more: false };
+      }
+      if (!customerSent) {
+        customerSent = true;
+        return {
+          events: [
+            {
+              event_id: "customer-event",
+              device_id: OTHER_DEVICE,
+              user_id: USER,
+              type: CUSTOMER_SAVED,
+              payload: {
+                customer: {
+                  id: late,
+                  name: "Alice Ngo",
+                  created_at: AT,
+                  updated_at: AT,
+                },
+              },
+              occurred_at: AT,
+              sequence: 2,
+            },
+          ],
+          cursor: 2,
+          has_more: false,
+        };
+      }
+      return empty();
+    };
+
+    assert.equal((await newEngine().sync()).stillDeferred, 1);
+
+    const outcome = await newEngine().sync();
+
+    // Two applied: the customer, and the sale that was waiting for them.
+    assert.equal(outcome.applied, 2);
+    assert.equal(outcome.stillDeferred, 0);
+    assert.equal(owedBy(late), 8_500);
   });
 
   it("sets aside a payload it cannot read", async () => {

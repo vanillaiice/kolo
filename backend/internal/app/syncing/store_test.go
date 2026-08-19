@@ -45,6 +45,9 @@ type fakeStore struct {
 	appliedIDs map[inventory.MovementID]bool
 	// products is the product table, holding whichever edit won.
 	products map[products.ID]*products.Product
+	// customerRecords is the customer table, likewise holding the winning edit.
+	// Distinct from credit below: a customer is state, their debts are not.
+	customerRecords map[customers.ID]*customers.Customer
 	// sales and salePayments are the sale tables. A sale is immutable, so a
 	// second one under the same identifier is refused as the primary key would.
 	sales        map[sales.ID]*sales.Sale
@@ -64,12 +67,13 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		movements:    make(map[domainsync.EventID][]*inventory.Movement),
-		appliedIDs:   make(map[inventory.MovementID]bool),
-		products:     make(map[products.ID]*products.Product),
-		sales:        make(map[sales.ID]*sales.Sale),
-		salePayments: make(map[sales.ID][]*sales.Payment),
-		credit:       make(map[customers.TransactionID]*customers.Transaction),
+		movements:       make(map[domainsync.EventID][]*inventory.Movement),
+		appliedIDs:      make(map[inventory.MovementID]bool),
+		products:        make(map[products.ID]*products.Product),
+		customerRecords: make(map[customers.ID]*customers.Customer),
+		sales:           make(map[sales.ID]*sales.Sale),
+		salePayments:    make(map[sales.ID][]*sales.Payment),
+		credit:          make(map[customers.TransactionID]*customers.Transaction),
 	}
 }
 
@@ -195,7 +199,35 @@ func (f *fakeStore) RecordAndApply(
 		}
 		f.products[snapshot.ID] = product
 	}
+
+	// The same rule for customers, since they are state in exactly the same
+	// sense (ADR-015).
+	for _, customer := range effects.Customers {
+		if err := scope.Guard(customer.BusinessID(), business.BranchID{}); err != nil {
+			return postgres.Recorded, err
+		}
+		held, seen := f.customerRecords[customer.ID()]
+		if seen && !customerWins(customer, held) {
+			continue
+		}
+		f.customerRecords[customer.ID()] = customer
+	}
 	return postgres.Recorded, nil
+}
+
+// customerWins is the product comparison over a customer's two fields.
+func customerWins(incoming, held *customers.Customer) bool {
+	if !incoming.UpdatedAt().Equal(held.UpdatedAt()) {
+		return incoming.UpdatedAt().After(held.UpdatedAt())
+	}
+	return incoming.UpdatedByDevice().String() > held.UpdatedByDevice().String()
+}
+
+// customer returns the customer the store holds, if any.
+func (f *fakeStore) customer(id customers.ID) *customers.Customer {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.customerRecords[id]
 }
 
 // wins reports whether an incoming edit beats the one already held, ordered by

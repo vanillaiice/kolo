@@ -34,6 +34,12 @@ CREATE TABLE customers (
     active                boolean     NOT NULL DEFAULT true,
     created_at            timestamptz NOT NULL,
     updated_at            timestamptz NOT NULL,
+    -- The device whose edit is in force. A customer is state rather than an
+    -- event, so two devices editing one cannot both win, and this breaks a tie
+    -- between edits stamped the same instant (ADR-015). Null for a record
+    -- written before the column existed, and a null sorts below any device, so
+    -- a real edit always beats one from before.
+    updated_by_device     uuid        REFERENCES devices (id) ON DELETE RESTRICT,
 
     CONSTRAINT customers_name_not_blank
         CHECK (char_length(btrim(name)) BETWEEN 1 AND 120),

@@ -26,6 +26,9 @@ type Effects struct {
 	// Products are upserted last-write-wins, since a product is state and only
 	// one edit can win (ADR-015).
 	Products []*products.Product
+	// Customers are upserted the same way and for the same reason. A customer's
+	// details are state; what they owe is not, and travels as ledger entries.
+	Customers []*customers.Customer
 	// Sale is a completed sale with its lines. Immutable: a replay is refused
 	// by the primary key rather than overwriting financial history (§41).
 	Sale *sales.Sale
@@ -41,7 +44,8 @@ type Effects struct {
 // IsEmpty reports whether the event changes nothing, which is true of an event
 // type this build records and relays without applying.
 func (e Effects) IsEmpty() bool {
-	return len(e.Movements) == 0 && len(e.Products) == 0 && e.Sale == nil
+	return len(e.Movements) == 0 && len(e.Products) == 0 &&
+		len(e.Customers) == 0 && e.Sale == nil
 }
 
 // RecordAndApply stores an event and everything it changes, in one transaction.
@@ -85,6 +89,14 @@ func (r *SyncRepository) RecordAndApply(
 			return Recorded, fmt.Errorf("%w: product %d is missing", ErrQuery, i)
 		}
 		if err := scope.Guard(product.BusinessID(), business.BranchID{}); err != nil {
+			return Recorded, err
+		}
+	}
+	for i, customer := range effects.Customers {
+		if customer == nil {
+			return Recorded, fmt.Errorf("%w: customer %d is missing", ErrQuery, i)
+		}
+		if err := scope.Guard(customer.BusinessID(), business.BranchID{}); err != nil {
 			return Recorded, err
 		}
 	}
@@ -156,6 +168,14 @@ func (r *SyncRepository) RecordAndApply(
 	for i, product := range effects.Products {
 		if err := upsertProduct(ctx, transaction, product); err != nil {
 			return Recorded, fmt.Errorf("applying product %d of event %s: %w", i, envelope.ID, err)
+		}
+	}
+	// Customers before the sale, deliberately: a credit sale names the customer
+	// it is owed by, and an event carrying both must not depend on which
+	// arrived first.
+	for i, customer := range effects.Customers {
+		if err := upsertCustomer(ctx, transaction, customer); err != nil {
+			return Recorded, fmt.Errorf("applying customer %d of event %s: %w", i, envelope.ID, err)
 		}
 	}
 	// A sale and its payments join the same transaction as the event and the
@@ -235,6 +255,42 @@ func upsertProduct(ctx context.Context, exec executor, product *products.Product
 		productValues(product)...)
 	if err != nil {
 		return wrapWrite("applying product", err)
+	}
+	return nil
+}
+
+// upsertCustomer writes a customer, keeping whichever edit wins.
+//
+// Last-write-wins ordered by (updated_at, updated_by_device), the same rule as
+// a product's and written out the same way (ADR-015). Because the comparison
+// reads only the two rows, applying edits in any order gives every device the
+// same answer — which is the property that lets a device resolve a conflict
+// with no network.
+//
+// A losing edit updates nothing and is not an error. It lost; there is nothing
+// for the caller to do about it.
+//
+// created_at is absent from the SET list along with the identity columns: a
+// customer's business never changes, and neither does when they were first
+// written down, whatever a device that edited them later thinks.
+func upsertCustomer(ctx context.Context, exec executor, customer *customers.Customer) error {
+	_, err := exec.Exec(ctx, customerInsert+`
+		ON CONFLICT (id) DO UPDATE SET
+			name                  = excluded.name,
+			phone                 = excluded.phone,
+			address               = excluded.address,
+			notes                 = excluded.notes,
+			credit_limit_minor    = excluded.credit_limit_minor,
+			credit_limit_currency = excluded.credit_limit_currency,
+			active                = excluded.active,
+			updated_at            = excluded.updated_at,
+			updated_by_device     = excluded.updated_by_device
+		WHERE excluded.updated_at > customers.updated_at
+		   OR (excluded.updated_at = customers.updated_at
+		       AND excluded.updated_by_device > customers.updated_by_device)`,
+		customerValues(customer)...)
+	if err != nil {
+		return wrapWrite("applying customer", err)
 	}
 	return nil
 }

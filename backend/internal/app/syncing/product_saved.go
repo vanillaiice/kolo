@@ -79,11 +79,11 @@ func savedProduct(
 		}
 	}
 
-	createdAt, err := moment(line.CreatedAt, "created_at")
+	createdAt, err := moment(line.CreatedAt, "product", "created_at")
 	if err != nil {
 		return nil, err
 	}
-	updatedAt, err := moment(line.UpdatedAt, "updated_at")
+	updatedAt, err := moment(line.UpdatedAt, "product", "updated_at")
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +136,12 @@ func savedProduct(
 	return product, nil
 }
 
-func moment(text, field string) (time.Time, error) {
+// moment reads a timestamp a conflict is decided by, which is why it is
+// required rather than inferred: a record with no updated_at could not be
+// compared with the one already stored.
+func moment(text, what, field string) (time.Time, error) {
 	if text == "" {
-		return time.Time{}, fmt.Errorf("%w: a product needs a %s", sync.ErrInvalidPayload, field)
+		return time.Time{}, fmt.Errorf("%w: a %s needs a %s", sync.ErrInvalidPayload, what, field)
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, text)
 	if err != nil {

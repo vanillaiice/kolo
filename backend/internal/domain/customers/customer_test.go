@@ -8,6 +8,7 @@ import (
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
+	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/phone"
 )
@@ -248,6 +249,38 @@ func TestRestoreRefusesWhatNewWould(t *testing.T) {
 		UpdatedAt:  happenedAt,
 	}); err == nil {
 		t.Error("a customer updated before it was created was restored")
+	}
+}
+
+// A customer is state, not an event, so two devices editing one cannot both
+// win. The device whose edit is in force is kept for the same reason a
+// product's is: it breaks a tie between two edits stamped the same instant, and
+// without it the two devices could settle on different answers permanently
+// (ADR-015).
+func TestACustomerRemembersWhoseEditIsInForce(t *testing.T) {
+	till := devices.NewID()
+	customer := aCustomer(t, func(s *customers.Snapshot) { s.UpdatedByDevice = till })
+
+	if customer.UpdatedByDevice() != till {
+		t.Errorf("UpdatedByDevice = %s, want %s", customer.UpdatedByDevice(), till)
+	}
+	if customer.Snapshot().UpdatedByDevice != till {
+		t.Error("the device did not survive a round trip through the snapshot")
+	}
+
+	// Zero is allowed: a customer written before the column existed, or created
+	// on the server rather than on a device, names nobody. A null sorts below
+	// any device, so a real edit always beats one from before.
+	if written := aCustomer(t); !written.UpdatedByDevice().IsZero() {
+		t.Errorf("UpdatedByDevice = %s, want none", written.UpdatedByDevice())
+	}
+
+	restored, err := customers.Restore(customer.Snapshot())
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if restored.UpdatedByDevice() != till {
+		t.Errorf("UpdatedByDevice = %s after Restore, want %s", restored.UpdatedByDevice(), till)
 	}
 }
 

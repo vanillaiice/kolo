@@ -11,6 +11,7 @@ import (
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
+	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/phone"
 )
@@ -31,7 +32,27 @@ func NewCustomerRepository(pool *pgxpool.Pool) *CustomerRepository {
 }
 
 const customerColumns = `id, business_id, name, phone, address, notes,
-	credit_limit_minor, credit_limit_currency, active, created_at, updated_at`
+	credit_limit_minor, credit_limit_currency, active, created_at, updated_at,
+	updated_by_device`
+
+// customerInsert writes one customer row. Shared by the ordinary create and by
+// the conflict-resolving upsert a sync event uses, so there is one column list.
+const customerInsert = `
+	INSERT INTO customers (` + customerColumns + `)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+
+// customerValues lays a customer out in the order customerInsert expects.
+func customerValues(customer *customers.Customer) []any {
+	snapshot := customer.Snapshot()
+	limit, limitCurrency := optionalMoney(snapshot.CreditLimit)
+	return []any{
+		snapshot.ID.ID(), snapshot.BusinessID.ID(), snapshot.Name,
+		optionalPhone(snapshot.Phone), optionalText(snapshot.Address),
+		optionalText(snapshot.Notes), limit, limitCurrency,
+		snapshot.Active, snapshot.CreatedAt, snapshot.UpdatedAt,
+		optionalDevice(snapshot.UpdatedByDevice),
+	}
+}
 
 // Create stores a new customer within the scope's business.
 func (r *CustomerRepository) Create(
@@ -48,15 +69,7 @@ func (r *CustomerRepository) Create(
 		return err
 	}
 
-	limit, limitCurrency := optionalMoney(snapshot.CreditLimit)
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO customers (`+customerColumns+`)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		snapshot.ID.ID(), snapshot.BusinessID.ID(), snapshot.Name,
-		optionalPhone(snapshot.Phone), optionalText(snapshot.Address),
-		optionalText(snapshot.Notes), limit, limitCurrency,
-		snapshot.Active, snapshot.CreatedAt, snapshot.UpdatedAt)
-	if err != nil {
+	if _, err := r.pool.Exec(ctx, customerInsert, customerValues(customer)...); err != nil {
 		return wrapWrite("creating customer", err)
 	}
 	return nil
@@ -161,12 +174,12 @@ func (r *CustomerRepository) Update(
 		UPDATE customers
 		SET name = $3, phone = $4, address = $5, notes = $6,
 		    credit_limit_minor = $7, credit_limit_currency = $8,
-		    active = $9, updated_at = $10
+		    active = $9, updated_at = $10, updated_by_device = $11
 		WHERE id = $1 AND business_id = $2`,
 		snapshot.ID.ID(), snapshot.BusinessID.ID(), snapshot.Name,
 		optionalPhone(snapshot.Phone), optionalText(snapshot.Address),
 		optionalText(snapshot.Notes), limit, limitCurrency,
-		snapshot.Active, snapshot.UpdatedAt)
+		snapshot.Active, snapshot.UpdatedAt, optionalDevice(snapshot.UpdatedByDevice))
 	if err != nil {
 		return wrapWrite("updating customer", err)
 	}
@@ -198,10 +211,11 @@ func scanCustomer(row pgx.Row) (*customers.Customer, error) {
 		rawPhone, address, notes *string
 		limitMinor               *int64
 		limitCurrency            *string
+		updatedByDevice          *uuid.UUID
 	)
 	err := row.Scan(&rawID, &rawOwner, &snapshot.Name, &rawPhone, &address, &notes,
 		&limitMinor, &limitCurrency, &snapshot.Active,
-		&snapshot.CreatedAt, &snapshot.UpdatedAt)
+		&snapshot.CreatedAt, &snapshot.UpdatedAt, &updatedByDevice)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -228,6 +242,9 @@ func scanCustomer(row pgx.Row) (*customers.Customer, error) {
 		snapshot.CreditLimit = limit
 	}
 
+	if updatedByDevice != nil {
+		snapshot.UpdatedByDevice = devices.IDFrom(*updatedByDevice)
+	}
 	snapshot.ID = customers.IDFrom(rawID)
 	snapshot.BusinessID = business.IDFrom(rawOwner)
 	snapshot.Address = text(address)
