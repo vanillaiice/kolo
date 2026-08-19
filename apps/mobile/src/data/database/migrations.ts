@@ -552,6 +552,37 @@ export const MIGRATIONS: readonly Migration[] = [
          REFERENCES devices (id) ON DELETE RESTRICT`,
     ],
   },
+
+  {
+    version: 9,
+    name: "where a customer's payment went",
+    statements: [
+      // Paying off a debt is two facts: the customer owes less, and the
+      // business holds more cash. The ledger entry is the first; this column is
+      // the second. An account, never a payment method — that is what keeps MTN
+      // and Orange configurable (§10). The accounts table arrives with §17, so
+      // this is not yet a foreign key, exactly as sale_payments.account_id is
+      // not.
+      `ALTER TABLE customer_transactions ADD COLUMN account_id TEXT`,
+
+      // SQLite cannot add a CHECK to an existing table, so the rule that money
+      // which moved has to have moved somewhere is kept by a trigger instead.
+      // It says the same thing: an account on a write-off would claim a till
+      // took money it never saw.
+      `CREATE TRIGGER customer_transactions_account_only_when_money_moved
+         BEFORE INSERT ON customer_transactions
+         WHEN (NEW.account_id IS NOT NULL) <> (NEW.type = 'PAYMENT')
+       BEGIN
+         SELECT RAISE(ABORT, 'only a payment names an account, and every payment must');
+       END`,
+
+      // What each account took from customers settling their debts, which the
+      // cash and financial reports sum (§18, §21).
+      `CREATE INDEX customer_transactions_by_account
+         ON customer_transactions (business_id, account_id, occurred_at)
+         WHERE account_id IS NOT NULL`,
+    ],
+  },
 ];
 
 /** The version the code in this build expects. */

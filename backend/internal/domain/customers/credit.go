@@ -9,6 +9,7 @@ import (
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/users"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/id"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
@@ -31,6 +32,9 @@ var (
 	ErrCurrencyMismatch = errors.New("customers: mixed currencies")
 	// ErrCreditLimitExceeded means a sale would put a customer past their limit.
 	ErrCreditLimitExceeded = errors.New("customers: credit limit exceeded")
+	// ErrInvalidAccount means money moved with no account to move it into, or an
+	// account was named where no money moved.
+	ErrInvalidAccount = errors.New("customers: invalid account")
 )
 
 type transactionTag struct{}
@@ -111,6 +115,15 @@ func (t TransactionType) RequiresReference() bool {
 	return t == CreditSale || t == Return
 }
 
+// MovesMoney reports whether this type is money actually changing hands.
+//
+// Only a payment is. A write-off costs the business money but nobody hands
+// anything over; a return brings goods back; an adjustment corrects a figure.
+// That distinction is why an account is required on a payment and refused on
+// everything else: an account records where money went, and naming one where
+// none moved would put cash in a till that never saw it (§17, §18).
+func (t TransactionType) MovesMoney() bool { return t == Payment }
+
 // IsSensitive reports whether this type needs an audit record (§39).
 //
 // Adjusting or writing off a debt is exactly the operation §39 lists as
@@ -162,7 +175,10 @@ type Transaction struct {
 	// amount is signed: positive adds to what the customer owes, negative
 	// reduces it. Summing the ledger is then plain addition, with no per-type
 	// rule to remember at every call site.
-	amount     money.Money
+	amount money.Money
+	// accountID is where the money went, and is set only on a payment — the one
+	// type where money changes hands.
+	accountID  finance.AccountID
 	reference  Reference
 	reason     string
 	userID     users.ID
@@ -179,6 +195,7 @@ type TransactionSnapshot struct {
 	BranchID   business.BranchID
 	Type       TransactionType
 	Amount     money.Money
+	AccountID  finance.AccountID
 	Reference  Reference
 	Reason     string
 	UserID     users.ID
@@ -232,6 +249,18 @@ func RecordTransaction(snapshot TransactionSnapshot) (*Transaction, error) {
 			ErrInvalidAmount, snapshot.Type, snapshot.Amount)
 	}
 
+	// Money that moved has to have moved somewhere. A payment with no account
+	// is cash nobody can find the next morning, and an account on a write-off
+	// claims a till took money it never saw (§17, §18).
+	switch {
+	case snapshot.Type.MovesMoney() && snapshot.AccountID.IsZero():
+		return nil, fmt.Errorf("%w: %s is money changing hands and needs an account",
+			ErrInvalidAccount, snapshot.Type)
+	case !snapshot.Type.MovesMoney() && !snapshot.AccountID.IsZero():
+		return nil, fmt.Errorf("%w: %s moves no money, so it names no account",
+			ErrInvalidAccount, snapshot.Type)
+	}
+
 	if snapshot.Type.RequiresReason() && strings.TrimSpace(snapshot.Reason) == "" {
 		return nil, fmt.Errorf("%w: %s", ErrMissingReason, snapshot.Type)
 	}
@@ -246,6 +275,7 @@ func RecordTransaction(snapshot TransactionSnapshot) (*Transaction, error) {
 		branchID:        snapshot.BranchID,
 		transactionType: snapshot.Type,
 		amount:          snapshot.Amount,
+		accountID:       snapshot.AccountID,
 		reference:       snapshot.Reference,
 		reason:          snapshot.Reason,
 		userID:          snapshot.UserID,
@@ -270,6 +300,7 @@ func (t *Transaction) Snapshot() TransactionSnapshot {
 		BranchID:   t.branchID,
 		Type:       t.transactionType,
 		Amount:     t.amount,
+		AccountID:  t.accountID,
 		Reference:  t.reference,
 		Reason:     t.reason,
 		UserID:     t.userID,
@@ -296,6 +327,12 @@ func (t *Transaction) Type() TransactionType { return t.transactionType }
 
 // Amount returns the signed amount.
 func (t *Transaction) Amount() money.Money { return t.amount }
+
+// Account returns where the money went, and whether any was named. Only a
+// payment names one.
+func (t *Transaction) Account() (finance.AccountID, bool) {
+	return t.accountID, !t.accountID.IsZero()
+}
 
 // Reference returns what caused it, and whether anything was named.
 func (t *Transaction) Reference() (Reference, bool) { return t.reference, !t.reference.IsZero() }

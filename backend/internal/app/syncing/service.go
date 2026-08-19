@@ -297,6 +297,13 @@ func (s *Service) effectsOf(scope business.Scope, envelope sync.Envelope) (postg
 		}
 		return postgres.Effects{Customers: []*customers.Customer{customer}}, nil
 
+	case sync.CustomerPaid:
+		payment, err := customerPayment(scope, envelope, s.now())
+		if err != nil {
+			return postgres.Effects{}, err
+		}
+		return postgres.Effects{Credit: []*customers.Transaction{payment}}, nil
+
 	case sync.SaleCompleted:
 		return completedSale(scope, envelope, s.now())
 

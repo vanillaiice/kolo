@@ -13,6 +13,7 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/users"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
 )
@@ -33,7 +34,7 @@ func NewCreditRepository(pool *pgxpool.Pool) *CreditRepository {
 }
 
 const creditColumns = `id, customer_id, business_id, branch_id, type,
-	amount_minor, currency, reference_kind, reference_id, reason,
+	amount_minor, currency, account_id, reference_kind, reference_id, reason,
 	user_id, device_id, occurred_at, recorded_at`
 
 // creditInsert appends one entry to a customer's ledger.
@@ -43,7 +44,7 @@ const creditColumns = `id, customer_id, business_id, branch_id, type,
 // identical rows. A second copy would be a second place to forget a column.
 const creditInsert = `
 	INSERT INTO customer_transactions (` + creditColumns + `)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 
 // creditValues lays a transaction out in the order creditInsert expects.
 func creditValues(transaction *customers.Transaction) []any {
@@ -54,6 +55,7 @@ func creditValues(transaction *customers.Transaction) []any {
 		snapshot.ID.ID(), snapshot.CustomerID.ID(), snapshot.BusinessID.ID(),
 		optionalBranch(snapshot.BranchID), string(snapshot.Type),
 		snapshot.Amount.Amount(), snapshot.Amount.Currency().Code(),
+		optionalAccount(snapshot.AccountID),
 		referenceKind, referenceID, optionalText(snapshot.Reason),
 		snapshot.UserID.ID(), snapshot.DeviceID.ID(),
 		snapshot.OccurredAt, snapshot.RecordedAt,
@@ -312,6 +314,7 @@ func scanCreditTransaction(row pgx.Row) (*customers.Transaction, error) {
 		rawOwner                   uuid.UUID
 		rawBranch                  *uuid.UUID
 		rawUser, rawDevice         uuid.UUID
+		rawAccount                 *uuid.UUID
 		transactionType            string
 		amountMinor                int64
 		currencyCode               string
@@ -319,7 +322,7 @@ func scanCreditTransaction(row pgx.Row) (*customers.Transaction, error) {
 		reason                     *string
 	)
 	err := row.Scan(&rawID, &rawCustomer, &rawOwner, &rawBranch, &transactionType,
-		&amountMinor, &currencyCode, &referenceKind, &referenceID, &reason,
+		&amountMinor, &currencyCode, &rawAccount, &referenceKind, &referenceID, &reason,
 		&rawUser, &rawDevice, &snapshot.OccurredAt, &snapshot.RecordedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -345,6 +348,9 @@ func scanCreditTransaction(row pgx.Row) (*customers.Transaction, error) {
 	}
 	snapshot.Type = customers.TransactionType(transactionType)
 	snapshot.Amount = amount
+	if rawAccount != nil {
+		snapshot.AccountID = finance.AccountIDFrom(*rawAccount)
+	}
 	if referenceKind != nil && referenceID != nil {
 		snapshot.Reference = customers.Reference{Kind: *referenceKind, ID: *referenceID}
 	}
@@ -356,6 +362,16 @@ func scanCreditTransaction(row pgx.Row) (*customers.Transaction, error) {
 	// from a device running different code, is checked on the way in like any
 	// other input.
 	return customers.RestoreTransaction(snapshot)
+}
+
+// optionalAccount renders an unnamed account as SQL NULL. Only a payment names
+// one — the one type where money changes hands.
+func optionalAccount(accountID finance.AccountID) *uuid.UUID {
+	if accountID.IsZero() {
+		return nil
+	}
+	raw := accountID.ID()
+	return &raw
 }
 
 func optionalCreditReference(reference customers.Reference) (*string, *string) {

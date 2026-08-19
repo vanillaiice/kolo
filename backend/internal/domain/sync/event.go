@@ -84,9 +84,13 @@ const (
 	// that every device agrees which that is (ADR-015). What the customer owes
 	// is not here — that is a ledger, and it arrives as transactions.
 	CustomerSaved Type = "CUSTOMER_SAVED"
+	// CustomerPaid carries a customer settling some or all of what they owe.
+	// An entry in their ledger, appended like a stock movement: two devices
+	// each taking a payment both stand, and the balance is their sum (§13).
+	CustomerPaid Type = "CUSTOMER_PAYMENT"
 )
 
-var knownTypes = []Type{StockMoved, SaleCompleted, ProductSaved, CustomerSaved}
+var knownTypes = []Type{StockMoved, SaleCompleted, ProductSaved, CustomerSaved, CustomerPaid}
 
 // Types returns every event type this server understands, in a stable order.
 func Types() []Type { return slices.Clone(knownTypes) }

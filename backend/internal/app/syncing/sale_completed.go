@@ -131,9 +131,11 @@ func completedSale(
 		return postgres.Effects{}, err
 	}
 
-	return postgres.Effects{
-		Sale: sale, Payments: payments, Movements: movements, Credit: credit,
-	}, nil
+	effects := postgres.Effects{Sale: sale, Payments: payments, Movements: movements}
+	if credit != nil {
+		effects.Credit = []*customers.Transaction{credit}
+	}
+	return effects, nil
 }
 
 // toCredit builds the ledger entry a sale left unpaid produces, and nil for one

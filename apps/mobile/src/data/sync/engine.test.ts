@@ -10,6 +10,7 @@ import { cursor, deferredCount, unusable } from "./inbox.ts";
 import { pending, pendingCount, rejected } from "./outbox.ts";
 import { stockApplier, STOCK_MOVED } from "./stock-applier.ts";
 import { CUSTOMER_SAVED, customerApplier } from "./customer-applier.ts";
+import { CUSTOMER_PAYMENT, paymentApplier } from "./payment-applier.ts";
 import { PRODUCT_SAVED, productApplier } from "./product-applier.ts";
 import { SALE_COMPLETED, saleApplier } from "./sale-applier.ts";
 import { productOf } from "../products/products.ts";
@@ -76,6 +77,7 @@ function newEngine(
     productApplier,
     saleApplier,
     customerApplier,
+    paymentApplier,
   ],
 ): SyncEngine {
   return new SyncEngine({
@@ -1255,6 +1257,97 @@ describe("a sale from the other till", () => {
     assert.equal(outcome.applied, 2);
     assert.equal(outcome.stillDeferred, 0);
     assert.equal(owedBy(late), 8_500);
+  });
+
+  it("takes a payment another till collected", async () => {
+    // A customer who paid at the front counter must not be asked for it again
+    // at the back.
+    const payment = (id: string, amountMinor: number): IncomingEvent => ({
+      event_id: `payment-${id}`,
+      device_id: OTHER_DEVICE,
+      user_id: USER,
+      type: CUSTOMER_PAYMENT,
+      payload: {
+        payment: {
+          id,
+          customer_id: CUSTOMER,
+          account_id: "99999999-9999-7999-8999-999999999999",
+          amount_minor: amountMinor,
+          occurred_at: AT,
+        },
+      },
+      occurred_at: AT,
+      sequence: 1,
+    });
+
+    transport.pullHandler = (from) =>
+      from === 0
+        ? {
+            events: [creditSaleEvent(1, "remote-sale", 10_000), payment("entry-1", 3_000)],
+            cursor: 2,
+            has_more: false,
+          }
+        : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.applied, 2);
+    // 18,500 sold, 10,000 paid at the till, 3,000 paid later.
+    assert.equal(owedBy(CUSTOMER), 5_500);
+  });
+
+  it("does not take the same payment twice", async () => {
+    const payment: IncomingEvent = {
+      event_id: "payment-event",
+      device_id: OTHER_DEVICE,
+      user_id: USER,
+      type: CUSTOMER_PAYMENT,
+      payload: {
+        payment: {
+          id: "entry-1",
+          customer_id: CUSTOMER,
+          account_id: "99999999-9999-7999-8999-999999999999",
+          amount_minor: 3_000,
+          occurred_at: AT,
+        },
+      },
+      occurred_at: AT,
+      sequence: 1,
+    };
+    transport.pullHandler = () => ({ events: [payment], cursor: 0, has_more: false });
+
+    await newEngine().sync();
+    await newEngine().sync();
+
+    assert.equal(owedBy(CUSTOMER), -3_000);
+  });
+
+  it("sets aside a payment that is not money changing hands", async () => {
+    const backwards: IncomingEvent = {
+      event_id: "payment-event",
+      device_id: OTHER_DEVICE,
+      user_id: USER,
+      type: CUSTOMER_PAYMENT,
+      payload: {
+        payment: {
+          id: "entry-1",
+          customer_id: CUSTOMER,
+          account_id: "99999999-9999-7999-8999-999999999999",
+          // A payment that increased a debt is something no device may express.
+          amount_minor: -3_000,
+          occurred_at: AT,
+        },
+      },
+      occurred_at: AT,
+      sequence: 1,
+    };
+    transport.pullHandler = (from) =>
+      from === 0 ? { events: [backwards], cursor: 1, has_more: false } : empty();
+
+    const outcome = await newEngine().sync();
+
+    assert.equal(outcome.unusable, 1);
+    assert.equal(owedBy(CUSTOMER), 0);
   });
 
   it("sets aside a payload it cannot read", async () => {

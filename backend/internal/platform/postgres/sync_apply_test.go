@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
+	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sales"
@@ -309,7 +312,7 @@ func TestAnAppliedSaleLandsWithItsCredit(t *testing.T) {
 		Sale:      sale,
 		Payments:  []*sales.Payment{f.payment(t, sale, 10_000)},
 		Movements: []*inventory.Movement{f.soldMovement(t, sale, 2)},
-		Credit:    f.creditFor(t, sale, customerID, 3_000),
+		Credit:    []*customers.Transaction{f.creditFor(t, sale, customerID, 3_000)},
 	}
 
 	event := f.event(t, 1)
@@ -352,7 +355,7 @@ func TestACreditEntryWithoutItsSaleIsRefused(t *testing.T) {
 	sale := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = customerID })
 
 	err := errFrom(f.events.RecordAndApply(f.ctx, f.scope, f.event(t, 1),
-		postgres.Effects{Credit: f.creditFor(t, sale, customerID, 3_000)}))
+		postgres.Effects{Credit: []*customers.Transaction{f.creditFor(t, sale, customerID, 3_000)}}))
 	if !errors.Is(err, postgres.ErrQuery) {
 		t.Errorf("got %v, want ErrQuery", err)
 	}
@@ -370,7 +373,7 @@ func TestACreditEntryAgainstAnotherSaleIsRefused(t *testing.T) {
 
 	err := errFrom(f.events.RecordAndApply(f.ctx, f.scope, f.event(t, 1), postgres.Effects{
 		Sale:   sale,
-		Credit: f.creditFor(t, elsewhere, customerID, 13_000),
+		Credit: []*customers.Transaction{f.creditFor(t, elsewhere, customerID, 13_000)},
 	}))
 	if !errors.Is(err, postgres.ErrQuery) {
 		t.Errorf("got %v, want ErrQuery", err)
@@ -387,10 +390,52 @@ func TestACreditEntryOutsideTheScopeIsRefused(t *testing.T) {
 
 	err := errFrom(f.events.RecordAndApply(f.ctx, f.scope, f.event(t, 1), postgres.Effects{
 		Sale:   f.sale(t),
-		Credit: other.creditFor(t, sale, customerID, 3_000),
+		Credit: []*customers.Transaction{other.creditFor(t, sale, customerID, 3_000)},
 	}))
 	if !errors.Is(err, business.ErrCrossTenant) {
 		t.Errorf("got %v, want ErrCrossTenant", err)
+	}
+}
+
+// A payment stands on its own: someone settling their tab is not about any one
+// sale, so it needs no sale in the event carrying it (§13).
+func TestAPaymentAppliesWithoutASale(t *testing.T) {
+	f := newSaleFixture(t)
+
+	customerID := f.customer(t, "Jean Mbarga")
+	sale := f.sale(t, func(s *sales.Snapshot) { s.CustomerID = customerID })
+	if err := f.repo.Record(f.ctx, f.scope, sale, nil, nil,
+		f.creditFor(t, sale, customerID, 13_000)); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	payment, err := customers.RecordTransaction(customers.TransactionSnapshot{
+		ID:         customers.NewTransactionID(),
+		CustomerID: customerID,
+		BusinessID: f.tenant,
+		Type:       customers.Payment,
+		Amount:     money.FromXAF(-5_000),
+		AccountID:  finance.NewAccountID(),
+		UserID:     f.user,
+		DeviceID:   f.till,
+		OccurredAt: soldAt,
+		RecordedAt: soldAt.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("RecordTransaction: %v", err)
+	}
+
+	if _, err := f.events.RecordAndApply(f.ctx, f.scope, f.event(t, 1),
+		postgres.Effects{Credit: []*customers.Transaction{payment}}); err != nil {
+		t.Fatalf("RecordAndApply: %v", err)
+	}
+
+	balance, err := postgres.NewCreditRepository(f.pool).BalanceOf(f.ctx, f.scope, customerID)
+	if err != nil {
+		t.Fatalf("BalanceOf: %v", err)
+	}
+	if got := balance.Outstanding; !got.Equal(money.FromXAF(8_000)) {
+		t.Errorf("outstanding = %s, want 13000 less the 5000 paid", got)
 	}
 }
 

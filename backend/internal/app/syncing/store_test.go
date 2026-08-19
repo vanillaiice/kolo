@@ -169,16 +169,16 @@ func (f *fakeStore) RecordAndApply(
 		f.sales[saleID] = effects.Sale
 		f.salePayments[saleID] = effects.Payments
 	}
-	if effects.Credit != nil {
-		if err := scope.Guard(effects.Credit.BusinessID(), effects.Credit.BranchID()); err != nil {
+	for _, entry := range effects.Credit {
+		if err := scope.Guard(entry.BusinessID(), entry.BranchID()); err != nil {
 			return postgres.Recorded, err
 		}
-		if _, exists := f.credit[effects.Credit.ID()]; exists {
+		if _, exists := f.credit[entry.ID()]; exists {
 			// The ledger is append-only, so a second entry under one identifier
 			// is the primary key's answer rather than an overwrite (§13, §41).
 			return postgres.Recorded, &pgconn.PgError{Code: "23505", ConstraintName: "customer_transactions_pkey"}
 		}
-		f.credit[effects.Credit.ID()] = effects.Credit
+		f.credit[entry.ID()] = entry
 	}
 
 	f.sequence++

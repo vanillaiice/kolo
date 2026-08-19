@@ -7,6 +7,7 @@ import { openDatabase } from "../database/node-sqlite.ts";
 import { pending } from "../sync/outbox.ts";
 import {
   balanceOf,
+  recordCustomerPayment,
   CustomerError,
   customerOf,
   customersByPhone,
@@ -14,6 +15,7 @@ import {
   saveCustomer,
   upsertCustomer,
   wouldExceedCreditLimit,
+  type CustomerPayment,
   type SaveCustomer,
 } from "./customers.ts";
 
@@ -21,6 +23,7 @@ const BUSINESS = "11111111-1111-7111-8111-111111111111";
 const USER = "22222222-2222-7222-8222-222222222222";
 const TILL = "33333333-3333-7333-8333-333333333333";
 const PHONE_DEVICE = "44444444-4444-7444-8444-444444444444";
+const ACCOUNT = "55555555-5555-7555-8555-555555555555";
 const CREATED = "2026-08-01T08:00:00.000Z";
 const EARLIER = "2026-08-14T09:00:00.000Z";
 const LATER = "2026-08-14T17:00:00.000Z";
@@ -286,15 +289,172 @@ describe("finding customers", () => {
   });
 });
 
-describe("what a customer owes", () => {
-  function record(customerId: string, type: string, amountMinor: number): void {
+describe("a customer paying what they owe", () => {
+  function aPayment(overrides: Partial<CustomerPayment> = {}): CustomerPayment {
+    return {
+      id: nextId("payment"),
+      businessId: BUSINESS,
+      customerId: "unset",
+      accountId: ACCOUNT,
+      amountMinor: 5_000,
+      userId: USER,
+      deviceId: TILL,
+      occurredAt: EARLIER,
+      recordedAt: LATER,
+      eventId: nextId("event"),
+      ...overrides,
+    };
+  }
+
+  function owing(customerId: string): number {
+    return database.transaction((tx) => balanceOf(tx, BUSINESS, customerId)).outstandingMinor;
+  }
+
+  function owe(customerId: string, amountMinor: number): void {
     database.transaction((tx) =>
       tx.run(
         `INSERT INTO customer_transactions
            (id, customer_id, business_id, type, amount_minor, currency,
             reference_kind, reference_id, user_id, device_id, occurred_at, recorded_at)
-         VALUES (?, ?, ?, ?, ?, 'XAF', 'SALE', 'v-1', ?, ?, ?, ?)`,
-        [nextId("entry"), customerId, BUSINESS, type, amountMinor, USER, TILL, EARLIER, EARLIER],
+         VALUES (?, ?, ?, 'CREDIT_SALE', ?, 'XAF', 'SALE', 'v-1', ?, ?, ?, ?)`,
+        [nextId("entry"), customerId, BUSINESS, amountMinor, USER, TILL, EARLIER, EARLIER],
+      ),
+    );
+  }
+
+  it("reduces the balance and queues the event carrying it", () => {
+    const customer = aCustomer();
+    saveCustomer(database, customer);
+    owe(customer.id, 25_000);
+
+    recordCustomerPayment(database, aPayment({ customerId: customer.id, amountMinor: 10_000 }));
+
+    // §13's worked example, from the other end: 25,000 owed, 10,000 paid.
+    assert.equal(owing(customer.id), 15_000);
+
+    const queued = database.transaction((tx) => pending(tx, 10));
+    const event = queued.at(-1);
+    assert.equal(event?.type, "CUSTOMER_PAYMENT");
+    const payload = event?.payload as { payment: Record<string, unknown> };
+    // What was handed over travels positive; the sign is the server's to apply.
+    assert.equal(payload.payment["amount_minor"], 10_000);
+    assert.equal(payload.payment["customer_id"], customer.id);
+    assert.equal(payload.payment["account_id"], ACCOUNT);
+  });
+
+  it("records where the money went", () => {
+    const customer = aCustomer();
+    saveCustomer(database, customer);
+    recordCustomerPayment(database, aPayment({ customerId: customer.id }));
+
+    const entry = database.transaction((tx) => ({
+      ...tx.get(`SELECT type, amount_minor, account_id FROM customer_transactions`),
+    }));
+    assert.deepEqual(entry, { type: "PAYMENT", amount_minor: -5_000, account_id: ACCOUNT });
+  });
+
+  it("leaves a customer who overpays in credit", () => {
+    const customer = aCustomer();
+    saveCustomer(database, customer);
+    owe(customer.id, 3_000);
+
+    // Money the shopkeeper has already taken. Refusing it would turn away cash
+    // in their hand; clamping it would quietly lose the customer's.
+    recordCustomerPayment(database, aPayment({ customerId: customer.id, amountMinor: 5_000 }));
+    assert.equal(owing(customer.id), -2_000);
+  });
+
+  it("takes part of a debt as readily as all of it", () => {
+    const customer = aCustomer();
+    saveCustomer(database, customer);
+    owe(customer.id, 25_000);
+
+    recordCustomerPayment(database, aPayment({ customerId: customer.id, amountMinor: 5_000 }));
+    recordCustomerPayment(database, aPayment({ customerId: customer.id, amountMinor: 5_000 }));
+
+    assert.equal(owing(customer.id), 15_000);
+  });
+
+  it("refuses a payment of nothing or less", () => {
+    const customer = aCustomer();
+    saveCustomer(database, customer);
+
+    for (const amountMinor of [0, -5_000, 1.5]) {
+      assert.throws(
+        () => recordCustomerPayment(database, aPayment({ customerId: customer.id, amountMinor })),
+        /not money changing hands/,
+      );
+    }
+    assert.equal(owing(customer.id), 0);
+  });
+
+  it("refuses a payment missing what it cannot exist without", () => {
+    const customer = aCustomer();
+    saveCustomer(database, customer);
+
+    for (const missing of ["id", "customerId", "accountId", "eventId", "occurredAt"] as const) {
+      assert.throws(
+        () =>
+          recordCustomerPayment(
+            database,
+            aPayment({ customerId: customer.id, [missing]: "  " }),
+          ),
+        CustomerError,
+        `a payment with no ${missing} was recorded`,
+      );
+    }
+  });
+
+  it("writes the entry and the event together or neither", () => {
+    const customer = aCustomer();
+    saveCustomer(database, customer);
+    const payment = aPayment({ customerId: customer.id });
+    recordCustomerPayment(database, payment);
+
+    // The same identifier again: the ledger's primary key refuses it, and the
+    // event must not be queued for a payment that was not recorded.
+    assert.throws(() => recordCustomerPayment(database, { ...payment, eventId: nextId("event") }));
+
+    const events = database.transaction((tx) => pending(tx, 10));
+    assert.equal(events.filter((event) => event.type === "CUSTOMER_PAYMENT").length, 1);
+    assert.equal(owing(customer.id), -5_000);
+  });
+
+  it("keeps the payment in the append-only ledger", () => {
+    const customer = aCustomer();
+    saveCustomer(database, customer);
+    recordCustomerPayment(database, aPayment({ customerId: customer.id }));
+
+    for (const statement of [
+      `UPDATE customer_transactions SET amount_minor = -1`,
+      `DELETE FROM customer_transactions`,
+    ]) {
+      assert.throws(() => database.transaction((tx) => tx.run(statement)), /immutable/);
+    }
+  });
+});
+
+describe("what a customer owes", () => {
+  function record(customerId: string, type: string, amountMinor: number): void {
+    database.transaction((tx) =>
+      tx.run(
+        `INSERT INTO customer_transactions
+           (id, customer_id, business_id, type, amount_minor, currency, account_id,
+            reference_kind, reference_id, user_id, device_id, occurred_at, recorded_at)
+         VALUES (?, ?, ?, ?, ?, 'XAF', ?, 'SALE', 'v-1', ?, ?, ?, ?)`,
+        [
+          nextId("entry"),
+          customerId,
+          BUSINESS,
+          type,
+          amountMinor,
+          // Only a payment names an account, and every payment must.
+          type === "PAYMENT" ? ACCOUNT : null,
+          USER,
+          TILL,
+          EARLIER,
+          EARLIER,
+        ],
       ),
     );
   }

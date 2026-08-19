@@ -34,18 +34,22 @@ type Effects struct {
 	Sale *sales.Sale
 	// Payments are what was paid against that sale.
 	Payments []*sales.Payment
-	// Credit is the ledger entry a sale left unpaid produces, and is nil for
-	// one paid in full. It belongs in this struct rather than beside it: a debt
-	// recorded without its sale, or a sale recorded without the debt, is a
-	// customer who owes a different amount than the shop believes.
-	Credit *customers.Transaction
+	// Credit are entries for a customer's ledger: the debt a sale left unpaid,
+	// or a payment settling one. They belong in this struct rather than beside
+	// it — a debt recorded without its sale, or a sale recorded without the
+	// debt, is a customer who owes a different amount than the shop believes.
+	//
+	// A CREDIT_SALE entry must be against the sale this event carries. Every
+	// other type stands on its own, because a customer paying off their tab is
+	// not about any one sale.
+	Credit []*customers.Transaction
 }
 
 // IsEmpty reports whether the event changes nothing, which is true of an event
 // type this build records and relays without applying.
 func (e Effects) IsEmpty() bool {
 	return len(e.Movements) == 0 && len(e.Products) == 0 &&
-		len(e.Customers) == 0 && e.Sale == nil
+		len(e.Customers) == 0 && len(e.Credit) == 0 && e.Sale == nil
 }
 
 // RecordAndApply stores an event and everything it changes, in one transaction.
@@ -117,21 +121,28 @@ func (r *SyncRepository) RecordAndApply(
 				ErrQuery, payment.ID())
 		}
 	}
-	if effects.Credit != nil {
-		if err := scope.Guard(effects.Credit.BusinessID(), effects.Credit.BranchID()); err != nil {
+	for i, entry := range effects.Credit {
+		if entry == nil {
+			return Recorded, fmt.Errorf("%w: credit entry %d is missing", ErrQuery, i)
+		}
+		if err := scope.Guard(entry.BusinessID(), entry.BranchID()); err != nil {
 			return Recorded, err
 		}
-		// A ledger entry travelling with an event that carries no sale would be
-		// a debt appearing from nowhere. It arrives as part of §9's fan-out or
-		// not at all.
+		// A debt appearing with no sale would be a balance from nowhere, with
+		// nothing a customer could be shown to explain it. Every other kind of
+		// entry stands alone: someone paying off their tab is not about any one
+		// sale.
+		if entry.Type() != customers.CreditSale {
+			continue
+		}
 		if effects.Sale == nil {
 			return Recorded, fmt.Errorf("%w: credit entry %s names no sale this event carries",
-				ErrQuery, effects.Credit.ID())
+				ErrQuery, entry.ID())
 		}
-		if reference, named := effects.Credit.Reference(); !named ||
+		if reference, named := entry.Reference(); !named ||
 			reference.ID != effects.Sale.ID().String() {
 			return Recorded, fmt.Errorf("%w: credit entry %s is not against sale %s",
-				ErrQuery, effects.Credit.ID(), effects.Sale.ID())
+				ErrQuery, entry.ID(), effects.Sale.ID())
 		}
 	}
 
@@ -195,9 +206,10 @@ func (r *SyncRepository) RecordAndApply(
 	// without its credit entry would be goods gone with nobody recorded as
 	// owing for them — and nothing afterwards could tell, because the sale
 	// itself looks complete.
-	if effects.Credit != nil {
-		if err := insertCreditTransaction(ctx, transaction, effects.Credit); err != nil {
-			return Recorded, fmt.Errorf("applying the credit of event %s: %w", envelope.ID, err)
+	for i, entry := range effects.Credit {
+		if err := insertCreditTransaction(ctx, transaction, entry); err != nil {
+			return Recorded, fmt.Errorf("applying credit entry %d of event %s: %w",
+				i, envelope.ID, err)
 		}
 	}
 

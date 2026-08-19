@@ -22,6 +22,9 @@ import { enqueue } from "../sync/outbox.ts";
 /** The event a customer write queues. */
 export const CUSTOMER_SAVED = "CUSTOMER_SAVED";
 
+/** The event a payment against a customer's account queues. */
+export const CUSTOMER_PAYMENT = "CUSTOMER_PAYMENT";
+
 /** Everything is XAF (§46). */
 const CURRENCY = "XAF";
 
@@ -165,6 +168,125 @@ export function upsertCustomer(tx: Queryable, customer: Customer, deviceId: stri
     deviceId,
   ]);
   return result.changes > 0;
+}
+
+/** A customer handing over money against what they owe. */
+export interface CustomerPayment {
+  /**
+   * The ledger entry's own identifier, drawn by the till.
+   *
+   * It is what makes a resent payment one entry rather than two, so the device
+   * draws it and the server uses it as sent (§27).
+   */
+  readonly id: string;
+  readonly businessId: string;
+  readonly branchId?: string | undefined;
+  readonly customerId: string;
+  /** Where the money went. An account, never a payment method (§10). */
+  readonly accountId: string;
+  /** What was handed over, positive. The ledger stores it negative. */
+  readonly amountMinor: number;
+  readonly note?: string | undefined;
+  readonly userId: string;
+  readonly deviceId: string;
+  /** When the money changed hands. */
+  readonly occurredAt: string;
+  /** When the row is being written. */
+  readonly recordedAt: string;
+  /** The event identifier, which is what makes a replay a duplicate (§27). */
+  readonly eventId: string;
+}
+
+/**
+ * Records a customer paying off some or all of what they owe (§13).
+ *
+ * The entry and the event that carries it in one transaction (ADR-014), like
+ * every other write here: a payment the shopkeeper has taken and the server
+ * never hears of would leave the customer owing money they have already handed
+ * over.
+ *
+ * Payments are against the account, not against a sale. A regular's debt is
+ * built from a fortnight of small buys, and asking a cashier which of them the
+ * 5,000 pays off would be inventing a question the shop does not ask.
+ *
+ * Nothing is checked against the balance. Paying more than is owed leaves a
+ * customer in credit, which is the honest answer — refusing it would turn away
+ * money the shopkeeper has in their hand.
+ */
+export function recordCustomerPayment(database: Database, payment: CustomerPayment): void {
+  validatePayment(payment);
+
+  database.transaction((tx) => {
+    tx.run(
+      `INSERT INTO customer_transactions
+         (id, customer_id, business_id, branch_id, type, amount_minor, currency, account_id,
+          reference_kind, reference_id, reason, user_id, device_id, occurred_at, recorded_at)
+       VALUES (?, ?, ?, ?, 'PAYMENT', ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+      [
+        payment.id,
+        payment.customerId,
+        payment.businessId,
+        payment.branchId ?? null,
+        // Negative: a payment reduces what is owed, and storing the sign is
+        // what makes summing the ledger plain addition.
+        -payment.amountMinor,
+        CURRENCY,
+        payment.accountId,
+        payment.note ?? null,
+        payment.userId,
+        payment.deviceId,
+        payment.occurredAt,
+        payment.recordedAt,
+      ],
+    );
+
+    enqueue(tx, {
+      eventId: payment.eventId,
+      businessId: payment.businessId,
+      userId: payment.userId,
+      deviceId: payment.deviceId,
+      type: CUSTOMER_PAYMENT,
+      // The wire carries what was handed over, positive. The sign is the
+      // server's to apply, so a device cannot record a payment that increases a
+      // debt.
+      payload: {
+        payment: {
+          id: payment.id,
+          customer_id: payment.customerId,
+          account_id: payment.accountId,
+          amount_minor: payment.amountMinor,
+          occurred_at: payment.occurredAt,
+          ...(payment.note === undefined ? {} : { note: payment.note }),
+        },
+      },
+      occurredAt: payment.occurredAt,
+    });
+  });
+}
+
+function validatePayment(payment: CustomerPayment): void {
+  const required: ReadonlyArray<readonly [string, string]> = [
+    ["id", payment.id],
+    ["businessId", payment.businessId],
+    ["customerId", payment.customerId],
+    ["accountId", payment.accountId],
+    ["userId", payment.userId],
+    ["deviceId", payment.deviceId],
+    ["occurredAt", payment.occurredAt],
+    ["recordedAt", payment.recordedAt],
+    ["eventId", payment.eventId],
+  ];
+  for (const [field, value] of required) {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new CustomerError(`a payment needs a ${field}`);
+    }
+  }
+  if (payment.recordedAt < payment.occurredAt) {
+    throw new CustomerError("a payment cannot be recorded before it happened");
+  }
+  if (!Number.isInteger(payment.amountMinor) || payment.amountMinor <= 0) {
+    throw new CustomerError(`a payment of ${payment.amountMinor} is not money changing hands`);
+  }
 }
 
 /** Returns a customer, or undefined if this device does not hold them. */

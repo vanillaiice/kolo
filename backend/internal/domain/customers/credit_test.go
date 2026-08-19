@@ -9,6 +9,7 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/users"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
 )
@@ -54,6 +55,9 @@ func (l *ledger) entry(
 	}
 	if kind.RequiresReference() {
 		snapshot.Reference = customers.Reference{Kind: "SALE", ID: customers.NewID().String()}
+	}
+	if kind.MovesMoney() {
+		snapshot.AccountID = finance.NewAccountID()
 	}
 	if kind.RequiresReason() {
 		snapshot.Reason = "convenu avec le patron"
@@ -354,11 +358,59 @@ func TestAPaymentNeedsNoReference(t *testing.T) {
 
 	if _, err := customers.RecordTransaction(customers.TransactionSnapshot{
 		ID: customers.NewTransactionID(), CustomerID: l.customerID, BusinessID: l.businessID,
-		Type: customers.Payment, Amount: money.FromXAF(-1_000),
+		Type: customers.Payment, Amount: money.FromXAF(-1_000), AccountID: finance.NewAccountID(),
 		UserID: l.userID, DeviceID: l.deviceID, OccurredAt: happenedAt, RecordedAt: writtenAt,
 	}); err != nil {
 		t.Errorf("a cash payment was refused: %v", err)
 	}
+}
+
+// Money that moved has to have moved somewhere, and money that did not move
+// must not claim an account. A payment with no account is cash nobody can find
+// the next morning; an account on a write-off says a till took money it never
+// saw (§17, §18).
+func TestOnlyAPaymentNamesAnAccount(t *testing.T) {
+	l := newLedger()
+
+	if _, err := customers.RecordTransaction(customers.TransactionSnapshot{
+		ID: customers.NewTransactionID(), CustomerID: l.customerID, BusinessID: l.businessID,
+		Type: customers.Payment, Amount: money.FromXAF(-1_000),
+		UserID: l.userID, DeviceID: l.deviceID, OccurredAt: happenedAt, RecordedAt: writtenAt,
+	}); !errors.Is(err, customers.ErrInvalidAccount) {
+		t.Errorf("a payment into nowhere was accepted: %v", err)
+	}
+
+	for _, kind := range customers.TransactionTypes() {
+		if kind.MovesMoney() {
+			continue
+		}
+		_, err := customers.RecordTransaction(l.entry(t, kind, amountFor(kind)).Snapshot())
+		if err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+
+		snapshot := l.entry(t, kind, amountFor(kind)).Snapshot()
+		snapshot.AccountID = finance.NewAccountID()
+		if _, err := customers.RecordTransaction(snapshot); !errors.Is(err, customers.ErrInvalidAccount) {
+			t.Errorf("a %s naming an account was accepted: %v", kind, err)
+		}
+	}
+
+	// And the account survives a round trip, so a statement can say where the
+	// money went.
+	payment := l.entry(t, customers.Payment, -1_000)
+	account, named := payment.Account()
+	if !named || account != payment.Snapshot().AccountID {
+		t.Errorf("Account = %s (named: %t), want the one recorded", account, named)
+	}
+}
+
+// amountFor gives each type an amount its own sign rule accepts.
+func amountFor(kind customers.TransactionType) int64 {
+	if kind.Decreases() {
+		return -1_000
+	}
+	return 1_000
 }
 
 func TestATransactionRecordedBeforeItHappenedIsRefused(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/users"
 	"github.com/vanillaiice/kolo/backend/internal/kernel/money"
 	"github.com/vanillaiice/kolo/backend/internal/platform/postgres"
@@ -110,6 +111,10 @@ func (f *creditFixture) entry(
 		DeviceID:   f.till,
 		OccurredAt: createdAt,
 		RecordedAt: createdAt,
+	}
+	if transactionType.MovesMoney() {
+		// A payment names where the money went, and only a payment does.
+		snapshot.AccountID = finance.NewAccountID()
 	}
 	if transactionType.RequiresReference() {
 		snapshot.Reference = customers.Reference{Kind: "SALE", ID: customers.NewTransactionID().String()}
