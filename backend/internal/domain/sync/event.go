@@ -97,11 +97,15 @@ const (
 	// business's own accounts, the correction after a count (§18). Appended,
 	// like a stock movement: two devices' movements both stand.
 	CashMoved Type = "CASH_MOVED"
+	// ExpenseRecorded carries money the business spent that did not become
+	// stock: rent, transport, a salary (§19). Appended, and undone by a
+	// reversal that is itself an ExpenseRecorded.
+	ExpenseRecorded Type = "EXPENSE_RECORDED"
 )
 
 var knownTypes = []Type{
 	StockMoved, SaleCompleted, ProductSaved, CustomerSaved, CustomerPaid,
-	AccountSaved, CashMoved,
+	AccountSaved, CashMoved, ExpenseRecorded,
 }
 
 // Types returns every event type this server understands, in a stable order.

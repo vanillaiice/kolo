@@ -20,9 +20,10 @@ import (
 // AccountMovementRepository stores money moved by hand, and derives what an
 // account holds.
 //
-// The balance is summed from three places — the payments taken into the
-// account, the customers settling debts into it, and the movements here —
-// because each of those is recorded once, where it happened. A ledger repeating
+// The balance is summed from every place money moves — the payments taken into
+// the account, the customers settling debts into it, the movements here, and
+// the expenses paid out of it — because each of those is recorded once, where
+// it happened. A ledger repeating
 // them would be a second copy that could disagree, and §18's whole job is
 // comparing the derived figure against the drawer.
 type AccountMovementRepository struct {
@@ -166,11 +167,11 @@ func (r *AccountMovementRepository) ListForAccount(
 
 // BalanceOf returns what an account holds.
 //
-// Three sums, added: what sales paid into it, what customers paid into it, and
-// what moved by hand. Each source is authoritative for its own facts, and the
-// query is the only place they are brought together — which is why a new source
-// of money must be added here or the drawer will read short by exactly what it
-// moved.
+// Four sums, added: what sales paid into it, what customers paid into it, what
+// moved by hand, and what the business spent out of it. Each source is
+// authoritative for its own facts, and this query is the only place they are
+// brought together — which is why a new source of money must be added here, or
+// the drawer will read short by exactly what it moved.
 //
 // The database does the addition rather than Go, because a till at the end of a
 // busy day has thousands of rows and an owner asking "how much should be in the
@@ -235,6 +236,15 @@ func (r *AccountMovementRepository) balanceAsOf(
 
 			SELECT amount_minor, currency, occurred_at
 			FROM account_movements
+			WHERE business_id = $1 AND account_id = $2
+			  AND ($3::timestamptz IS NULL OR occurred_at <= $3)
+
+			UNION ALL
+
+			-- Expenses are stored positive as costs, so they are negated here:
+			-- money the business spent is money the account no longer holds.
+			SELECT -amount_minor, currency, occurred_at
+			FROM expenses
 			WHERE business_id = $1 AND account_id = $2
 			  AND ($3::timestamptz IS NULL OR occurred_at <= $3)
 		)

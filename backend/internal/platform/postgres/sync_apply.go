@@ -9,6 +9,7 @@ import (
 
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
+	"github.com/vanillaiice/kolo/backend/internal/domain/expenses"
 	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
@@ -37,6 +38,9 @@ type Effects struct {
 	// stock movement: two devices' movements both stand, and a transfer's two
 	// halves are two of these.
 	Cash []*finance.Movement
+	// Spent is what the business paid out that did not become stock (§19).
+	// Appended too, and a reversal is another one of these.
+	Spent []*expenses.Expense
 	// Sale is a completed sale with its lines. Immutable: a replay is refused
 	// by the primary key rather than overwriting financial history (§41).
 	Sale *sales.Sale
@@ -57,7 +61,8 @@ type Effects struct {
 // type this build records and relays without applying.
 func (e Effects) IsEmpty() bool {
 	return len(e.Movements) == 0 && len(e.Products) == 0 && len(e.Customers) == 0 &&
-		len(e.Accounts) == 0 && len(e.Credit) == 0 && len(e.Cash) == 0 && e.Sale == nil
+		len(e.Accounts) == 0 && len(e.Credit) == 0 && len(e.Cash) == 0 &&
+		len(e.Spent) == 0 && e.Sale == nil
 }
 
 // RecordAndApply stores an event and everything it changes, in one transaction.
@@ -125,6 +130,14 @@ func (r *SyncRepository) RecordAndApply(
 			return Recorded, fmt.Errorf("%w: cash movement %d is missing", ErrQuery, i)
 		}
 		if err := scope.Guard(movement.BusinessID(), movement.BranchID()); err != nil {
+			return Recorded, err
+		}
+	}
+	for i, expense := range effects.Spent {
+		if expense == nil {
+			return Recorded, fmt.Errorf("%w: expense %d is missing", ErrQuery, i)
+		}
+		if err := scope.Guard(expense.BusinessID(), expense.BranchID()); err != nil {
 			return Recorded, err
 		}
 	}
@@ -224,6 +237,11 @@ func (r *SyncRepository) RecordAndApply(
 		if err := insertAccountMovement(ctx, transaction, movement); err != nil {
 			return Recorded, fmt.Errorf("applying cash movement %d of event %s: %w",
 				i, envelope.ID, err)
+		}
+	}
+	for i, expense := range effects.Spent {
+		if err := insertExpense(ctx, transaction, expense); err != nil {
+			return Recorded, fmt.Errorf("applying expense %d of event %s: %w", i, envelope.ID, err)
 		}
 	}
 	// A sale and its payments join the same transaction as the event and the

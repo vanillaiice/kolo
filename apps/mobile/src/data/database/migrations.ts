@@ -690,6 +690,70 @@ export const MIGRATIONS: readonly Migration[] = [
        END`,
     ],
   },
+
+  {
+    version: 12,
+    name: "expenses",
+    statements: [
+      // What the business spends that is not stock (§19). A purchase raises
+      // inventory and an expense does not, and confusing the two would make the
+      // shop's goods look more expensive than they were.
+      `CREATE TABLE expenses (
+         id           TEXT    PRIMARY KEY,
+         business_id  TEXT    NOT NULL REFERENCES businesses (id) ON DELETE RESTRICT,
+         branch_id    TEXT    REFERENCES branches (id) ON DELETE RESTRICT,
+         category     TEXT    NOT NULL CHECK (category IN ('RENT', 'ELECTRICITY', 'WATER',
+                                                           'TRANSPORT', 'SALARY', 'PACKAGING',
+                                                           'MAINTENANCE', 'INTERNET',
+                                                           'MARKETING', 'OTHER')),
+         -- Where the money came from. An expense naming no account would leave
+         -- the business poorer with no drawer any lighter (§17).
+         account_id   TEXT    NOT NULL REFERENCES financial_accounts (id) ON DELETE RESTRICT,
+         -- Positive for a cost, negative for a reversal, so summing is plain
+         -- addition with no rule about skipping the undone ones.
+         amount_minor INTEGER NOT NULL CHECK (amount_minor <> 0),
+         currency     TEXT    NOT NULL CHECK (length(currency) = 3),
+         description  TEXT,
+         reference    TEXT,
+         reverses_id  TEXT    REFERENCES expenses (id) ON DELETE RESTRICT,
+         user_id      TEXT    NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+         device_id    TEXT    NOT NULL REFERENCES devices (id) ON DELETE RESTRICT,
+         occurred_at  TEXT    NOT NULL,
+         recorded_at  TEXT    NOT NULL,
+
+         -- A negative expense is a reversal and must say what it undoes; a cost
+         -- cannot also claim to be one.
+         CHECK ((amount_minor < 0) = (reverses_id IS NOT NULL)),
+         CHECK (reverses_id IS NULL OR reverses_id <> id),
+         -- "OTHER, 15,000" is the line an owner stares at in a month's report
+         -- with no way to find out what it was.
+         CHECK (category <> 'OTHER' OR length(trim(coalesce(description, ''))) > 0),
+         CHECK (recorded_at >= occurred_at)
+       ) STRICT`,
+
+      // An expense is undone once. A second reversal would take the money off
+      // the books twice.
+      `CREATE UNIQUE INDEX expenses_reversed_once
+         ON expenses (reverses_id) WHERE reverses_id IS NOT NULL`,
+      `CREATE INDEX expenses_by_business_and_time
+         ON expenses (business_id, occurred_at DESC)`,
+      `CREATE INDEX expenses_by_category
+         ON expenses (business_id, category, occurred_at DESC)`,
+      `CREATE INDEX expenses_by_account
+         ON expenses (business_id, account_id, occurred_at)`,
+
+      `CREATE TRIGGER expenses_no_update
+         BEFORE UPDATE ON expenses
+       BEGIN
+         SELECT RAISE(ABORT, 'expenses is immutable: record a reversal');
+       END`,
+      `CREATE TRIGGER expenses_no_delete
+         BEFORE DELETE ON expenses
+       BEGIN
+         SELECT RAISE(ABORT, 'expenses is immutable: record a reversal');
+       END`,
+    ],
+  },
 ];
 
 /** The version the code in this build expects. */

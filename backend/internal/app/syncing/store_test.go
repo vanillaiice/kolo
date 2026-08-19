@@ -10,6 +10,7 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/expenses"
 	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/inventory"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
@@ -54,6 +55,8 @@ type fakeStore struct {
 	// cash is money moved by hand, appended and keyed by the movement's own
 	// identifier so a replay collides rather than moving money twice.
 	cash map[finance.MovementID]*finance.Movement
+	// spent is what the business paid out that did not become stock.
+	spent map[expenses.ID]*expenses.Expense
 	// sales and salePayments are the sale tables. A sale is immutable, so a
 	// second one under the same identifier is refused as the primary key would.
 	sales        map[sales.ID]*sales.Sale
@@ -79,6 +82,7 @@ func newFakeStore() *fakeStore {
 		customerRecords: make(map[customers.ID]*customers.Customer),
 		accounts:        make(map[finance.AccountID]*finance.Account),
 		cash:            make(map[finance.MovementID]*finance.Movement),
+		spent:           make(map[expenses.ID]*expenses.Expense),
 		sales:           make(map[sales.ID]*sales.Sale),
 		salePayments:    make(map[sales.ID][]*sales.Payment),
 		credit:          make(map[customers.TransactionID]*customers.Transaction),
@@ -241,7 +245,24 @@ func (f *fakeStore) RecordAndApply(
 		}
 		f.cash[movement.ID()] = movement
 	}
+
+	for _, expense := range effects.Spent {
+		if err := scope.Guard(expense.BusinessID(), expense.BranchID()); err != nil {
+			return postgres.Recorded, err
+		}
+		if _, exists := f.spent[expense.ID()]; exists {
+			return postgres.Recorded, &pgconn.PgError{Code: "23505", ConstraintName: "expenses_pkey"}
+		}
+		f.spent[expense.ID()] = expense
+	}
 	return postgres.Recorded, nil
+}
+
+// expenseOf returns the expense the store holds, if any.
+func (f *fakeStore) expenseOf(id expenses.ID) *expenses.Expense {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.spent[id]
 }
 
 // cashOf returns the movements recorded against an account.

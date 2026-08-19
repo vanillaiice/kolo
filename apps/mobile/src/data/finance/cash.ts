@@ -4,7 +4,7 @@
  * The float put in at opening, cash carried to the bank, a transfer from the
  * till to a wallet, the correction after a count. Money a *sale* or a *customer
  * payment* moved is not recorded here — those are written where they happened,
- * and {@link balanceOfAccount} sums all three. A second copy could disagree with
+ * and {@link balanceOfAccount} sums every source. A second copy could disagree with
  * the first, and then there would be two answers to how much is in the drawer.
  *
  * Nothing here stores a balance. §18's whole job is setting what the system
@@ -178,11 +178,11 @@ export function transfer(
 /**
  * What an account holds: the sum of every source that moved money.
  *
- * Three arms, because each source is authoritative for its own facts — the
- * payments taken into the account, the customers settling debts into it, and
- * the movements made by hand. A customer's payment is negative in their ledger,
- * where it reduces what they owe, so it is negated here, where the meaning
- * changes to money arriving.
+ * Four arms, because each source is authoritative for its own facts — the
+ * payments taken into the account, the customers settling debts into it, the
+ * movements made by hand, and the expenses paid out of it. A customer's payment
+ * is negative in their ledger, where it reduces what they owe, so it is negated
+ * here, where the meaning changes to money arriving.
  *
  * A new source of money must be added to this query or the drawer will read
  * short by exactly what it moved.
@@ -202,9 +202,14 @@ export function balanceOfAccount(
        UNION ALL
        SELECT amount_minor FROM account_movements
         WHERE business_id = ? AND account_id = ?
+       UNION ALL
+       -- Expenses are stored positive as costs, so they are negated here: money
+       -- the business spent is money the account no longer holds.
+       SELECT -amount_minor FROM expenses
+        WHERE business_id = ? AND account_id = ?
      )
      SELECT coalesce(sum(amount_minor), 0) AS on_hand, count(*) AS movements FROM moved`,
-    [businessId, accountId, businessId, accountId, businessId, accountId],
+    [businessId, accountId, businessId, accountId, businessId, accountId, businessId, accountId],
   );
   return {
     onHandMinor: Number(row?.["on_hand"] ?? 0),

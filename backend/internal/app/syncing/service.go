@@ -24,6 +24,7 @@ import (
 	"github.com/vanillaiice/kolo/backend/internal/domain/business"
 	"github.com/vanillaiice/kolo/backend/internal/domain/customers"
 	"github.com/vanillaiice/kolo/backend/internal/domain/devices"
+	"github.com/vanillaiice/kolo/backend/internal/domain/expenses"
 	"github.com/vanillaiice/kolo/backend/internal/domain/finance"
 	"github.com/vanillaiice/kolo/backend/internal/domain/products"
 	"github.com/vanillaiice/kolo/backend/internal/domain/sync"
@@ -297,6 +298,13 @@ func (s *Service) effectsOf(scope business.Scope, envelope sync.Envelope) (postg
 			return postgres.Effects{}, err
 		}
 		return postgres.Effects{Customers: []*customers.Customer{customer}}, nil
+
+	case sync.ExpenseRecorded:
+		expense, err := recordedExpense(scope, envelope, s.now())
+		if err != nil {
+			return postgres.Effects{}, err
+		}
+		return postgres.Effects{Spent: []*expenses.Expense{expense}}, nil
 
 	case sync.CashMoved:
 		movements, err := cashMovements(scope, envelope, s.now())
