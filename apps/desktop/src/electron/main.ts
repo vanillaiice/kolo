@@ -76,9 +76,10 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
         if (typeof status !== "object" || status === null || !("shopName" in status) || status.shopName !== null) throw new Error("desktop boot/IPC status failed");
         process.stdout.write("Desktop runtime boot, SQLite and preload IPC passed\n"); app.quit();
       }
-    } catch {
+    } catch (error) {
       if (smokeTest || workflowSmoke) {
-        process.stderr.write("Desktop runtime smoke failed\n"); await stop(); closed = true; app.exit(1); return;
+        // Smoke runs use disposable fixtures only, so the failure detail is safe to print.
+        process.stderr.write(`Desktop runtime smoke failed: ${error instanceof Error ? error.message : "unknown"}\n`); await stop(); closed = true; app.exit(1); return;
       }
       dialog.showErrorBox("KOLO", "La caisse ne peut pas démarrer. Vos données restent sur cet appareil.");
       await stop(); closed = true; app.quit();

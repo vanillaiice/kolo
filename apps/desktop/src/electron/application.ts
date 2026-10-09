@@ -21,6 +21,7 @@ import * as purchasing from "./purchasing.ts";
 import * as finance from "./finance.ts";
 import * as reports from "./reports.ts";
 import * as returns from "./returns.ts";
+import * as staff from "./staff.ts";
 
 const customerFields = ["name", "phone", "address", "notes", "creditLimitMinor"] as const;
 function customerDetails(data: Record<string, unknown>): CustomerDetails {
@@ -477,6 +478,12 @@ export class DesktopApplication implements ShopService {
   returnSource(input: unknown): ReturnType<ShopService["returnSource"]> { return this.#run(() => returns.returnSource(this.#host, input)); }
   previewReturn(input: unknown): ReturnType<ShopService["previewReturn"]> { return this.#run(() => returns.previewReturn(this.#host, input)); }
   recordReturn(input: unknown): ReturnType<ShopService["recordReturn"]> { return this.#run(() => returns.recordReturn(this.#host, input)); }
+  /** Staff commands; see staff.ts. Credential work is single-flight with setup/unlock. */
+  listStaff(input: unknown): ReturnType<ShopService["listStaff"]> { return this.#run(() => staff.listStaff(this.#host, input)); }
+  createStaff(input: unknown): ReturnType<ShopService["createStaff"]> { return this.#run(() => this.#identity(() => staff.createStaff(this.#host, input))); }
+  setStaffPermission(input: unknown): ReturnType<ShopService["setStaffPermission"]> { return this.#run(() => staff.setStaffPermission(this.#host, input)); }
+  setStaffActive(input: unknown): ReturnType<ShopService["setStaffActive"]> { return this.#run(() => staff.setStaffActive(this.#host, input)); }
+  resetStaffSecret(input: unknown): ReturnType<ShopService["resetStaffSecret"]> { return this.#run(() => this.#identity(() => staff.resetStaffSecret(this.#host, input))); }
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): ReturnType<ShopService["getReceipt"]> {
     return this.#run(() => { const data = object(input, ["sessionId", "saleId"]); return receipt(this.#actor(data), uuid(data["saleId"])); });

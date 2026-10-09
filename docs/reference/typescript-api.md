@@ -103,6 +103,12 @@ class DesktopApplication implements ShopService {
   returnSource(input: unknown): Promise<Result<ReturnSourceView>>;
   previewReturn(input: unknown): Promise<Result<ReturnPreview>>;
   recordReturn(input: unknown): Promise<Result<{ readonly returnId: string; }>>;
+  /** Staff commands; see staff.ts. Credential work is single-flight with setup/unlock. */
+  listStaff(input: unknown): Promise<Result<readonly StaffView[]>>;
+  createStaff(input: unknown): Promise<Result<StaffView>>;
+  setStaffPermission(input: unknown): Promise<Result<StaffView>>;
+  setStaffActive(input: unknown): Promise<Result<StaffView>>;
+  resetStaffSecret(input: unknown): Promise<Result<StaffView>>;
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): Promise<Result<Receipt>>;
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
@@ -372,6 +378,39 @@ Records a compensating return named by the request ID; stale predecessors are re
 
 ```ts
 recordReturn(host: Host, input: unknown): { readonly returnId: string; };
+```
+
+## [apps/desktop/src/electron/staff.ts](../../apps/desktop/src/electron/staff.ts)
+
+Staff with effective permissions under users.view.
+
+```ts
+listStaff(host: Host, input: unknown): readonly StaffView[];
+```
+
+Owner-only member creation. Core draws the identities, so a retried creation is recognised by
+name instead: a member with the same name (any case) is refused rather than duplicated.
+
+```ts
+createStaff(host: Host, input: unknown): Promise<StaffView>;
+```
+
+Owner-only grant/revoke; a request for the current effective state changes nothing.
+
+```ts
+setStaffPermission(host: Host, input: unknown): StaffView;
+```
+
+Owner-only suspension/reinstatement of another member; the current state is a no-op.
+
+```ts
+setStaffActive(host: Host, input: unknown): StaffView;
+```
+
+Owner-only code replacement for another member, through the native credential vault.
+
+```ts
+resetStaffSecret(host: Host, input: unknown): Promise<StaffView>;
 ```
 
 ## [apps/desktop/src/electron/transfer-files.ts](../../apps/desktop/src/electron/transfer-files.ts)
@@ -958,6 +997,19 @@ export interface ReturnRequest extends SessionRequest {
 }
 ```
 
+A local staff member with effective permissions; no credential material is exposed.
+
+```ts
+export interface StaffView {
+    readonly id: string;
+    readonly name: string;
+    readonly role: "OWNER" | "MANAGER" | "CASHIER" | "INVENTORY" | "ACCOUNTANT";
+    readonly active: boolean;
+    readonly isSelf: boolean;
+    readonly permissions: readonly Permission[];
+}
+```
+
 Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it.
 
 ```ts
@@ -1143,6 +1195,25 @@ export interface ShopService {
     recordReturn(input: ReturnRequest): Promise<Result<{
         readonly returnId: string;
     }>>;
+    listStaff(input: SessionRequest): Promise<Result<readonly StaffView[]>>;
+    createStaff(input: SessionRequest & {
+        readonly name: string;
+        readonly role: Exclude<StaffView["role"], "OWNER">;
+        readonly secret: string;
+    }): Promise<Result<StaffView>>;
+    setStaffPermission(input: SessionRequest & {
+        readonly userId: string;
+        readonly permission: Permission;
+        readonly allowed: boolean;
+    }): Promise<Result<StaffView>>;
+    setStaffActive(input: SessionRequest & {
+        readonly userId: string;
+        readonly active: boolean;
+    }): Promise<Result<StaffView>>;
+    resetStaffSecret(input: SessionRequest & {
+        readonly userId: string;
+        readonly secret: string;
+    }): Promise<Result<StaffView>>;
     listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{
         readonly id: string;
         readonly name: string;

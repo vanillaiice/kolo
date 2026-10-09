@@ -555,3 +555,29 @@ it("sale and purchase returns compensate stock, money and ledgers, retry by cont
     failure(await f.application.returnSource({sessionId:cashier,kind:"SALE",originalId:randomUUID()}),"permission_denied");
   }finally{await f.dispose();}
 });
+it("owner manages staff: unique names, effective grants and revokes, suspension and code replacement",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,ownerId=workspace.members[0]!.id;
+    const created=value(await f.application.createStaff({sessionId,name:"Binta",role:"CASHIER",secret:"765432"}));
+    assert.deepEqual([created.role,created.active,created.isSelf,created.permissions.includes("sales.create"),created.permissions.includes("customers.credit")],["CASHIER",true,false,true,false]);
+    failure(await f.application.createStaff({sessionId,name:"binta",role:"MANAGER",secret:"765432"}),"request_conflict");
+    for(const bad of [{role:"OWNER"},{secret:"12"},{name:" "}])failure(await f.application.createStaff({sessionId,name:"Chantal",role:"CASHIER",secret:"876543",...bad}),"invalid_input");
+    assert.equal(value(await f.application.setStaffPermission({sessionId,userId:created.id,permission:"customers.credit",allowed:true})).permissions.includes("customers.credit"),true);
+    const revision=()=>f.database.get("SELECT revision FROM local_memberships WHERE user_id=?",[created.id])!["revision"],before=revision();
+    value(await f.application.setStaffPermission({sessionId,userId:created.id,permission:"customers.credit",allowed:true}));assert.equal(revision(),before);
+    assert.equal(value(await f.application.setStaffPermission({sessionId,userId:created.id,permission:"sales.view_own",allowed:false})).permissions.includes("sales.view_own"),false);
+    failure(await f.application.setStaffPermission({sessionId,userId:created.id,permission:"everything",allowed:true}),"invalid_input");
+    const cashier=value(await f.application.unlock({userId:created.id,secret:"765432"})).sessionId!;
+    failure(await f.application.listStaff({sessionId:cashier}),"permission_denied");failure(await f.application.setStaffActive({sessionId:cashier,userId:ownerId,active:false}),"permission_denied");
+    const ownerSession=value(await f.application.unlock({userId:ownerId,secret:"654321"})).sessionId!;
+    assert.equal(value(await f.application.setStaffActive({sessionId:ownerSession,userId:created.id,active:false})).active,false);
+    failure(await f.application.unlock({userId:created.id,secret:"765432"}),"actor_inactive");
+    const again=value(await f.application.unlock({userId:ownerId,secret:"654321"})).sessionId!;
+    failure(await f.application.setStaffActive({sessionId:again,userId:ownerId,active:false}),"permission_denied");
+    value(await f.application.setStaffActive({sessionId:again,userId:created.id,active:true}));
+    value(await f.application.resetStaffSecret({sessionId:again,userId:created.id,secret:"112233"}));
+    failure(await f.application.resetStaffSecret({sessionId:again,userId:ownerId,secret:"112233"}),"permission_denied");
+    assert.equal(value(await f.application.unlock({userId:created.id,secret:"112233"})).actor?.name,"Binta");
+    failure(await f.application.unlock({userId:created.id,secret:"765432"}),"invalid_credential");
+  }finally{await f.dispose();}
+});

@@ -172,6 +172,11 @@ export interface ReturnRequest extends SessionRequest {
   readonly items: readonly { readonly originalItemId: string; readonly quantity: number }[];
   readonly refund?: { readonly accountId: string; readonly amountMinor: number };
 }
+/** A local staff member with effective permissions; no credential material is exposed. */
+export interface StaffView {
+  readonly id: string; readonly name: string; readonly role: "OWNER" | "MANAGER" | "CASHIER" | "INVENTORY" | "ACCOUNTANT"; readonly active: boolean;
+  readonly isSelf: boolean; readonly permissions: readonly Permission[];
+}
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
 export interface ShopService {
   /** Public boot status; no credentials or key references are returned. */
@@ -275,6 +280,16 @@ export interface ShopService {
   previewReturn(input: SessionRequest & { readonly kind: "SALE" | "PURCHASE"; readonly originalId: string; readonly items: ReturnRequest["items"] }): Promise<Result<ReturnPreview>>;
   /** Records a compensating return; the request ID names it and matching retries return it. */
   recordReturn(input: ReturnRequest): Promise<Result<{ readonly returnId: string }>>;
+  /** Local staff under users.view. */
+  listStaff(input: SessionRequest): Promise<Result<readonly StaffView[]>>;
+  /** Owner-only: adds a member with a role and their own code; names must be unique among staff. */
+  createStaff(input: SessionRequest & { readonly name: string; readonly role: Exclude<StaffView["role"], "OWNER">; readonly secret: string }): Promise<Result<StaffView>>;
+  /** Owner-only: grants or revokes one permission; asking for the current state changes nothing. */
+  setStaffPermission(input: SessionRequest & { readonly userId: string; readonly permission: Permission; readonly allowed: boolean }): Promise<Result<StaffView>>;
+  /** Owner-only: suspends or reinstates another member. */
+  setStaffActive(input: SessionRequest & { readonly userId: string; readonly active: boolean }): Promise<Result<StaffView>>;
+  /** Owner-only: replaces another member's code. */
+  resetStaffSecret(input: SessionRequest & { readonly userId: string; readonly secret: string }): Promise<Result<StaffView>>;
   /** Bounded account names for cash checkout, without disclosing financial balances. */
   listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly name: string }>>>;
   /** Atomic cash sale; identical retries return the original saved sale ID. */

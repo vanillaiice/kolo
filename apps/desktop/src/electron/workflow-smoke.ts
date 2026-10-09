@@ -23,8 +23,11 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
   const press = async (scope: string, label: string): Promise<void> => { await evaluate(`Array.from(document.querySelectorAll(${JSON.stringify(scope)})).find(element=>element.textContent.trim()===${JSON.stringify(label)}).click()`); };
   // Hidden sections stay mounted to keep drafts, so later sections act on visible elements only.
   const visible = (selector: string): string => `Array.from(document.querySelectorAll(${JSON.stringify(selector)})).filter(element=>element.offsetParent!==null)`;
-  const clickVisible = async (selector: string, label?: string): Promise<void> => {
-    await evaluate(`${visible(selector)}.find(element=>${label === undefined ? "true" : `element.textContent.trim()===${JSON.stringify(label)}`}).click()`);
+  // Clicks wait for their target to render, since React commits after the previous IPC round trip.
+  const clickVisible = async (selector: string, label?: string, parentLabel?: string): Promise<void> => {
+    const text = parentLabel === undefined ? "element.textContent.trim()" : "element.parentElement.textContent.trim()", wanted = parentLabel ?? label;
+    const match = `${visible(selector)}.find(element=>${wanted === undefined ? "true" : `${text}===${JSON.stringify(wanted)}`})`;
+    await wait(`${match}!==undefined`, `click ${selector}${label === undefined ? "" : ` "${label}"`}`); await evaluate(`${match}.click()`);
   };
   const navigate = async (name: string): Promise<void> => { await evaluate(`Array.from(document.querySelectorAll('.nav-item')).find(element=>element.textContent.includes(${JSON.stringify(name)})).click()`); };
   if (phase === "create") {
@@ -130,10 +133,16 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await fill(".return-form .cell-input", "1"); await wait(`${visible(".return-form .total-line")}[0]?.textContent.replace(/[^0-9]/g,'')==='500'`, "return preview");
     await fill("#return-reason", "Damaged"); await submit("#return-reason");
     await wait(`document.querySelector('.return-form')===null && ${visible(".receipt-paper")}[0]?.textContent.includes('Returned')`, "return recorded");
+    // Staff: the owner adds a cashier through the native vault and grants credit sales.
+    await navigate("Staff"); await clickVisible(".section-heading .primary");
+    for (const [selector, value] of [["#member-name", "Zoé"], ["#member-secret", "765432"], ["#member-confirm", "765432"]]) await fill(selector!, value!);
+    await submit("#member-name"); await wait(`${visible(".staff-detail h2")}[0]?.textContent==='Zoé'`, "staff created");
+    await clickVisible(".permission-group .check input:not(:checked)", undefined, "Sell on credit");
+    await wait(`${visible(".permission-group .check")}.find(label=>label.textContent==='Sell on credit')?.querySelector('input').checked===true`, "credit granted");
     if (process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"] !== undefined) await writeFile(process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"], (await window.webContents.capturePage()).toPNG());
     assert.equal(await evaluate("document.querySelector('.notice.error')===null"), true);
     await click(".topbar-actions .secondary"); await wait("document.querySelector('#local-secret')!==null");
-    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment, supplier purchase, cash count/correction, expense, reports and sale return passed\n");
+    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment, supplier purchase, cash count/correction, expense, reports, sale return and staff passed\n");
   } else if (phase === "reopen") {
     await wait("document.querySelector('#local-secret')!==null");
     const state = await evaluate<string>("window.kolo.getWorkspace().then(result=>result.value.state)"); assert.equal(state, "locked");
