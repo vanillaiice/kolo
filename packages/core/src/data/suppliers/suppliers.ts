@@ -1,0 +1,443 @@
+import { sqlInteger } from "../database/safe-values.ts";
+/**
+ * Wholesalers on the device, and what the shop owes them (§14, §16).
+ *
+ * The mirror of `customers.ts`, and the same two kinds of thing live here.
+ *
+ * A supplier's details are **state**: two devices cannot both set a different
+ * contact and have both stand, so one edit wins, by the rule a product's and a
+ * customer's does — last-write-wins ordered by `(updated_at, updated_by_device)`
+ * (ADR-015). The rule is written on the device as well as the server because a
+ * device has to resolve a conflict with no network.
+ *
+ * What the shop owes is **not** state and is never resolved that way. It is the
+ * sum of an append-only ledger, so two devices each recording a delivery both
+ * stand and the balance is their total. There is no balance column, on purpose:
+ * a stored copy could disagree with the entries it came from, over the one
+ * number a shopkeeper and a wholesaler will actually argue about.
+ *
+ * Kept apart from customers deliberately. What a customer owes the shop and
+ * what the shop owes a wholesaler are opposite obligations, and one table with
+ * a sign would make it possible to settle a customer's debt with a supplier's
+ * payment.
+ */
+
+import type { Database, Queryable, Row } from "../database/driver.ts";
+import { enqueue } from "../sync/outbox.ts";
+
+/** The event a supplier write queues. */
+export const SUPPLIER_SAVED = "SUPPLIER_SAVED";
+
+/** The event a payment settling a wholesaler's account queues. */
+export const SUPPLIER_PAYMENT = "SUPPLIER_PAYMENT";
+
+/** Everything is XAF (§46). */
+const CURRENCY = "XAF";
+
+/** A wholesaler as the device holds them. */
+export interface Supplier {
+  readonly id: string;
+  readonly businessId: string;
+  /** All §14 requires. Everything below is filled in as the shop learns it. */
+  readonly name: string;
+  readonly phone?: string | undefined;
+  readonly address?: string | undefined;
+  /**
+   * The person to ask for.
+   *
+   * For a wholesaler this is not the business's name, and it is what a
+   * shopkeeper actually remembers about them (§14).
+   */
+  readonly contact?: string | undefined;
+  readonly notes?: string | undefined;
+  readonly active: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  /** The device whose edit is currently in force. */
+  readonly updatedByDevice?: string | undefined;
+}
+
+/** What a caller supplies when saving a supplier. */
+export interface SaveSupplier extends Supplier {
+  /** The user making the edit, recorded on the event for the audit trail. */
+  readonly userId: string;
+  /** The device making the edit. Breaks a tie between simultaneous edits. */
+  readonly deviceId: string;
+}
+
+/** What the business owes a wholesaler, worked out from their ledger. */
+export interface SupplierBalance {
+  /** Positive is a debt; negative means the shop has paid ahead. */
+  readonly outstandingMinor: number;
+  /**
+   * How many entries the sum came from, so a caller can tell "owes nothing
+   * because it always pays" from "owes nothing because it has never bought".
+   */
+  readonly entries: number;
+}
+
+/** Raised when a supplier cannot be saved or read. */
+export class SupplierError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "SupplierError";
+  }
+}
+
+/**
+ * The conflict rule, as SQL.
+ *
+ * Written once and used by both the local save and the applier that takes an
+ * edit from another device, so a device cannot resolve its own writes by one
+ * rule and other devices' by another. Because the comparison reads only the two
+ * rows, applying edits in any order gives every device the same answer.
+ */
+const WINS = `excluded.updated_at > suppliers.updated_at
+   OR (excluded.updated_at = suppliers.updated_at
+       AND excluded.updated_by_device > suppliers.updated_by_device)`;
+
+const UPSERT = `
+  INSERT INTO suppliers
+    (id, business_id, name, phone, address, contact, notes, active,
+     created_at, updated_at, updated_by_device)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT (id) DO UPDATE SET
+    name              = excluded.name,
+    phone             = excluded.phone,
+    address           = excluded.address,
+    contact           = excluded.contact,
+    notes             = excluded.notes,
+    active            = excluded.active,
+    updated_at        = excluded.updated_at,
+    updated_by_device = excluded.updated_by_device
+  WHERE ${WINS}`;
+
+/**
+ * Saves a wholesaler and queues the event carrying them to the server.
+ *
+ * Both in one transaction (ADR-014). A supplier the shopkeeper can see and the
+ * server never will is worse than a product: a delivery recorded against them
+ * would be refused everywhere else in the shop.
+ *
+ * Returns whether the write took effect. A local save normally does, but it can
+ * lose to an edit from another device that arrived with a later timestamp, and
+ * the caller should show what is stored rather than what was typed.
+ * Application adapters supply a native UUIDv7 event ID; omitted IDs retain the
+ * legacy randomUUID behavior for existing repository callers.
+ */
+export function saveSupplier(database: Database, supplier: SaveSupplier, eventId?: string): boolean {
+  validate(supplier);
+
+  return database.transaction((tx) => {
+    const applied = upsertSupplier(tx, supplier, supplier.deviceId);
+
+    // Queued whether or not the local write won. Losing here says only that
+    // this device already knows of a later edit; the server and the other
+    // devices judge for themselves, against what they hold.
+    enqueue(tx, {
+      eventId: eventId ?? crypto.randomUUID(),
+      businessId: supplier.businessId,
+      userId: supplier.userId,
+      deviceId: supplier.deviceId,
+      type: SUPPLIER_SAVED,
+      payload: { supplier: describe(supplier) },
+      occurredAt: supplier.updatedAt,
+    });
+
+    return applied;
+  });
+}
+
+/**
+ * Writes a supplier, keeping whichever edit wins.
+ *
+ * Shared by a local save and by an edit arriving from another device, so both
+ * are resolved by the same comparison.
+ */
+export function upsertSupplier(tx: Queryable, supplier: Supplier, deviceId: string): boolean {
+  const result = tx.run(UPSERT, [
+    supplier.id,
+    supplier.businessId,
+    supplier.name,
+    supplier.phone ?? null,
+    supplier.address ?? null,
+    supplier.contact ?? null,
+    supplier.notes ?? null,
+    supplier.active ? 1 : 0,
+    supplier.createdAt,
+    supplier.updatedAt,
+    deviceId,
+  ]);
+  return result.changes > 0;
+}
+
+/** The business settling some or all of a wholesaler's bill. */
+export interface SupplierPayment {
+  /**
+   * The ledger entry's own identifier, drawn by the device.
+   *
+   * It is what makes a resent payment one entry rather than two, so the device
+   * draws it and the server uses it as sent (§27).
+   */
+  readonly id: string;
+  readonly businessId: string;
+  readonly branchId?: string | undefined;
+  readonly supplierId: string;
+  /**
+   * Where the money came from. An account, never a payment method (§10).
+   *
+   * Required, and the reason is §18: this is what makes the drawer fall by what
+   * was handed over. A payment naming no account would leave the shop poorer
+   * with no till any lighter.
+   */
+  readonly accountId: string;
+  /** What was handed over, positive. The ledger stores it negative. */
+  readonly amountMinor: number;
+  readonly note?: string | undefined;
+  readonly userId: string;
+  readonly deviceId: string;
+  /** When the money changed hands. */
+  readonly occurredAt: string;
+  /** When the row is being written. */
+  readonly recordedAt: string;
+  /** The event identifier, which is what makes a replay a duplicate (§27). */
+  readonly eventId: string;
+}
+
+/**
+ * Records the business paying off some or all of what it owes a wholesaler.
+ *
+ * The entry and the event that carries it in one transaction (ADR-014), like
+ * every other write here: a payment the shopkeeper has made and the server never
+ * hears of would leave the shop owing money it has already handed over.
+ *
+ * Payments are against the account, not against a delivery. A wholesaler's bill
+ * is built from a month of deliveries, and asking which of them the 50,000 pays
+ * off would be inventing a question the shop does not ask.
+ *
+ * Nothing is checked against the balance. Paying more than is owed leaves the
+ * business in credit, which is the honest answer — refusing it would refuse a
+ * payment the shopkeeper has actually made.
+ */
+export function recordSupplierPayment(database: Database, payment: SupplierPayment): void {
+  validatePayment(payment);
+
+  database.transaction((tx) => {
+    tx.run(
+      `INSERT INTO supplier_transactions
+         (id, supplier_id, business_id, branch_id, type, amount_minor, currency, account_id,
+          reference_kind, reference_id, reason, user_id, device_id, occurred_at, recorded_at)
+       VALUES (?, ?, ?, ?, 'PAYMENT', ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+      [
+        payment.id,
+        payment.supplierId,
+        payment.businessId,
+        payment.branchId ?? null,
+        // Negative: a payment reduces what is owed, and storing the sign is
+        // what makes summing the ledger plain addition.
+        -payment.amountMinor,
+        CURRENCY,
+        payment.accountId,
+        payment.note ?? null,
+        payment.userId,
+        payment.deviceId,
+        payment.occurredAt,
+        payment.recordedAt,
+      ],
+    );
+
+    enqueue(tx, {
+      eventId: payment.eventId,
+      businessId: payment.businessId,
+      userId: payment.userId,
+      deviceId: payment.deviceId,
+      type: SUPPLIER_PAYMENT,
+      // The wire carries what was handed over, positive. The sign is the
+      // server's to apply, so a device cannot record a payment that increases a
+      // bill.
+      payload: {
+        payment: {
+          id: payment.id,
+          supplier_id: payment.supplierId,
+          account_id: payment.accountId,
+          amount_minor: payment.amountMinor,
+          occurred_at: payment.occurredAt,
+          ...(payment.note === undefined ? {} : { note: payment.note }),
+        },
+      },
+      occurredAt: payment.occurredAt,
+    });
+  });
+}
+
+function validatePayment(payment: SupplierPayment): void {
+  const required: ReadonlyArray<readonly [string, string]> = [
+    ["id", payment.id],
+    ["businessId", payment.businessId],
+    ["supplierId", payment.supplierId],
+    ["accountId", payment.accountId],
+    ["userId", payment.userId],
+    ["deviceId", payment.deviceId],
+    ["occurredAt", payment.occurredAt],
+    ["recordedAt", payment.recordedAt],
+    ["eventId", payment.eventId],
+  ];
+  for (const [field, value] of required) {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new SupplierError(`a supplier payment needs a ${field}`);
+    }
+  }
+  if (payment.recordedAt < payment.occurredAt) {
+    throw new SupplierError("a payment cannot be recorded before it happened");
+  }
+  if (!Number.isSafeInteger(payment.amountMinor) || payment.amountMinor <= 0) {
+    throw new SupplierError(
+      `a payment of ${payment.amountMinor} is not money changing hands`,
+    );
+  }
+}
+
+/** Returns a supplier, or undefined if this device does not hold them. */
+export function supplierOf(tx: Queryable, businessId: string, id: string): Supplier | undefined {
+  const row = tx.get(`SELECT * FROM suppliers WHERE business_id = ? AND id = ?`, [businessId, id]);
+  return row === undefined ? undefined : toSupplier(row);
+}
+
+/** Lists a business's suppliers, by name. */
+export function listSuppliers(
+  tx: Queryable,
+  businessId: string,
+  options: { readonly includeInactive?: boolean } = {},
+): Supplier[] {
+  const rows = tx.all(
+    `SELECT * FROM suppliers
+      WHERE business_id = ?${options.includeInactive === true ? "" : " AND active = 1"}
+      ORDER BY name`,
+    [businessId],
+  );
+  return rows.map(toSupplier);
+}
+
+/**
+ * What the business owes a wholesaler: the sum of the ledger, never a stored
+ * number (§16).
+ *
+ * Summed by SQLite rather than by loading every entry, because a shop that has
+ * bought from one wholesaler for two years has hundreds and a screen asking what
+ * it owes must not pay for all of them (§46).
+ */
+export function balanceOfSupplier(
+  tx: Queryable,
+  businessId: string,
+  supplierId: string,
+): SupplierBalance {
+  const row = tx.get(
+    `SELECT coalesce(sum(amount_minor), 0) AS outstanding, count(*) AS entries
+       FROM supplier_transactions
+      WHERE business_id = ? AND supplier_id = ?`,
+    [businessId, supplierId],
+  );
+  return {
+    outstandingMinor: sqlInteger(row?.["outstanding"] ?? 0),
+    entries: sqlInteger(row?.["entries"] ?? 0),
+  };
+}
+
+/** A wholesaler's ledger, oldest first by when things happened. */
+export function ledgerOfSupplier(
+  tx: Queryable,
+  businessId: string,
+  supplierId: string,
+): Row[] {
+  return tx.all(
+    `SELECT * FROM supplier_transactions
+      WHERE business_id = ? AND supplier_id = ?
+      ORDER BY occurred_at, id`,
+    [businessId, supplierId],
+  );
+}
+
+/**
+ * The payload a SUPPLIER_SAVED event carries.
+ *
+ * These names are the wire contract with `SupplierSavedPayload` on the server,
+ * which refuses a payload carrying a field it does not know. No business and no
+ * device: both come from the authenticated envelope (ADR-008), and taking the
+ * device from there is what stops one nominating itself the winner of a tie.
+ *
+ * No balance either, and there could not be one: what the shop owes is the sum
+ * of the ledger, and a field here would be a second answer to it.
+ */
+function describe(supplier: Supplier): Record<string, unknown> {
+  const described: Record<string, unknown> = {
+    id: supplier.id,
+    name: supplier.name,
+    created_at: supplier.createdAt,
+    updated_at: supplier.updatedAt,
+  };
+  const optional: ReadonlyArray<readonly [string, unknown]> = [
+    ["phone", supplier.phone],
+    ["address", supplier.address],
+    ["contact", supplier.contact],
+    ["notes", supplier.notes],
+  ];
+  for (const [field, value] of optional) {
+    if (value !== undefined) {
+      described[field] = value;
+    }
+  }
+  // Absent means active, which is what a supplier is created as. Sent only when
+  // it is the thing that changed.
+  if (!supplier.active) {
+    described["active"] = false;
+  }
+  return described;
+}
+
+function toSupplier(row: Row): Supplier {
+  const supplier: Supplier = {
+    id: String(row["id"]),
+    businessId: String(row["business_id"]),
+    name: String(row["name"]),
+    active: sqlInteger(row["active"]) === 1,
+    createdAt: String(row["created_at"]),
+    updatedAt: String(row["updated_at"]),
+  };
+  return {
+    ...supplier,
+    ...(row["phone"] === null ? {} : { phone: String(row["phone"]) }),
+    ...(row["address"] === null ? {} : { address: String(row["address"]) }),
+    ...(row["contact"] === null ? {} : { contact: String(row["contact"]) }),
+    ...(row["notes"] === null ? {} : { notes: String(row["notes"]) }),
+    ...(row["updated_by_device"] === null
+      ? {}
+      : { updatedByDevice: String(row["updated_by_device"]) }),
+  };
+}
+
+/**
+ * Checks a supplier before it reaches the database.
+ *
+ * The schema checks these too. Doing it here as well means the message names the
+ * field rather than a constraint, which is what a person reading an error on a
+ * till needs.
+ */
+function validate(supplier: SaveSupplier): void {
+  const required: ReadonlyArray<readonly [string, string]> = [
+    ["id", supplier.id],
+    ["businessId", supplier.businessId],
+    ["name", supplier.name],
+    ["userId", supplier.userId],
+    ["deviceId", supplier.deviceId],
+    ["createdAt", supplier.createdAt],
+    ["updatedAt", supplier.updatedAt],
+  ];
+  for (const [field, value] of required) {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new SupplierError(`a supplier needs a ${field}`);
+    }
+  }
+  if (supplier.updatedAt < supplier.createdAt) {
+    throw new SupplierError("a supplier cannot be updated before they were created");
+  }
+}

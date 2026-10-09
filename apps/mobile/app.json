@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "KOLO",
+    "slug": "kolo",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "scheme": "kolo",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "android": {
+      "package": "cm.kolo.app",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": ["expo-sqlite", ["expo-secure-store", { "configureAndroidBackup": true }], "react-native-quick-crypto"],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

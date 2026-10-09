@@ -1,19 +1,21 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023"],
-    "module": "NodeNext",
-    "moduleResolution": "nodenext",
-
-    // The data layer is plain TypeScript so it can be tested under Node against
-    // a real SQLite. React Native types arrive with the UI layer, which needs a
-    // device to be worth having.
-    "types": ["node"],
-
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "customConditions": [
+      "react-native"
+    ],
+    "types": [
+      "node",
+      "react"
+    ],
+    "jsx": "react-jsx",
     "strict": true,
-    // Beyond `strict`: these catch the mistakes that actually bite in a data
-    // layer — a row that might not exist, a column that might be null, a switch
-    // that quietly stopped being exhaustive.
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
@@ -22,17 +24,23 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "verbatimModuleSyntax": true,
-
     "erasableSyntaxOnly": true,
-    // Imports name the .ts file they mean, which is what Node's type stripping
-    // resolves at runtime. Nothing is emitted, so there is no rewritten path to
-    // go wrong between build and run.
     "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true,
     "isolatedModules": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "index.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "android",
+    "ios",
+    ".expo"
+  ],
+  "extends": "expo/tsconfig.base"
 }

@@ -1,0 +1,36 @@
+# Development deployment rehearsal. This scaffold has no enrollment or sync yet.
+name: kolo-selfhost
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      DATABASE_URL: postgres://kolo:${KOLO_DATABASE_PASSWORD:?Set KOLO_DATABASE_PASSWORD}@postgres:5432/kolo
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: kolo
+      POSTGRES_PASSWORD: ${KOLO_DATABASE_PASSWORD:?Set KOLO_DATABASE_PASSWORD}
+      POSTGRES_DB: kolo
+    volumes:
+      - data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kolo -d kolo"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  data:

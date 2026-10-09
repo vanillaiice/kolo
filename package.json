@@ -1,0 +1,39 @@
+{
+  "name": "kolo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone business apps with optional hosted or self-hosted synchronization",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=24.16.0 <25",
+    "npm": ">=11 <12"
+  },
+  "scripts": {
+    "build:packages": "npm run build -w @kolo/contracts && npm run build -w @kolo/core",
+    "build": "npm run build:packages && npm run build -w @kolo/server && npm run build -w @kolo/desktop",
+    "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
+    "test": "npm run build:packages && npm run test --workspaces --if-present",
+    "check": "npm run boundaries && npm run typecheck && npm test && npm run docs:check && npm run build",
+    "boundaries": "node scripts/check-boundaries.mjs",
+    "docs:api": "node scripts/document-api.mjs",
+    "docs:check": "node scripts/document-api.mjs --check && node scripts/check-doc-links.mjs",
+    "dev:mobile": "npm run start -w @kolo/mobile",
+    "dev:mobile:demo": "node scripts/dev-mobile-demo.mjs",
+    "dev:desktop": "npm run build:packages && npm run dev -w @kolo/desktop",
+    "dev:server": "npm run build:packages && npm run dev -w @kolo/server",
+    "benchmark:credentials": "node scripts/benchmark-credentials.mjs",
+    "bundle:mobile": "npm run bundle -w @kolo/mobile",
+    "smoke:credentials": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/smoke-credentials.mjs",
+    "smoke:desktop": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/smoke-desktop.mjs",
+    "smoke:server": "docker build -f apps/server/Dockerfile -t kolo-server:foundation . && node scripts/smoke-server.mjs",
+    "smoke:desktop:workflow": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/smoke-desktop-workflow.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "5.9.3"
+  }
+}

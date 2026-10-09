@@ -1,0 +1,507 @@
+# Implementation progress
+
+## 2026-10-05 — F0 foundations
+
+Accepted standalone mobile/desktop, optional hosted/self-hosted server, shared TypeScript
+rules, and event exchange. ADR-017–019 and the product specification record supersession.
+
+Implemented in this change:
+
+- npm workspaces and root dependency lock; strict shared TS configuration.
+- Existing SQLite/domain logic and tests moved into `packages/core`; app-native Expo
+  SQLite/keystore wiring stays in mobile. Existing financial behavior is preserved.
+- Runtime-validated exchange envelope/bundle codecs with limits, tenant/duplicate checks
+  and stable errors; trust/payload/signature verification remains planned.
+- Electron local database/migration/persistence/status bridge and boot page scaffold.
+- Nest HTTP liveness, real PostgreSQL readiness, honest capability advertisement.
+- Development/self-host scaffolding, API/JSDoc generation, boundary/link checks and CI.
+- Go server and prior mobile lock preserved under `archive`; historical guidance saved.
+- Detailed F0–F9 plan and architecture/domain/identity/exchange/API/testing/upgrade guides.
+
+### Verification
+
+- `npm run check`: passed boundaries, all workspace typechecks, 534 tests
+  (526 existing core, 5 contracts, 1 desktop persistence, 2 server unit/HTTP),
+  generated API/link checks, and server/desktop builds. A later PostgreSQL test
+  is gated by `KOLO_TEST_DATABASE_URL` in ordinary runs.
+- `npm run bundle:mobile`: Metro Android export passed with the moved core.
+- `npm run smoke:desktop`: actual Linux Electron boot, migrated SQLite and
+  sandboxed preload IPC passed using disposable user data. This caught and fixed
+  top-level ESM readiness deadlock; it does not prove Windows installers or full POS.
+- Server image: clean root-lock install/build and reduced production runtime HTTP
+  tests passed. Runtime installs 116 packages; its npm audit reported zero advisories.
+- `npm run smoke:server`: image build and all 3 HTTP/config/readiness tests passed
+  against a fresh private PostgreSQL container; disposable database/network cleaned up.
+- `git diff --check`: passed. Changes remain uncommitted; existing source work preserved.
+
+### Dependency follow-up
+
+The full existing Expo/Metro dependency graph reports 26 production-tagged advisories
+(19 high, 7 moderate) in the root audit; the full build graph reports 27 including dev.
+These are not present in the server-only production graph. Resolve through SDK-compatible
+upstream/patch updates and re-run native/Metro gates before mobile release. Do not apply
+`npm audit fix --force` blindly: the audit suggested older Expo/React Native major versions,
+which conflict with the accepted native SDK matrix.
+
+### Platform limits
+
+Android/iOS native storage/keystore and installed shop workflows remain unverified.
+Windows installer, printing/scanners, backup encryption, pairing and Bluetooth are not
+implemented/verified. CI workflow is written but has not run on GitHub in this change.
+
+### Remaining work
+
+F1 standalone setup/unlock and operation authorization; F2 pure rule extraction/journal/
+payload schemas/authority signatures; F3 trusted file exchange/backup; F4/F5 complete
+mobile/desktop screens and native tests; F6 Nest parity and real sync; F7 hosted/self-host
+shipping; F8 Bluetooth; F9 packaged releases and maintenance gates.
+
+Mobile still has remote-login/demo boot. Desktop is not a sales app yet. Nest cannot
+ingest business events yet. No native Bluetooth/backup/signature implementation is implied
+by schema parsing, and no installed-platform readiness is implied by TypeScript tests.
+
+## 2026-10-06 — F1 shared setup and local authority started
+
+Implemented:
+
+- Forward migration 15; migrations 1–14 remain unchanged. Setup intent, public
+  installation identity/key references, local memberships, persistent retry state,
+  composite membership/installation scope constraints and append-only local audit.
+- Offline `createWorkspace`, `recoverWorkspaceSetup`, `currentInstallation`,
+  `unlockWorkspace`, `lockWorkspace`, owner `grantPermission`/`revokePermission`.
+  Durable native provisioning is a required injected port; passwords/private keys
+  and verifier bytes are never stored in SQLite or bootstrap events.
+- Setup recovers the native-secret/SQLite crash gap with reserved IDs, and refuses
+  to relabel/adopt existing demo/server-enrolled shops. Upgrade retains legacy data,
+  session metadata and pending outbox unchanged.
+- Opaque local contexts with current membership/grant/suspension checks. Shared
+  application commands authorize sales, purchases, customer/supplier payments,
+  stock, cash, expenses and product/customer/supplier/account edits inside their
+  SQLite transaction. Related IDs/global upserts are shop scoped; discount/price/
+  credit overrides have separate permissions. Effects, v1 event and audit roll
+  back together. Cash transfers require both legs; expense reversals compensate
+  their original fact. Legacy repository APIs are still lower-level primitives.
+- Mobile demo seed requires an explicit developer opt-in:
+  `npm run dev:mobile:demo`. Normal boot no longer creates a demo shop.
+- Identity/business/development/plan/API guidance updated.
+
+### Verification
+
+- `node --experimental-strip-types packages/core/src/identity/workspace.test.ts`:
+  37 tests passed using real SQLite. Includes file close/reopen → locked → unlock
+  → sale, setup/native crash gaps, SQL failpoints, wrong credentials/retry/recovery
+  thresholds, in-flight/concurrent unlocks, forged contexts, suspension/revocation,
+  credit/discount/price permission checks, cross-shop related records/upserts,
+  append-only audit, transfer/reversal semantics and schema 14→15 preservation.
+- `npm run typecheck -w @kolo/core`: passed.
+- `node scripts/dev-mobile-demo.mjs --help`: explicit Expo launcher resolves/runs.
+- `npm run check`: passed boundaries, all workspace typechecks/tests, generated
+  API/link checks and package/server/desktop builds. Existing server HTTP tests
+  needed localhost access outside the sandbox; the PostgreSQL readiness test
+  skipped because `KOLO_TEST_DATABASE_URL` was unset.
+- `npm run bundle:mobile`: Metro Android export passed (643 modules).
+- Private authority orchestration is blocked by package exports; app boundary
+  checks also reject it. Public API generation omits `@internal` helpers.
+- `git diff --check`: passed. Changes remain uncommitted.
+
+### Limits at the first checkpoint (superseded by the continuation below)
+
+At this checkpoint F1 was in progress. The credential port has only a test fixture, not a production
+PIN verifier/KDF/key adapter. Android and Windows native security/benchmark spikes
+must select reviewed credential/key storage, including devices without screen locks.
+Native create/unlock/restore UI and POS/desktop command adoption are pending; mobile
+still uses legacy login/session/repository paths and desktop remains a scaffold.
+
+Staff enrollment/provisioning, owner recovery after ten failures, lost-key/device
+replacement, protected report adapters and owner-proof legacy migration are pending.
+Raw access to SQLite is not a security boundary against a device owner; clock/app-data
+manipulation needs native protection. Native airplane-mode F1 acceptance is unverified.
+Authority bootstrap/grant/revoke facts are local audit only until F2 supplies signed
+v2 payloads, peer trust/revisions and late-event policy; they are not sent as v1 events.
+
+
+## 2026-10-06 — F1 native integration and application flows
+
+The first core checkpoint stopped before completing the remaining feasible F1 work.
+This continuation implements:
+
+- Shared protected native credentials: asynchronous PBKDF2-HMAC-SHA256, random salts,
+  Ed25519 device keys, separate 256-bit owner recovery codes, idempotent writes and
+  manifest-last provisioning. SQL receives only public keys/opaque references.
+- Mobile QuickCrypto/Nitro and Expo SecureStore adapter plus native plugin config;
+  desktop Node/OpenSSL and atomic Electron safeStorage vault adapter. Missing native
+  encryption fails closed. Node minimum is 24.16 for standard-library UUIDv7.
+- Migration 16 for credential-recovery/staff intents. Owner access recovery rotates
+  credential reference/code, persists separate retries and resumes the native/SQL gap.
+  Owner staff credential reset preserves IDs, roles, grants and suspension.
+- Staff provisioning, active/suspended membership management, grant/revoke controls
+  and owner recovery-code retrieval. Staff native/SQL gaps resume after owner unlock.
+- Mobile offline create/unlock/pending setup/access recovery/explicit legacy migration
+  screens; always-locked boot, background/in-flight lock, authorized POS/product writes
+  and quick product entry so a fresh offline shop can sell. No cached cloud-session
+  unlock or required server login for a fresh local shop. Developer demo stays opt-in.
+- Explicit fresh online owner-proof conversion for legacy shops: exact shop/device,
+  owner role/permission and unexpired proof; all old IDs, data, sessions and pending
+  events retained. Failed native conversion resumes its original proven intent.
+- Named report adapters with current granular permission and context-derived shop.
+  Financial dashboard/valuation are unavailable to default cashiers. Application
+  product/customer/supplier/account saves supply native UUIDv7 event IDs rather
+  than relying on legacy repository randomUUID defaults.
+- Credential decision/security limits, platform validation procedure and updated
+  identity/application guidance; public API regenerated.
+
+### Verification
+
+- 37 workspace authority/transaction/SQLite tests, 16 credential/recovery/staff/legacy
+  lifecycle tests using real SQLite and OpenSSL, and 3 desktop vault/crypto/rotation tests.
+  The desktop OS encryption API is simulated in unit tests; DPAPI is not claimed.
+- Native credential benchmark on the Linux host: PBKDF2 600,000 iterations,
+  median 81.85 ms over five samples; Node 24.18.1, AMD Ryzen 7 7730U. No secrets output.
+- Expo prebuild configuration resolves native plugins. Android Metro export resolves
+  the new native-module bindings and screens; neither proves installed-device behavior.
+- `npm run check`: passed boundaries, typechecks, all workspace tests, API/link
+  checks and builds: 590 tests passed; PostgreSQL readiness skipped without
+  `KOLO_TEST_DATABASE_URL`.
+- `npm run bundle:mobile`: Android Metro export passed (808 modules).
+- `npm run smoke:credentials`: actual Linux Electron/OpenSSL and OS vault passed
+  provisioning, reopen, correct/wrong PIN verification and encrypted-file checks.
+  This does not establish Windows DPAPI behavior.
+- Electron adapter types are bound to the installed safeStorage API; async decryption
+  reads its `{ result, shouldReEncrypt }` response and rewrites rotated records.
+
+### Remaining acceptance gates and later-phase dependencies
+
+F1 native acceptance remains open: `adb` detected `emulator-5554 offline`; get-state
+failed, and reconnecting removed the stale connection with no devices attached.
+Android airplane-mode create/restart/unlock/sale and actual
+SecureStore behavior could not run. Windows KDF/DPAPI and Android hardware measurements
+plus the native security review remain required before accepting the candidate policy.
+See [native validation](f1-native-validation.md) and
+[ADR-020](../adr/ADR-020-local-credential-policy.md).
+
+Owner recovery restores access on the intact original device. Encrypted backup restore,
+lost-vault/device replacement and trusted pairing depend on F2/F3 and are not implemented.
+Desktop setup/POS UI remains F5. Signed membership/permission exchange remains F2;
+current authority facts are local immutable audit, never fabricated v1 server events.
+
+## 2026-10-06 — F2 exact shared rules and signed journal
+
+Continued to F2 at the user's request; F1 Android/Windows acceptance checks are deferred
+for a later session. This milestone implements:
+
+- Framework/database-independent exact money/quantity/pricing/settlement/credit rules,
+  with safe integer boundaries, BigInt intermediates and half-away rounding. Pure
+  permission defaults live in contracts with core compatibility exports. Cart,
+  local writes, valuation and replay share rules. SQLite balances/report outputs
+  reject unsafe aggregates instead of exposing rounded native numbers.
+- Strict payloads for all current business and setup/membership/permission events;
+  bounded canonical JSON, immutable v2 envelopes, native SHA-256/Ed25519 ports and
+  domain-separated event/batch/receipt signatures. No JS crypto fallback or exported
+  installation private key. Desktop signing tests reopen the protected adapter.
+- Forward migration 17: journal, origin sequences, immutable proofs, permanent applied
+  identities/financial entity claims, scoped key pins, destinations/delivery state,
+  outgoing/incoming batches, receipts, conflict records, reviews and unsigned v1 archive/
+  baseline provenance. Migrations 1–16 and existing cloud queues are preserved.
+- Authorized business effects stage their v2 fact atomically. Native signing finishes
+  outside SQL; interrupted/locked signing stays pending. Mobile seals on unlock and
+  retries while unlocked. Mobile receipt numbers include the sale UUID to avoid
+  independent tills colliding on the same second.
+- Context-bound verification, complete fan-out validation, current authority/reference
+  checks, durable receive then atomic application, rollback savepoints, bounded fair
+  dependency retries, unsupported retention and exact-digest owner review. Same ID or
+  origin position with changed content is preserved as a conflict without replacing
+  prior effects. Authority imports advance explicit revisions; credentials never copy.
+- Signed forwarding batches and exact batch-bound receiver receipts. Relay preserves
+  origin proof; lost acknowledgments permit harmless resends. Deferred receipt state
+  means durable storage, not application. Each destination progresses independently;
+  a peer receipt cannot clear another peer/server or the retained v1 cloud queue.
+- HTTP v1 sync restricted to unconverted legacy workspaces; configured installations
+  require signed v2 exchange. No pruning of journal/proof/applied/archive identities.
+- [ADR-021](../adr/ADR-021-signed-journal-and-late-event-policy.md), updated implementation
+  contracts and regenerated public API reference.
+
+### Verification
+
+- 18 signed exchange integration cases use real SQLite and real Node/OpenSSL Ed25519
+  with approved fixture baselines. They cover both offline sales/negative stock,
+  duplicate/reordered imports, lost receipts, onward relay, exact branch preservation,
+  purchases/debt/payments/transfers/expense compensation, payload/ID/position conflicts,
+  proof mutations/forged tokens, lock during verification, SQL failpoints, file close/
+  reopen/retry, membership ordering, denied staff writes, stale-authority review,
+  future versions, retry fairness, scoped receipts and unchanged legacy cloud state.
+- Independent arithmetic oracle cases and canonical Unicode/key-order/schema failures;
+  SQLite numeric boundary checks and an unsafe aggregate from safe individual facts.
+- `npm run check`: 617 tests passed (603 core, 8 contracts, 4 desktop, 2 server),
+  all boundaries/typechecks, API/link checks and builds passed. The real-PostgreSQL
+  readiness test remains skipped without `KOLO_TEST_DATABASE_URL`.
+- `npm run bundle:mobile`: Android Metro export passed with the signed journal modules.
+  This proves bundling, not installed-device signing or keystore behavior.
+- `git diff --check`: passed. Work remains uncommitted; prior workspace changes preserved.
+
+### Limits and next milestone
+
+F2 core replay/receipt acceptance is covered by the fixture replicas; fixtures do not
+prove native pairing or production transfer files. F3 still needs key confirmation,
+approved baseline/enrollment, encrypted native files, backup/restore and transfer UI.
+Nest business ingestion is F6. Desktop setup/POS screens remain F5. Android/Windows
+native credential/crypto acceptance remains open as documented under F1.
+
+Late actor revisions, revoked permissions or receiver catalog price discrepancies can
+quarantine legitimate offline business facts pending an audited owner decision. No
+secure wall-clock revocation cutoff is asserted. Concurrent authority revisions conflict;
+owner review cannot approve malformed/cross-shop facts, identity collisions, authority
+changes or revoked device keys. Refer to ADR-021 for the implemented policy.
+
+## 2026-10-06 — F2 interruption audit and F3 encrypted recovery/transfer
+
+At the user's request, rechecked F2 before continuing. All 18 signed replay integration
+cases passed independently; the full 617 F2 tests passed along with the three initial
+F3 cases. Workspace typechecks/builds, boundaries, API/link checks and Metro passed.
+The interrupted F3 work had an adjustment test missing its mandatory reason and a
+schema-14 upgrade expectation missing new migration 18; both were corrected. No F2
+replay regression was found. Existing uncommitted repository work was preserved.
+
+F3 now implements:
+
+- Native AES-256-GCM authenticated files with independent password policy, fixed
+  PBKDF2-SHA256/600,000 KDF, fresh salt/nonce, authenticated metadata/purpose/length and
+  bounded formats. No compression, JS crypto fallback or private-key export.
+- WAL-consistent sanitized SQLite snapshots and signed identity/history manifests.
+  Credentials, installation, session and provisioning references are removed before
+  compaction. Exact shipped schema, integrity, foreign keys, one-shop authority and
+  derived boundary are validated in a private candidate before forward migration.
+- Opaque backup previews, owner/shop confirmation, fresh native installation/device/key,
+  new origin sequence, atomic durable active-slot switch and retained old business file.
+  Active-handle retirement blocks stale contexts, setup, unlock and access recovery.
+  Explicit existing-device rollback requires the current owner; lost-vault replacement
+  uses an empty target and authenticated encrypted backup.
+- Expiring identity-only invitations, independent key fingerprints, durable reserved
+  IDs/native possession requests, owner comparison-code confirmation and recipient-bound
+  encrypted baseline initialization. Secondary membership authority is separately
+  approved. Re-pairing active restored shops updates trust without replacing newer
+  local history. Secondary PIN recovery stays local instead of inventing shared revisions.
+- Encrypted batch preview/import/export and independently encrypted, regenerable receipts;
+  exports stay offered until exact receiver acknowledgment. French/English diagnostics
+  retain event IDs and recovery actions. Existing origin proofs and cloud queues stay intact.
+- Mobile native selected-file workflows for backup/explicit restore, pairing, encrypted
+  events/receipts and diagnostics; current database handles follow the durable slot.
+  App background lock still applies, including fresh proof after native file dialogs.
+  SDK-matched FileSystem is explicitly recorded in the root workspace lock.
+- Desktop active-slot boot and native bounded file-dialog/AES adapters. Renderer commands/
+  setup/till/transfer screens remain F5. [ADR-022](../adr/ADR-022-encrypted-files-and-approved-snapshots.md),
+  [native validation](f3-native-validation.md), implementation guides and public API updated.
+
+### Verification
+
+- `npm run check`: 627 tests passed (612 core, 8 contracts, 5 desktop, 2 server),
+  all workspace typechecks/boundaries, generated API/link checks and builds passed.
+  One real-PostgreSQL readiness test remains skipped without `KOLO_TEST_DATABASE_URL`.
+- Eight F3 cases use real SQLite/OpenSSL to cover full pairing, two offline credit sales,
+  duplicate encrypted transfers/receipts, stock/debt/cash/report convergence, new-origin
+  restore/re-pair, malformed authentication/schema/scope, provisioning interruption,
+  original-reference removal and rejected active-pointer commit. Secondary recovery
+  policy is separately verified with the real protected-credential implementation.
+- `npm run bundle:mobile`: Android export passed (966 modules).
+- `npm run smoke:credentials`: actual Linux Electron/OS-vault encrypted backup, fresh
+  restore and new sale passed, including origin sequence 1 and distinct native key.
+- `npm run smoke:desktop`: actual Electron boot, SQLite active slot and preload/status
+  IPC passed. `git diff --check`: passed. No commits or publishing performed.
+
+### Remaining acceptance gates
+
+Android/Windows native credentials/crypto/KDF, installed file dialogs, low-cost memory
+budgets and power-loss activation drills remain deferred by the user. Linux runtime,
+TypeScript, Metro and SQLite tests do not establish those gates. Snapshot size is
+explicitly capped at 16 MiB; larger-shop capacity needs measured bounded support before
+release. Desktop renderer workflows remain F5, Nest ingestion F6 and Bluetooth F8.
+F4 is the next implementation milestone for the complete mobile shop workflow.
+
+## 2026-10-06 — F4 mobile operational workflows
+
+Implemented:
+
+- Permission-aware mobile navigation for till, products/categories/stock, customers,
+  suppliers, purchases, finance, expenses, reports and receipts. Operational text is
+  keyed French/English; drafts stay mounted across operational tabs and clear on lock.
+- Bounded authorized SQLite queries with stable keyset continuation, literal prefix/
+  phone search, exact barcode submission, archived records, current derived balances,
+  saved receipt/source history, report-only debt/negative-stock alerts and cashier
+  own-receipt enforcement. Forward migration 19 adds indexes/category conflict ordering.
+- Committed domain revisions in both SQLite adapters. Nested writes/imports notify once
+  after commit; rollback notifies nothing; broken observers cannot fail a saved command.
+  Views reread local pages rather than holding a second global database copy.
+- Product/category editing/archive, stock opening/damage/history/count, cash/split/credit
+  checkout, fractional entry and whole-sale discount, customer collections, supplier
+  payments, multi-line purchases/door payments, financial accounts/transfers/counts,
+  expense reversal, local net summaries, persisted receipt rereading and OS text sharing.
+- Authorized atomic `countStock` and `adjustCashToCount` operations; current differences
+  are calculated inside the transaction. Matching counts record audit only. Whole-unit
+  product rules also apply to local sale/purchase/manual-stock commands.
+- Shared partial/full sale and purchase return previews/commands. Historical line prices,
+  deterministic largest-remainder sale discount allocation and cumulative rounded
+  entitlements conserve every franc; over-return/refund and stale predecessors fail.
+  Stock, refund account movements, counterparty credits, journal and audit commit together.
+  Forward migration 20 protects the immutable referencing return facts.
+- Strict signed `CATEGORY_SAVED`, `SALE_RETURNED`, `PURCHASE_RETURNED` event schemas,
+  scope/permission/dependency/identity policy and replay. Successor returns defer until
+  predecessors arrive; duplicate deliveries are harmless. Competing offline source chains
+  retain local facts and quarantine incoming competition as actionable `return_conflict`;
+  those sources require owner reconciliation before convergence is claimed.
+- Net period sales/profit/purchase summaries include returns at their occurrence time.
+  Receipts show original settlement and separately recorded return total. Unknown costs
+  remain visible; detailed original-sales breakdowns retain gross historical semantics.
+- [Mobile guide](mobile.md), [ADR-023](../adr/ADR-023-partial-returns-and-source-ordering.md),
+  [F4 native validation](f4-native-validation.md), application/reference documentation
+  and phase status updated. Existing work remains uncommitted.
+
+### Verification
+
+- `npm run check`: passed boundaries, all workspace typechecks/builds, generated API/
+  links and tests: 645 passed (630 core, 8 contracts, 5 desktop, 2 server). Real PostgreSQL
+  readiness skipped without `KOLO_TEST_DATABASE_URL`. The initial sandbox run blocked
+  the HTTP test's ephemeral localhost listener (`EPERM`); the permitted rerun passed.
+- Nine new real-SQLite operational cases cover a full accounting day and file-backed
+  restart; split/credit collections/payables; negative stock and counts; transfers/
+  reconciliation; expense compensation; bounded literal searches/duplicate-name pages/
+  query-plan index use; foreign IDs; cashier own receipts; revocation/lock; rollback;
+  schema 18→20; report-only authority and exact partial sale/purchase returns.
+- Two native-interface commit-notification cases use real SQLite behind the synchronous
+  native port. They do not exercise installed expo-sqlite. Two added real Ed25519 replica
+  cases cover category dependencies/LWW and reordered/duplicate/competing return chains.
+- Independent BigInt rounding checks for partial return entitlement, deterministic
+  allocation, exact money/quantity entries and calendar report boundaries pass.
+- `npm run bundle:mobile`: Metro Android export passed (989 modules). After final UI-only
+  validation/filter fixes, mobile typecheck and Android export were repeated successfully.
+- `npm run docs:check` and `git diff --check`: passed. No commits/deployment/publication.
+
+### Remaining acceptance gates
+
+F4 remains in progress. Android full-day installed rendering, actual native SQLite/
+keystore/share/file behavior, hardware scanner and chosen receipt-printer adapter,
+accessibility/large-text drills and measured low-cost startup/search/list/report/memory
+budgets remain open. No printed receipt support or performance budget is inferred from
+text sharing, host SQLite or Metro. F1/F3 Android/Windows gates remain deferred.
+Earlier setup/staff/transfer forms still need full keyed English localization; the app
+language currently resets to French on cold boot. Competing returns for the same source
+need explicit owner comparison/correction; automatic conflict resolution is not claimed.
+See the native validation procedure before accepting F4 or declaring device readiness.
+
+
+## 2026-10-06 — F4 localization and operational UI follow-up
+
+Implemented:
+
+- Keyed French/English setup/unlock/owner-recovery, staff and transfer screens, including
+  every role/permission label, stable failures, retry time, file/pairing instructions
+  and exchange counts. Existing feedback updates when the language changes; business
+  data, fingerprints and recovery keys remain literal values. The unused legacy HTTP
+  login screen is outside the active navigation.
+- Language choice before setup and on operational/staff/transfer screens. A dedicated
+  `device-preferences.db` persists it across restarts independently of business snapshots,
+  restore and active-slot replacement. Unsupported values default to French. Failed
+  reads/writes show localized feedback and explicit retry while keeping work available.
+- Staff controls now provide 48 dp touch targets and explicit button/radio/selection
+  states; staff mutation/navigation controls are disabled during credential work.
+  Transfer destination and authority controls expose selection/accessibility labels.
+- The first-page local picker retry now forces a new query even when no pagination
+  cursor exists. Earlier retry could leave the failed chooser unchanged.
+- Seven mobile host test cases cover French/English interpolation/permission coverage,
+  literal substitution, localized identity/transfer errors without secret disclosure,
+  file-backed preference restart and business replacement, unsupported/read failures,
+  and rejected writes retaining the prior language until successful retry.
+
+### Verification
+
+- Mobile localization and real SQLite preference tests passed (seven cases).
+- `npm run check`: passed all dependency boundaries, workspace typechecks, builds,
+  generated API/link checks and 652 tests (630 core, 8 contracts, 5 desktop, 7 mobile,
+  2 server). One real-PostgreSQL readiness case skipped without its test database URL.
+- `npm run bundle:mobile`: Metro Android export passed (992 modules).
+- `npm run docs:api` and `git diff --check`: passed. No commits or publication.
+- Android device discovery succeeded outside the sandbox and found no connected devices.
+
+### Remaining acceptance gates
+
+F4 remains in progress until an installed Android shop day, native storage/keystore/file/
+share behavior, physical scanner, selected receipt-printer adapter, TalkBack/large-text
+checks and measured low-cost-device budgets pass. The initial sandbox root check
+encountered the existing server HTTP test’s localhost-listener `EPERM`; the permitted
+full rerun passed. F1/F3 Android/Windows acceptance and competing-return owner
+reconciliation remain as previously recorded.
+
+
+## 2026-10-06 — Desktop/web-first priority
+
+User direction: establish a solid desktop/web implementation before returning to
+mobile. F5 is now the next active phase; F4 Android acceptance remains open.
+
+The desktop assessment confirms a working Electron/SQLite/active-slot foundation and
+native credentials/file adapters, but only a boot/status renderer and `getStatus()`
+IPC. No browser app or authenticated server business API exists. Shared accounting,
+authorization, exact rules, returns and backup/exchange remain reusable.
+
+The [desktop implementation guide](desktop.md) defines the first usable milestone:
+validated command boundary, offline setup/unlock/recovery, product/catalogue, cash
+till, saved receipt and restart verification. Broader management, transfer UI and
+Windows/hardware/performance acceptance follow. The user confirmed desktop first
+with reusable React UI for a later browser version. Browser runtime/storage versus
+server API remains a later architecture choice. This entry changes implementation
+priority, not delivered capability.
+
+
+## 2026-10-06 — First usable desktop workflow (F5)
+
+Implemented:
+
+- Reusable React DOM screens against an injected, platform-neutral `ShopService`.
+  The composition root selects Electron; French/English labels and errors are keyed,
+  with locally persisted language choice. No browser runtime is claimed.
+- Named, validated preload/main commands with trusted-frame checks, bounded queries,
+  sanitized failures and host-held authority. No generic IPC, SQL, filesystem paths
+  or caller-selected tenant context crosses the bridge. Session markers and core
+  permission checks reject stale, locked, revoked and foreign-tenant requests.
+- Standalone setup, interrupted-provisioning resume, unlock/lock and owner recovery.
+  Credentials use the existing native vault. Restart boots locked; minimize, OS
+  screen lock/suspend and renderer loss/reload invalidate authority. Shutdown waits
+  for pending native work before closing SQLite.
+- Product creation with optional atomic opening stock, paginated catalogue/search,
+  stock visibility, exact barcode lookup, keyboard cash till, fractional quantities,
+  persisted receipt and history. Shared rules provide exact totals and quantities;
+  the host validates current prices and accounts. Negative stock remains visible.
+- Stable creation/checkout identities and immutable-fact retry comparisons prevent
+  duplicate stock, cash and receipts. Ambiguous transport failures freeze the submitted
+  draft for retry. A cashier can confirm an already-saved sale after receipt-view
+  revocation; sales-creation authority is still required. Navigation retains the
+  till and product-entry drafts; lock/session change discards them.
+- Nine real-SQLite host/dispatcher cases cover file-backed restart, cash/stock/receipt
+  consistency, matching/conflicting retries, malformed input, tenant isolation,
+  direct bridge bypass, cashier scope/revocation/suspension, rollback failpoints,
+  lock during credential proof, shutdown during provisioning and recovery failures.
+- A disposable actual Electron DOM/preload/OS-vault workflow creates a shop and
+  product/opening stock, scans and records a fractional cash sale, checks its saved
+  receipt, then reopens a second process and verifies unlock/receipt/stock.
+  The runner never opens an existing business installation.
+
+### Verification
+
+- `npm run check`: passed boundaries, workspace typechecks/builds, generated API/link
+  checks and 661 tests (630 core, 8 contracts, 14 desktop, 7 mobile, 2 server).
+  One real-PostgreSQL readiness case remains skipped without its test database URL.
+- `npm run smoke:desktop:workflow`: actual Linux Electron/native-vault setup, repeated
+  Enter-key barcode scans with restored input focus, fractional checkout,
+  identical/differing retries, receipt and process restart passed.
+- After the final draft-preservation adjustment, desktop typecheck/build and the
+  actual Electron workflow passed again, including product/cart navigation checks.
+- `npm run bundle:mobile`: Metro Android export passed (992 modules).
+- The actual rendered till was visually inspected. `git diff --check` passed.
+  No commits or publication.
+
+### Remaining acceptance gates
+
+The first offline desktop software slice is delivered; F5 remains in progress.
+Product editing and wider stock workflows, split/credit sales, customers/suppliers,
+finance/expenses/reports/returns, staff and backup/exchange screens still follow.
+Physical scanner/printer integration, accessibility/performance measurements and
+Windows protected storage/installer acceptance remain open. Mobile native gates stay
+deferred behind the desktop priority. A browser release still needs its own runtime
+storage/identity boundary or authenticated business API.

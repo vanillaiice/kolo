@@ -1,68 +1,32 @@
-.PHONY: help check test test-backend test-client test-integration fuzz-backend \
-        lint lint-backend lint-client fmt fmt-backend db-up db-down db-reset db-url \
-        install-client
-
-# How long each fuzz target runs under `make fuzz-backend`.
-FUZZTIME ?= 30s
-
+.PHONY: help install check test typecheck build bundle-client docs dev-mobile dev-desktop dev-server db-up db-down legacy-test legacy-integration
 COMPOSE = docker compose -f infrastructure/docker-compose.yml
-
-# Where the local development database listens. Integration tests create their
-# own database on this server, so this points at the default one.
-KOLO_TEST_DATABASE_URL ?= postgres://kolo:kolo@localhost:5433/kolo?sslmode=disable
-
-help: ## Show available targets
-	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-18s %s\n", $$1, $$2}'
-
-check: fmt lint test ## Format, lint, and test everything
-
-test: test-backend test-client ## Run unit tests (integration tests skip without a database)
-
-test-backend: ## Run backend tests with the race detector
-	cd backend && go test ./... -race -cover
-
-test-client: ## Run client tests against a real SQLite via node:sqlite
-	cd apps/mobile && npm test
-
-install-client: ## Install the client's dev dependencies
-	cd apps/mobile && npm install
-
-test-integration: db-up ## Start the database and run every test against it
-	cd backend && KOLO_TEST_DATABASE_URL="$(KOLO_TEST_DATABASE_URL)" go test ./... -race -cover -count=1
-
-fuzz-backend: ## Run every fuzz target for FUZZTIME each (default 30s)
-	@cd backend && for package in $$(go list ./...); do \
-		for target in $$(go test -list='Fuzz.*' $$package | grep '^Fuzz' || true); do \
-			echo "==> $$package $$target"; \
-			go test $$package -run='^$$' -fuzz="^$$target$$" -fuzztime=$(FUZZTIME) || exit 1; \
-		done; \
-	done
-
-lint: lint-backend lint-client ## Lint everything
-
-lint-backend: ## Vet the backend and check formatting
-	cd backend && go vet ./...
-	@unformatted=$$(cd backend && gofmt -l .); \
-	if [ -n "$$unformatted" ]; then \
-		echo "gofmt needed in:"; echo "$$unformatted"; exit 1; \
-	fi
-
-lint-client: ## Typecheck the client
-	cd apps/mobile && npx tsc --noEmit
-
-fmt: fmt-backend ## Format everything
-
-fmt-backend: ## Apply gofmt to the backend
-	cd backend && gofmt -w .
-
-db-up: ## Start the local PostgreSQL and wait until it accepts connections
+help: ## List development commands
+	@awk -F ':.*?## ' '/^[a-z-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' Makefile
+install: ## Install the root npm workspace lock
+	npm ci
+check: ## Check boundaries, types, tests, documentation, and builds
+	npm run check
+test: ## Run shared-core, contract, server, and desktop adapter tests
+	npm test
+typecheck: ## Typecheck all active workspaces
+	npm run typecheck
+build: ## Build shared packages, server, and desktop
+	npm run build
+bundle-client: ## Verify the mobile app bundles with Metro
+	npm run bundle:mobile
+docs: ## Regenerate the public TypeScript API reference
+	npm run docs:api
+dev-mobile: ## Start Expo (requires a native dev build for device verification)
+	npm run dev:mobile
+dev-desktop: ## Build and launch the Electron scaffold
+	npm run dev:desktop
+dev-server: ## Build and watch the optional NestJS server scaffold
+	npm run dev:server
+db-up: ## Start development PostgreSQL on localhost:5433
 	$(COMPOSE) up -d --wait
-
-db-down: ## Stop the local PostgreSQL, keeping its data
+db-down: ## Stop development PostgreSQL while retaining its data
 	$(COMPOSE) down
-
-db-reset: ## Stop the local PostgreSQL and discard its data
-	$(COMPOSE) down -v
-
-db-url: ## Print the database URL the integration tests use
-	@echo '$(KOLO_TEST_DATABASE_URL)'
+legacy-test: ## Explicitly run archived Go unit tests
+	cd archive/legacy-go && go test ./... -race -cover
+legacy-integration: db-up ## Explicitly run archived Go PostgreSQL integration tests
+	cd archive/legacy-go && KOLO_TEST_DATABASE_URL="postgres://kolo:kolo@localhost:5433/kolo?sslmode=disable" go test ./... -race -cover -count=1

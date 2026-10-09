@@ -1,5 +1,5 @@
 # Go
-/backend/bin/
+/archive/legacy-go/bin/
 *.test
 coverage.out
 
@@ -31,4 +31,6 @@ apps/mobile/ios/build/
 .vscode/
 
 # Client build output
-apps/mobile/dist/
+dist/
+coverage/
+*.log

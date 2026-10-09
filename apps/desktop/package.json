@@ -1,0 +1,17 @@
+{
+  "name": "@kolo/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone Electron till with a local SQLite database",
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.electron.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "test": "node --test --experimental-strip-types 'src/electron/*.test.ts'",
+    "dev": "npm run build && electron .",
+    "start": "electron ."
+  },
+  "dependencies": { "@kolo/core": "0.1.0", "react": "19.2.8", "react-dom": "19.2.8" },
+  "devDependencies": { "@types/react": "~19.1.1", "@types/react-dom": "^19.1.0", "electron": "44.5.1", "vite": "8.3.2" }
+}

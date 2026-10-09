@@ -1,243 +1,62 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Project state
-
-KOLO is an offline-first business management platform (inventory, POS, customer credit, cash, reports) for small and medium businesses in Cameroon.
-
-Progress against the Foundation phase (spec §51): project structure, authentication, the business/tenant model, the user model, PostgreSQL, migrations, the basic API, and the client's SQLite layer are done — `cmd/api` serves login, logout, and `/auth/me` end to end. Still to come: the React Native shell (no UI code exists yet).
-
-`backend/internal/kernel/` — primitives shared by every domain:
-
-- `money` — integer minor units, currency-checked arithmetic, explicit rounding, remainder-preserving allocation
-- `id` — UUIDv7 via `github.com/google/uuid`, generated offline, sortable by creation time. `id.Typed[Tag]` gives phantom-typed identifiers so a sale ID cannot be passed where a product ID belongs; `id/idtest` gives deterministic identifiers for tests
-- `clock` — injectable UTC time source
-- `quantity` — exact stock amounts as thousandths of a unit. Fractional (half a kilo) but never floating point, for the same reason money is not: a tenth added ten times must be exactly one
-- `phone` — E.164 telephone numbers via `github.com/nyaruka/phonenumbers`, default region CM. Login identity (ADR-012) and customer/supplier contact detail
-- `validate` — value rules shared by more than one domain (`Name`, `Timestamps`). A rule moves here only once a second domain needs it
-
-`backend/internal/domain/`:
-
-- `authz` — granular permissions, roles, and the configurable role→permission matrix (§38). Effective permissions are role defaults + grants − revocations, revocation last
-- `business` — the tenant. `Business` and `Branch` entities, and `Scope`, which is the required argument that makes tenant isolation structural rather than a filter a caller can forget
-- `users` — who operates a business, their tenant/branch, and their permissions. Deliberately holds **no credentials**: §5 separates "Authentication" from "Users & Roles", so PINs and tokens live in `auth`, keyed by user ID
-- `auth` — proves who a user is (ADR-012). `PINHash` (bcrypt, slow, for a low-entropy secret), `Token`/`TokenHash` (32 random bytes, SHA-256, fast — checked on every request), and `Session`, bound to one user/business/device and renewed on sync
-- `inventory` — the stock ledger (§7, ADR-009). **Stock is never stored; it is the sum of append-only movements.** Two devices selling the last unit offline both stand, and the total goes to −1 — a true statement, surfaced rather than hidden
-- `products` — what a business sells (§6). Only a name, unit, and selling price are required; SKU, barcode, category, brand, and purchase price are filled in as the business learns them. Carries **no stock level** — that is the ledger's job
-- `sales` — what was sold and what was paid (§9–§11). A sale that leaves a balance also produces a `customers.Transaction`, built in `app/syncing` from the sale's own arithmetic rather than from a figure on the wire, and written in the same database transaction as the sale. A sale is immutable and holds its lines; **it has no payment method and no paid amount**, because §11 gives a sale many payments and what has been paid is their sum. Line totals are `price × quantity/1000` rounded half up, since quantity is thousandths and XAF has no subunit. `Settle` derives where a sale stands, and refuses an unpaid balance with no customer to owe it
-- `expenses` — what a business spends that is not stock (§19). A purchase raises inventory and an expense does not, and confusing the two makes the shop's goods look dearer than they were. **Categories are a fixed list**, the one §19 enumerates, because free text groups nothing in a report — "Transport", "transport" and "Transpor" read as three costs. Making them configurable is an ADR, not a quiet change: §10 requires *providers* to be configurable and says nothing about this
-- `finance` — where money sits (§17). `Account` is a place money is held: the till, the safe, an MTN wallet, an Orange wallet. **Mobile Money providers are accounts, not kinds** — that is what makes adding Orange a row rather than a release (§10). An account holds **no balance**: what is in it is the sum of what moved through it, and §18's job is comparing that against the drawer, which a stored figure would make meaningless. Only `Cash` needs reconciling — an electronic balance cannot be miscounted, only disagreed with
-- `customers` — who a business sells to, and what they owe (§12, §13). The `Customer` entity needs only a name; everything else is filled in as the shopkeeper learns it. **Credit is an append-only ledger**, exactly like stock: a balance is the sum of transactions and is never stored. A customer's record is state and settles by last-write-wins like a product's, which is what `UpdatedByDevice` is for. `CheckCreditLimit` is a *question*, not a rule the ledger enforces — letting a regular go over their limit is the shopkeeper's decision to make. A limit of zero and no limit at all are deliberately distinct
-- `sync` — what devices send each other (§26). Events, not state: two devices pushing "three were sold" lose nothing, while two pushing "stock is 47" must lose one
-- `devices` — an installation of the app (§28): its business, optional branch, label, and platform. A session binds to one, and an audit record names one. Its sync-specific state arrives with the sync phase
-
-`backend/internal/app/` — application services, between HTTP and the domain (ADR-005):
-
-- `syncing` — push and pull (§36). Owns what happens to an event the server cannot use: a replay is a success, a bad event fails alone, a rejection is kept
-- `authn` — login, authenticate, logout. Owns what a failure reveals: an unknown number and a wrong PIN are the same error and cost the same time; a suspended account is distinguished only *after* the PIN is right
-
-`apps/mobile/src/data/` — the client's SQLite layer (ADR-002, ADR-014). Migration 7 adds `customers` and their `customer_transactions`, append-only by SQLite trigger exactly as the server's are:
-
-- `database/` — a deliberately narrow driver interface, a `node:sqlite` adapter for tests, and forward-only migrations that catch a device up across any number of versions
-- `sync/outbox.ts` — the queue of events waiting for the server. **A business write and its event commit in one transaction, or neither does.** `enqueue` takes a transaction, not a database, so it cannot be called on its own
-- `inventory/movements.ts` — recording stock on the device. Every write records the movement and queues its event together; the ledger is append-only here too, enforced by SQLite triggers, and stock is derived by SQL sum
-- `sync/inbox.ts` — the mirror of the outbox: events pulled from other devices, **stored durably before they are applied**. An event can arrive before what it depends on (a movement before its product), so arrival advances the cursor and applying is retried on later syncs. One holds what has not left, the other what has not landed
-- `sync/transport.ts` — the HTTP contract plus an implementation. The engine takes the interface, so its failure behaviour is testable without a network
-- `sync/engine.ts` — drains both queues. An event leaves the outbox only when the server says it has it; anything else keeps it queued. A rejection is set aside rather than retried forever, since retrying blocks everything behind it
-- `sync/stock-applier.ts` — applies a pulled `STOCK_MOVED` to the local ledger, `INSERT OR IGNORE` on the movement ID so re-applying cannot double stock
-- `sync/product-applier.ts` — applies a pulled `PRODUCT_SAVED`, which is what unblocks movements deferred waiting on their product
-- `customers/customers.ts` — customers on the device. Their details are state and settle by last-write-wins; what they owe is `balanceOf`, a SQL sum over the ledger and never a column. `recordCustomerPayment` appends a payment against the *account*, not against a sale — a regular's debt is a fortnight of small buys, and asking which one the 5,000 pays off invents a question the shop does not ask. `wouldExceedCreditLimit` is a question, not a rule this layer enforces
-- `sync/customer-applier.ts` — applies a pulled `CUSTOMER_SAVED`, which is what unblocks a credit sale deferred waiting on its customer
-- `sync/payment-applier.ts` — applies a pulled `CUSTOMER_PAYMENT`, appending it: two tills each taking a payment is two payments, and both stand
-- `finance/accounts.ts` and `sync/account-applier.ts` — accounts on the device, settled by last-write-wins. Opening Orange Money on a phone is what puts it on every till at the next sync
-- `finance/cash.ts` and `sync/cash-applier.ts` — money moved by hand (§18): the float, cash to the bank, transfers, the correction after a count. `balanceOfAccount` is the four-source sum; `reconcile` sets a count against it
-- `expenses/expenses.ts` and `sync/expense-applier.ts` — what the business spent that is not stock (§19), undone by a reversal rather than an edit
-- `reports/reports.ts` — §21's reports and §22's dashboard, every figure a query over transactions and none a stored total. Periods are **half-open** and sliced by when business happened, so days tile without double-counting and last week's takings do not change when a device syncs late
-- `products/products.ts` — products on the device, with the last-write-wins upsert. A losing edit is a `false` return, never an error
-- `sales/sales.ts` — **the POS fan-out** (§9). `completeSale` writes the sale, its lines, the stock they released, the payments, the customer ledger entry for anything left owing, and the outbox event in one transaction. `totalsOf` is exported so a till shows a running total from *this* arithmetic — a second implementation in the UI is how the screen comes to disagree with the receipt. `subtotalOf` is exported for the same reason, so the applier that receives a sale from another till works out the debt the way the till that sold it did
-- `sync/sale-applier.ts` — applies a pulled `SALE_COMPLETED`, `INSERT OR IGNORE` throughout so a replay cannot double a day's takings or a customer's debt. A sale for a customer this device has never seen is **deferred, not dropped**: the debt waits for the customer rather than being lost
-
-Line totals are `price × quantity / 1000` rounded **half away from zero**, matching the server's `MulRatio(..., RoundHalfUp)` exactly. `Math.round` is wrong here — it breaks ties toward positive infinity, so it would agree today and diverge the moment a negative line existed. A device and a server that round differently disagree by a franc a line and nobody can say which is right.
-
-There is no UI yet. The data layer is plain TypeScript so it runs under Node against real SQLite; React Native types arrive with the screens.
-
-`backend/internal/api/` — the HTTP edge (§35). Stdlib `net/http` routing under `/api/v1`, one JSON error shape with stable machine-readable codes, and `RequireAuthentication`/`RequirePermission` middleware. `classify` is the single place errors become statuses — a new service's errors must be added there or they fall through to 500. An internal error never echoes its cause to a client.
-
-Endpoints: `/auth/login`, `/auth/logout`, `/auth/me`, `/sync/push`, `/sync/pull`. A push answers **200 even when some events were rejected** — the request succeeded, and per-event results say what happened to each; a non-2xx would make a client resend what landed.
-
-`backend/cmd/api/` — the binary: read config from the environment, connect, migrate, serve, drain on SIGTERM.
-
-`backend/internal/platform/postgres/` — the driver edge (ADR-013). pgx v5, goose migrations embedded from `backend/migrations/`, and repositories that take a `business.Scope` bound into the query. `pgtest` gives tests a migrated database. Domain types cross into driver types here and nowhere else.
-
-`inventory_movements`, `sales`, `sale_items`, `sale_payments`, and `customer_transactions` are append-only **in the database**, not just the domain: triggers refuse UPDATE and DELETE, so a correction has to be a compensating transaction even for a migration or a support script. Stock, sale totals, and what a customer owes are derived, never stored.
-
-A balance is a `sum()` in the database rather than a fetch-and-add in Go, for the same reason stock is: a regular who has bought on credit for two years has hundreds of entries, and a cashier asking what they owe must not pay for all of them. The two must agree exactly — `credit_repository_test.go` sums the same ledger both ways and compares, because a shopkeeper and a customer reading different numbers is the failure this domain exists to prevent.
-
-A customer's phone is a lookup, not an identity: the index on `(business_id, phone)` is deliberately **not** unique, because a household shares one number and refusing the second person would leave them out of the credit book they are already in on paper. `FindByPhone` returns everyone on the number and the caller chooses.
-
-`SaleRepository.Record` is §9's fan-out: the sale, its lines, its payments, and the stock it released, in one transaction. Half of it landing describes something that did not happen — money taken for goods still on the shelf, or stock gone with nobody recorded as paying.
-
-A record belonging to another tenant is reported as **not found**, never as forbidden — saying "you may not see this" confirms it exists to someone who may not know of it.
-
-Where a helper has both a fallible and a total form (`business.NewScope`/`ScopeOf`, `authz.Resolve`/`Effective`), the fallible one is for untrusted input and the total one is for callers holding already-validated values. Total forms **fail closed** — a missing tenant yields a scope that permits nothing, an unknown role contributes no permissions. Prefer this over an unreachable `panic` guard, which is untestable dead code.
-
-Entities keep their fields unexported behind accessors and cross the persistence boundary as a validating `Snapshot`/`Restore` pair, so a repository cannot construct one that skipped validation. Stored data is re-validated on the way in — a record written by an older version or synced from another device is not trusted.
-
-### Commands
-
-Run from the repository root:
-
-```sh
-make check            # fmt + lint + test (backend and client)
-make test             # unit tests; integration tests skip without a database
-make test-client      # client tests, against real SQLite via node:sqlite
-make install-client   # npm install for apps/mobile
-make test-integration # start PostgreSQL and run every test against it
-make lint             # go vet + gofmt check
-make fuzz-backend     # run every fuzz target (FUZZTIME=30s by default)
-make db-up            # start the local PostgreSQL (port 5433)
-make db-down          # stop it, keeping the data
-make db-reset         # stop it and discard the data
-```
-
-Backend-only, from `backend/`: `go test ./... -race -cover`, `go vet ./...`, `gofmt -l .`.
-
-### Testing expectations
-
-Tests must pass under `-race`. `kernel/` and `domain/` are held at **100% statement coverage** — except `domain/sales` at ~97%, where the remainder is error propagation from money arithmetic that `Record` has already proved cannot fail, unreachable because the entity's fields are unexported; `platform/postgres` sits at ~92%, the remainder being driver-error branches that cannot be reached with constants we control. Comprehensiveness is not satisfied by covering the spec's worked examples — those are a floor. Also cover boundary and overflow values, degenerate and malformed input, concurrency, and the invalid zero-value surface of each type. Prefer property-based tests, Go native fuzz targets, and — where a correct answer is independently computable — an oracle built a structurally different way from the implementation (see `money/oracle_test.go`).
-
-The client is tested the same way and for the same reason: `node:sqlite` is real SQLite, so the schema, constraints, and queries are exercised rather than simulated. What that does not cover is the native driver the app loads, which needs a device.
-
-**Repository tests run against a real PostgreSQL, never a mock.** A mock passes just as happily against a repository that forgot its `WHERE business_id = $1`, so it cannot prove the property most worth proving. `make db-up` starts one; `make test-integration` runs against it; plain `make test` skips those tests loudly. Closing the pool is the standard way to exercise "the database went away" paths.
-
-Prefer established third-party libraries over hand-rolled implementations of solved problems; wrap them thinly if the project needs extra guarantees.
-
-Add new commands to this file as tooling lands, rather than leaving them to be inferred.
-
-`SPECIFICATION.md` is the source of truth. Read the relevant sections before implementing anything; the spec's own hierarchy is: product spec → architecture spec → ADRs → domain specs → implementation → tests. If implementation ends up conflicting with the spec, surface the conflict instead of quietly normalizing it.
-
-## Baseline technology decisions
-
-These are fixed (spec §63) and may only change through an explicit ADR, never through an ad-hoc implementation change:
-
-| Layer | Choice |
-|---|---|
-| Client | React Native + TypeScript (Android-first) |
-| Local database | SQLite — the *primary operational* DB, not a cache |
-| Backend | Go |
-| Server database | PostgreSQL |
-| Sync | Event/transaction-based, versioned HTTP API (`/api/v1/...`) |
-| Auth | Token-based |
-| Currency / locale | XAF (FCFA), French + English |
-
-Intended monorepo layout (spec §52) — place new code accordingly: `apps/{mobile,web,desktop}/`, `backend/{cmd,internal,migrations}/`, `packages/{shared-types,shared-validation}/`, `docs/`, `scripts/`, `infrastructure/`.
-
-## The one architectural rule everything else follows from
-
-> **Business events create immutable transactions; current state is derived from those transactions.**
-
-Concretely, this means:
-
-- **Never store derived state as a mutable field.** Stock is not `product.stock = 47`; it is the sum of inventory movements (`+100 purchase`, `-3 sale`, `-2 damage`, …). Customer balances, supplier balances, and financial-account balances are likewise derived from their transactions, never directly written.
-- **Never destructively update financial history.** Returns, refunds, and corrections are new compensating transactions that reference the original — not edits or deletes.
-- **A business event fans out across domains.** A sale produces a sale record + sale items + inventory movements + one or more payments + (if credit) a customer transaction + financial effects. A purchase is not merely an inventory operation: it raises inventory and either lowers cash or raises supplier payable. Do not implement any of these as a single-table write.
-- **Payments are independent of sales.** A sale has *many* payments (split cash + Mobile Money is a normal case), so there is no single `payment_method` column on a sale. Mobile Money providers (MTN, Orange) are configurable financial accounts, not hard-coded types.
-
-## Offline-first is non-negotiable
-
-Every core operation — product lookup and creation, inventory changes, sales, returns, customer and supplier management, payments, expenses, cash management, local reports — must complete with no network. The correct shape is:
-
-```
-action() → validate locally → SQLite transaction → show success → queue sync event
-```
-
-Never `action() → POST → await server → show success`. The app must not block business operations because sync failed. UI reads observe local SQLite; the flow is UI → application action → repository → SQLite transaction → UI observes updated local data. Keep transient UI state in React; do not mirror the business database into a global in-memory store.
-
-## Sync engine constraints
-
-Sync is a first-class subsystem with dedicated endpoints (`POST /api/v1/sync/push`, `GET /api/v1/sync/pull`) — not CRUD calls sprinkled through features. Requirements: batching, acknowledgements, ordering, retry, partial failures, conflict reporting.
-
-- Push **events** (`{event_id, type, payload, timestamp, device_id, business_id, user_id}`), not final state snapshots.
-- Every event carries a globally unique immutable ID, and the **server must be idempotent** — replaying an event must never apply it twice. Any sync operation must be safe to retry.
-- Each installation has a device identity, used for sync, audit, conflict resolution, and troubleshooting.
-- Conflict policy is per-data-type and must be explicit: financial transactions immutable, inventory movements append-only, product descriptions last-write-wins, user permissions server-authoritative. Two devices selling the last unit offline is expected — resolve by accepting both movements, never by picking one device's stock number.
-- Assume slow, intermittent, expensive connectivity and multi-day sync gaps; keep payloads compact.
-
-## Multi-tenancy and authorization
-
-Every business-owned record belongs to a business/organization, and tenant isolation is enforced at the **data/service layer**, not by UI checks — a user in Business A must never reach Business B's data. The data model must accommodate `Organization → Branch → {Devices, Users, Inventory}` even though the MVP ships single-branch.
-
-Roles (OWNER, MANAGER, CASHIER, INVENTORY, ACCOUNTANT) resolve to granular, configurable permissions such as `sales.create`, `sales.refund`, `inventory.adjust`, `reports.financial`. Cashiers do not get financial reports by default. Sensitive operations (price changes, manual stock adjustments, refunds, debt modification, permission changes, cash reconciliation) write audit records carrying actor, business, device, timestamp, action, entity, and metadata.
-
-## Other standing constraints
-
-- **Money is never floating point.** Use integer minor units; XAF amounts are whole FCFA.
-- **Backend layering:** HTTP/API → application/service → domain → repository. The domain layer must not depend on HTTP.
-- **Business rules live in domain/application services**, not duplicated across React Native screens, Go API handlers, DB triggers, and report queries.
-- **Keep domains separate** (auth, business, users, products, inventory, sales, customers, suppliers, purchases, payments, finance, expenses, reports, sync, notifications). A product feature should not need to touch sync, auth, and finance. Avoid one catch-all "business" module.
-- **Abstract devices behind services**: printing (thermal/PDF/digital receipts) and barcode input (camera, Bluetooth, USB) must not leak into sales logic. The POS must work with a hardware scanner and no camera.
-- **Tests are required** for new business logic, especially inventory, sales, payments, customer/supplier balances, financial calculations, sync, conflict handling, and authorization.
-- Target cheap Android hardware: fast product search, fast POS, efficient large-list rendering, minimal startup delay, zero server round trips for inventory and POS.
-
-## Working style expected by the spec
-
-Inspect existing architecture and files before changing them, and prefer the smallest appropriate domain. Do not introduce a new database, backend framework, state-management architecture, sync strategy, or auth system without explicit approval. Significant architectural decisions get recorded as ADRs under `docs/adr/`.
-
-### Applying events
-
-A pushed event is **recorded and applied in one transaction** (`SyncRepository.RecordAndApply`, taking an `Effects`). Recording without applying is the failure mode to watch for: the device is told "accepted", stops resending, and the stock never lands — undetectable afterwards, since the log says the event arrived. A new applied event type adds a field to `Effects` and a write inside that transaction, never a second write beside it.
-
-Applied types so far: `STOCK_MOVED`, `CUSTOMER_PAYMENT`, `CASH_MOVED` and `EXPENSE_RECORDED` (appends), `PRODUCT_SAVED`, `CUSTOMER_SAVED` and `ACCOUNT_SAVED` (last-write-wins upserts, ADR-015), and `SALE_COMPLETED` (immutable insert of the whole fan-out, **including the customer ledger entry for what the sale left owing**).
-
-`Effects.Credit` is a list, and the guard is per entry: a `CREDIT_SALE` must be against the sale the event carries, while every other kind stands alone — someone settling their tab is not about any one sale. Only a `PAYMENT` names a financial account, and every payment must: an account records where money went, so one on a write-off would claim a till took money it never saw. Since 00010 both `account_id` columns are real foreign keys: a payment naming an account nobody opened is money no report can place. Conflict policy is per type and deliberately different — two devices' movements both stand, but only one product edit can.
-
-Payload structs live in `app/syncing` (`StockMovedPayload`), not in `postgres` — they are the wire contract, and their JSON names are a protocol version. A movement's tenant, branch, device, and user come from the authenticated envelope; only the movement's own ID comes from the payload, because that ID is what makes a replay a duplicate.
-
-Forward compatibility runs in two directions, and they are opposite on purpose:
-
-- **On the way in**, an unknown event type is **refused** (`sync.Type.Defined`), so a device running ahead of the server finds out rather than being told "accepted" and believing its data arrived. An unknown *field* inside a payload this build applies is refused too (`DisallowUnknownFields`) — ignoring it could half-apply a fact and report success.
-- **On the way out**, a stored event of an unknown type is **relayed untouched** (`sync.Restore`), because refusing to read one row an older build accepted would fail the pull for every device.
-
-### The client/server payload contract
-
-`StockMovedPayload` in `app/syncing` and `describe()` in the client's `movements.ts` are two halves of one wire format, and nothing but a test holds them together. The server refuses a payload carrying a field it does not know, so a field added to one side and not the other **rejects every event from that client**.
-
-The same applies to identifiers, and less visibly. Every identifier in a payload is parsed as a UUID on arrival (ADR-011), so a client that *derives* one — a line's identifier with a suffix, say — has its events rejected with the sale already recorded on the till and nothing there to explain it. Identifiers are drawn, never composed. `sales.test.ts` asserts the shape of every identifier a completed sale sends, which is the only thing standing between that rule and a silent one-way sync.
-
-The payload carries no business, branch, device, or user, and no currency: identity comes from the authenticated envelope (ADR-008) and everything is XAF (§46). Only the movement's own ID travels, because that ID is what makes a replay a duplicate.
-
-### What an account holds
-
-**Derived by summing the sources, never by a ledger that repeats them.** A
-balance is one query over three arms — `sale_payments`, the `PAYMENT` rows of
-`customer_transactions`, and `account_movements` — because each of those records
-its own facts once, where they happened. A dedicated account ledger would hold a
-second copy of every payment, and the two could disagree about the one number
-§18 exists to check.
-
-The consequence to remember: **a new source of money must be added to that query
-or the drawer reads short by exactly what it moved.** `BalanceOf` in
-`account_movement_repository.go` and `balanceOfAccount` in `cash.ts` are the two
-places.
-
-`account_movements` holds only what a *person* moved — the float at opening, cash
-to the bank, transfers, the correction after a count. A transfer is two rows, one
-against each account, each naming the other, written in one transaction: a
-balance sums the rows naming an account, so a single row could only ever be
-counted by one side, and half a transfer is money genuinely lost.
-
-A cash count changes nothing by itself. `Reconcile` says what the difference is;
-correcting it is an `ADJUSTMENT` movement, which is a new record of what was
-found rather than an edit to what was believed — that is what leaves an owner
-able to see that the drawer was short at all.
-
-### Product, customer, and account conflicts
-
-Products, customers **and financial accounts** are last-write-wins ordered by **`(updated_at, updated_by_device)`** (ADR-015). They are the things here that are *state*: a name or a price has one current value, so one edit has to win. What a customer owes is not state and is never resolved this way — it is a ledger, and both devices' entries stand. The tie-break is not decoration: without it, two devices holding the same two edits could settle on different prices depending on arrival order, permanently and undetectably. Because the comparison reads only the two rows, applying edits in any order gives the same answer everywhere.
-
-The rule is written twice — once in PostgreSQL, once in SQLite — because a device must resolve a conflict with no network. Both sides are tested against the same cases, including the order-independence property itself.
-
-A losing edit is **discarded, not an error**. On the client `saveProduct` and `saveCustomer` return `false`; treating it as a failure would defer the event forever.
-
-Timestamps come from the device, never the server: an edit made offline on Monday and synced on Friday must not beat one made on Wednesday.
+# Working on KOLO
+
+Read [SPECIFICATION.md](SPECIFICATION.md), the relevant [implementation guide](docs/implementation/README.md),
+and [phase plan](docs/implementation/plan.md) before changing behavior. User decisions
+on 2026-10-05 supersede the old Go/server-required setup architecture through ADR-017–019.
+
+## Current state
+
+The active repository is an npm workspace: TypeScript core/contracts, Expo mobile,
+Electron desktop, NestJS server. Existing business/data logic and tests moved into
+`packages/core/src` without redesigning behavior. `archive/legacy-go` preserves the
+previous server and pre-existing work. Historical root guidance is preserved in
+`docs/history/legacy-project-guidance.md`.
+
+Mobile has offline setup/unlock/recovery/staff and F4 operational screens/partial returns; demo is opt-in.
+F1 native acceptance remains pending; see the progress log and native validation guide. Desktop has a migrated
+local setup/unlock/recovery, product/opening-stock and cash till/receipt screens behind
+a validated command bridge. Broader management/transfer UI and Windows acceptance remain. Nest has health/readiness/capabilities,
+not synchronization. F2 provides shared exact rules, strict signed payloads, replay and destination receipts;
+F3 adds owner-confirmed pairing, encrypted backups/files and mobile transfer screens.
+Android/Windows transfer acceptance remains open; broader desktop workflows remain F5. Active mobile
+forms have keyed French/English text and durable device language selection.
+User priority on 2026-10-06 is desktop/web first; F5 is the next active phase.
+See [desktop implementation](docs/implementation/desktop.md); browser support is not
+implemented and its runtime remains to be chosen. Further mobile work waits behind
+the desktop workflow. Read [progress](docs/implementation/progress.md) before claiming
+a capability exists.
+
+## Boundaries
+
+- Platform SDK wiring stays in apps. Shared code never imports Expo, React, Electron,
+  or Nest. Only the explicit Node SQLite adapter may import Node in the core.
+- `core/domain` holds existing pure screen/domain functions. Cart currently imports
+  arithmetic from `core/rules`; compatibility exports remain in the data layer.
+  Server code must not import the SQLite data layer.
+- Use `@kolo/core/...` and `@kolo/contracts` between workspaces. No relative app/package
+  imports or aggregate core barrel that pulls native adapters into a renderer.
+- A business write and its event commit in one SQLite transaction. UI reads SQLite;
+  no network call is required to complete a core operation.
+- Stock, debt, and account balances derive from immutable transactions. Corrections
+  compensate. Money is integer XAF; quantity is thousandths; rounding is half away
+  from zero. Permission/tenant checks belong inside operations, not just screens.
+- Preserve origin identity when forwarding. Delivery is per destination. The v1 queue remains for compatibility;
+  HTTP v1 sync is restricted to unconverted legacy workspaces.
+- SQLite migrations 1–20 are immutable. Migration 18 adds F3 pairing progress; 19 adds category ordering/indexes, 20 immutable returns. Add forward migrations; do not rewrite shipped
+  schemas. Keep the Node/Expo synchronous transaction interface synchronous.
+- Go is an archived reference. Port rules/behavior, not repository plumbing.
+
+## Verification and documentation
+
+Run `npm run check` and `npm run bundle:mobile` after structural/app changes.
+Test business rules, rollback, replay, tenant isolation, authorization, malformed
+inputs, and schema upgrades. Use real SQLite/PostgreSQL for repository tests; mocks
+are for transport failures. Node tests do not prove native storage, keystore,
+Bluetooth, printers, or packaged Electron; use the platform gates in the guide.
+
+Document exports/public methods with JSDoc; regenerate `npm run docs:api`. Update the
+progress log and relevant contract when behavior changes. Label planned methods and
+endpoints. Keep dependencies modest; upgrade one platform/framework at a time.
+
+Do not commit, deploy, publish, delete business databases, or reset existing volumes
+unless requested. Routine reversible implementation and verification are authorized.

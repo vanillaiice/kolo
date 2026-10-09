@@ -2,15 +2,21 @@
 
 ## Product, Architecture & Engineering Specification
 
-**Project status:** Initial Architecture Specification
+**Project status:** Active implementation; standalone editions and TypeScript architecture accepted 2026-10-05
 **Target market:** Small and medium-sized businesses in Cameroon
-**Primary platforms:** Android / iOS
-**Secondary platforms:** Web / Desktop
-**Client:** React Native + TypeScript
-**Backend:** Go
+**Primary platforms:** Android / Desktop (Windows first)
+**Secondary platforms:** iOS / Optional web management
+**Client:** React Native/Expo mobile + Electron/React desktop; shared TypeScript core
+**Backend:** Optional NestJS + TypeScript (Go implementation archived as reference)
 **Local database:** SQLite
 **Server database:** PostgreSQL
-**Architecture:** Offline-first, event/transaction-based synchronization
+**Architecture:** Standalone-first; optional file/Bluetooth/hosted/self-hosted event exchange
+
+Architecture decisions: [ADR-017](docs/adr/ADR-017-typescript-workspaces-and-optional-server.md),
+[ADR-018](docs/adr/ADR-018-standalone-editions-and-local-authority.md),
+[ADR-019](docs/adr/ADR-019-event-exchange-and-destination-delivery.md).
+Detailed implementation sequence: [implementation plan](docs/implementation/plan.md).
+These supersede the prior Go/server-required setup decisions; domain integrity rules remain binding.
 
 ---
 
@@ -818,36 +824,26 @@ The dashboard should allow the user to change the reporting period.
 
 This is a foundational architectural requirement.
 
-The client maintains a local SQLite database.
-
-The server maintains the centralized PostgreSQL database.
+Mobile and desktop each maintain a local SQLite database and perform all core
+operations locally, including first shop setup and local user authentication.
+The optional NestJS server maintains PostgreSQL for hosted or self-hosted exchange.
+A standalone installation needs no server or online account. File exchange and
+Bluetooth merge versioned events; snapshots are for bootstrap and backup/restore.
 
 ```text
-                   INTERNET
-                      │
-                      │
-              ┌───────▼───────┐
-              │   Go Backend  │
-              │               │
-              │ Sync API      │
-              │ Business API  │
-              └───────┬───────┘
-                      │
-                PostgreSQL
-                      ▲
-                      │
-                 Synchronize
-                      │
-              ┌───────┴───────┐
-              │ React Native  │
-              │               │
-              │ Domain Logic  │
-              │ SQLite        │
-              │ Sync Engine   │
-              └───────────────┘
+React Native mobile ── Shared TypeScript core ── Local SQLite
+Electron desktop    ── Shared TypeScript core ── Local SQLite
+                              │
+                   File / Bluetooth / HTTP exchange
+                              │
+                  Optional NestJS sync server
+                              │
+                          PostgreSQL
 ```
 
-The application must never block core business operations merely because synchronization has failed.
+Hosted subscription expiry pauses hosted services, never local trading or access to
+recorded data. Self-hosted and hosted servers use the same application.
+Core operations must never block because synchronization failed.
 
 ---
 
@@ -1033,7 +1029,7 @@ For example:
 Financial transactions → immutable
 Inventory movements     → append-only
 Product description     → last-write-wins may be acceptable
-User permissions        → server-authoritative
+User permissions        → shop-owner authority, locally enforced and propagated; optional server enforces enrolled authority
 ```
 
 Conflict policies must be explicit.
@@ -1042,12 +1038,14 @@ Conflict policies must be explicit.
 
 # 30. Server Architecture
 
-The backend should be implemented in Go.
+The optional backend is implemented in NestJS + TypeScript. Shared pure rules and
+contracts are reused from packages; PostgreSQL and SQLite repositories remain separate.
+The old Go backend is preserved in `archive/legacy-go` for parity/migration reference.
 
 High-level structure:
 
 ```text
-Go Backend
+NestJS Backend
 
 API
 ├── Authentication
@@ -1218,22 +1216,24 @@ The API should primarily serve:
 
 The application should not depend on the API for basic offline operations.
 
-Potential API structure:
+Planned v2 API areas (these are not all implemented endpoints; see the current
+[server API contract](docs/implementation/server-api.md)). Archived clients use v1
+until explicit enrollment/protocol migration:
 
 ```text
-/api/v1/auth
-/api/v1/businesses
-/api/v1/users
-/api/v1/products
-/api/v1/inventory
-/api/v1/sales
-/api/v1/customers
-/api/v1/suppliers
-/api/v1/purchases
-/api/v1/payments
-/api/v1/expenses
-/api/v1/reports
-/api/v1/sync
+/api/v2/auth
+/api/v2/businesses
+/api/v2/users
+/api/v2/products
+/api/v2/inventory
+/api/v2/sales
+/api/v2/customers
+/api/v2/suppliers
+/api/v2/purchases
+/api/v2/payments
+/api/v2/expenses
+/api/v2/reports
+/api/v2/sync
 ```
 
 The API version should be explicit.
@@ -1247,8 +1247,8 @@ Synchronization should have dedicated endpoints rather than pretending synchroni
 Conceptually:
 
 ```text
-POST /api/v1/sync/push
-GET  /api/v1/sync/pull
+POST /api/v2/sync/push
+GET  /api/v2/sync/pull
 ```
 
 The exact API contract should be defined separately.
@@ -1271,6 +1271,10 @@ The protocol must support:
 ---
 
 # 37. Security
+
+Standalone local unlock/permissions are independent of optional network sessions.
+Fresh shop setup must work offline; owner-approved authority propagates through
+verified exchange. See the [identity contract](docs/implementation/identity.md).
 
 The application contains sensitive business information.
 
@@ -1612,6 +1616,11 @@ The MVP should deliberately exclude complex accounting, payroll, advanced taxati
 
 # 51. Development Phases
 
+The domain checklist below describes product areas. The current executable sequence
+F0–F9, dependencies, methods and acceptance criteria live in the
+[implementation plan](docs/implementation/plan.md). Standalone setup and file exchange
+precede the optional server.
+
 ## Foundation
 
 Implement:
@@ -1711,40 +1720,31 @@ Integrations
 
 ---
 
-# 52. Suggested Repository Structure
-
-A possible monorepo:
+# 52. Repository Structure
 
 ```text
-business-platform/
-
-    apps/
-        mobile/
-        web/
-        desktop/
-
-    backend/
-        cmd/
-        internal/
-        migrations/
-
-    packages/
-        shared-types/
-        shared-validation/
-
-    docs/
-        product/
-        architecture/
-        api/
-        database/
-        sync/
-
-    scripts/
-
-    infrastructure/
+apps/
+  mobile/          Expo/React Native and native adapters
+  desktop/         Electron main/preload + React renderer
+  server/          Optional NestJS server
+packages/
+  core/            Shared business rules, local SQLite operations, replay
+  contracts/       Versioned runtime-validated exchange/API contracts
+docs/
+  adr/             Accepted decisions and supersession index
+  implementation/  Phases, methods, APIs, identity, exchange, testing
+  reference/       Generated public TypeScript declarations/JSDoc
+  history/         Preserved historical working guidance
+scripts/           Boundary and documentation verification
+infrastructure/    Development DB and deployment scaffolding
+archive/
+  legacy-go/       Preserved Go implementation/migrations/tests
+  legacy-mobile/   Prior dependency-resolution reference
 ```
 
-The exact monorepo structure can change, but shared contracts and documentation should remain centralized.
+Use npm workspaces and one root lockfile. Current code and guide status must distinguish
+implemented foundations from planned standalone setup, peer transfer and optional server
+business behavior.
 
 ---
 
@@ -1859,7 +1859,7 @@ Client:
 React Native + TypeScript
 
 Backend:
-Go
+Optional NestJS + TypeScript
 
 Local database:
 SQLite
@@ -2178,45 +2178,23 @@ without requiring constant internet connectivity or complicated accounting knowl
 
 # 63. Current Technology Decision
 
-The current architecture is therefore:
+The accepted baseline as of 2026-10-05 (ADR-017–019):
 
-```text
-CLIENT
-React Native
-TypeScript
+| Layer | Choice |
+|---|---|
+| Mobile | React Native + Expo + TypeScript |
+| Desktop | Electron + React + TypeScript |
+| Shared business core | Strict TypeScript; pure rules plus explicit storage adapters |
+| Local operational database | SQLite on every installed client |
+| Optional server | NestJS + TypeScript, explicit PostgreSQL repositories |
+| Server database | PostgreSQL |
+| Exchange | Immutable versioned events; file/Bluetooth/HTTP transports |
+| Product editions | Standalone mobile/desktop, hosted subscription, self-hosted server |
+| Authentication | Local shop/actor authority; optional independent network sessions |
+| API | Versioned HTTP; v1 migration reference, planned v2 server contract |
+| Tooling | npm workspaces, Node 24 LTS, one root dependency lock |
+| Currency / languages | XAF / FCFA, French / English |
 
-LOCAL DATA
-SQLite
-
-BACKEND
-Go
-
-SERVER DATABASE
-PostgreSQL
-
-ARCHITECTURE
-Offline-first
-
-SYNC
-Event / transaction based
-
-AUTHENTICATION
-Token-based authentication
-
-API
-Versioned HTTP API
-
-TARGET
-Cameroon SMBs
-
-PRIMARY CURRENCY
-XAF / FCFA
-
-PRIMARY LANGUAGES
-French / English
-```
-
-These decisions should be considered the current baseline architecture.
-
-They may be changed later through an explicit Architecture Decision Record rather than through ad-hoc implementation changes.
-
+Existing business/financial invariants remain unchanged. Accepted ADRs record explicit
+changes to earlier baseline choices; changes require a new ADR. Read the implementation
+plan and progress log before assuming a declared target has been implemented.

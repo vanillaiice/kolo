@@ -1,0 +1,28 @@
+{
+  "name": "@kolo/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared business rules, local SQLite operations, and event replay",
+  "exports": {
+    "./identity/internal-authority": null,
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "react-native": "./src/*.ts",
+      "default": "./dist/*.js"
+    },
+    "./data/exchange/internal-context": null,
+    "./exchange/internal-verification": null,
+    "./backup/internal-preview": null,
+    "./exchange/internal-files": null
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'",
+    "test:coverage": "node --test --experimental-test-coverage --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@kolo/contracts": "0.1.0"
+  }
+}

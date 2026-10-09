@@ -5,15 +5,34 @@
   "description": "KOLO mobile client — React Native, Android first",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24.16.0 <25"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'",
-    "test:coverage": "node --test --experimental-test-coverage --experimental-strip-types 'src/**/*.test.ts'"
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "prebuild": "expo prebuild --platform android",
+    "bundle": "expo export --platform android --output-dir .expo/export",
+    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'"
   },
   "devDependencies": {
-    "typescript": "^5.9.0",
-    "@types/node": "^22.0.0"
-  }
+    "@types/node": "^22.0.0",
+    "@types/react": "~19.1.1",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "@kolo/core": "0.1.0",
+    "expo": "^57.0.15",
+    "expo-secure-store": "~57.0.1",
+    "expo-sqlite": "^57.0.1",
+    "react": "^19.2.8",
+    "react-native": "^0.86.2",
+    "react-native-nitro-modules": "0.37.1",
+    "react-native-quick-base64": "3.0.1",
+    "react-native-quick-crypto": "1.1.7",
+    "react-native-safe-area-context": "~5.7.0",
+    "expo-file-system": "~57.0.5",
+    "@kolo/contracts": "0.1.0"
+  },
+  "main": "index.ts"
 }
