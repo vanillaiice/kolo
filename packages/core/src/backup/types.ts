@@ -1,10 +1,11 @@
 import type { Database } from "../data/database/driver.ts";
 import type { ExchangeCrypto } from "../exchange/types.ts";
+import { MAX_ENCRYPTED_FILE_BYTES, MAX_SNAPSHOT_IMAGE_BYTES } from "@kolo/contracts/transfer";
 
 /** Bounded portable snapshot; native readers enforce this before allocating file contents. */
-export const MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;
-/** Maximum encoded encrypted file, including base64 and manifest overhead. No decompression is used. */
-export const MAX_TRANSFER_FILE_BYTES = 24 * 1024 * 1024;
+export const MAX_SNAPSHOT_BYTES = MAX_SNAPSHOT_IMAGE_BYTES;
+/** Maximum encoded encrypted file, including base64 and manifest overhead. Content is deflated before encryption. */
+export const MAX_TRANSFER_FILE_BYTES = MAX_ENCRYPTED_FILE_BYTES;
 /** Same measured candidate policy as local credentials; Android/Windows acceptance remains a native gate. */
 export const TRANSFER_KDF_ITERATIONS = 600_000;
 

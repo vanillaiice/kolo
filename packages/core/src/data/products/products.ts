@@ -14,6 +14,7 @@
 
 import type { Database, Queryable, Row, SqlValue } from "../database/driver.ts";
 import { enqueue } from "../sync/outbox.ts";
+import { likePattern } from "../database/search.ts";
 
 /** The event a product write queues. */
 export const PRODUCT_SAVED = "PRODUCT_SAVED";
@@ -223,24 +224,24 @@ export function searchProducts(
   if (cleaned === "") {
     return [];
   }
-  // Escaped so a shopkeeper searching for "50%" gets the product rather than
-  // every product.
-  const escaped = cleaned.replace(/[\\%_]/g, (character) => "\\" + character);
+  // search_name is the name folded at write time (accents, case); the term is
+  // folded and escaped the same way, so "cafe" finds "Café" and "50%" finds the
+  // product rather than every product.
 
   const rows = tx.all(
     `SELECT *,
             CASE WHEN barcode = ?2 THEN 0
                  WHEN sku = ?2 THEN 1
-                 WHEN name LIKE ?3 ESCAPE '\\' THEN 2
+                 WHEN search_name LIKE ?3 ESCAPE '\\' THEN 2
                  ELSE 3 END AS rank
        FROM products
       WHERE business_id = ?1 AND active = 1
         AND (barcode = ?2 OR sku = ?2
-             OR name LIKE ?4 ESCAPE '\\'
+             OR search_name LIKE ?4 ESCAPE '\\'
              OR sku LIKE ?3 ESCAPE '\\')
       ORDER BY rank, name
       LIMIT ?5`,
-    [businessId, cleaned, `${escaped}%`, `%${escaped}%`, limit],
+    [businessId, cleaned, likePattern(cleaned), likePattern(cleaned, { anywhere: true }), limit],
   );
   return rows.map(toProduct);
 }

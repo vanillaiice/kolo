@@ -1,5 +1,6 @@
 import { categoryOf, type Category } from "../data/products/categories.ts";
 import type { Queryable, Row, SqlValue } from "../data/database/driver.ts";
+import { likePattern } from "../data/database/search.ts";
 import { productOf, productByBarcode, type Product } from "../data/products/products.ts";
 import { customerOf, balanceOf, type Customer } from "../data/customers/customers.ts";
 import { supplierOf, balanceOfSupplier, type Supplier } from "../data/suppliers/suppliers.ts";
@@ -30,9 +31,9 @@ function catalogue<T>(tx: Queryable, businessId: string, table: "products" | "ca
   let where = "business_id=?";
   if (query.includeInactive !== true) where += " AND active=1";
   if (term !== "") {
-    const prefix = term.replace(/[\\%_]/g, "\\$&") + "%";
-    where += " AND (name LIKE ? ESCAPE '\\'"; values.push(prefix);
-    if (table === "products") { where += " OR barcode=? OR sku LIKE ? ESCAPE '\\'"; values.push(term, prefix); }
+    const prefix = likePattern(term);
+    where += ` AND (search_name LIKE ? ESCAPE '\\'`; values.push(prefix);
+    if (table === "products") { where += ` OR barcode=? OR sku LIKE ? ESCAPE '\\'`; values.push(term, prefix); }
     if (table === "customers" || table === "suppliers") { where += " OR phone LIKE ? ESCAPE '\\'"; values.push(prefix); }
     where += ")";
   }
@@ -99,6 +100,24 @@ function salesAuthority(tx: Queryable, context: OperationContext): boolean {
   if (permissions.includes("sales.view_own")) return true;
   throw new WorkspaceError("permission_denied");
 }
+/** One row of the receipt history: enough to recognize a sale without opening it. */
+export interface ReceiptSummary { readonly id: string; readonly number: string; readonly occurredAt: string; readonly totalMinor: number; readonly customerName?: string }
+/** Builds a receipt from its persisted sale row (joined with the customer name) using the shared sale rules. */
+function receiptOf(tx: Queryable, businessId: string, row: Row): Receipt {
+  const saleId = String(row["id"]);
+  const lines = tx.all(`SELECT * FROM sale_items WHERE business_id=? AND sale_id=? ORDER BY id`, [businessId, saleId]).map(item => ({
+    id: String(item["id"]), productId: String(item["product_id"]), name: String(item["name"]), quantity: sqlInteger(item["quantity"]!),
+    unitPriceMinor: sqlInteger(item["unit_price_minor"]!), discountMinor: sqlInteger(item["discount_minor"]!),
+  }));
+  const payments = tx.all(`SELECT p.*,a.name AS account_name FROM sale_payments p LEFT JOIN financial_accounts a ON a.business_id=p.business_id AND a.id=p.account_id
+    WHERE p.business_id=? AND p.sale_id=? ORDER BY p.id`, [businessId, saleId]).map(item => ({
+    id: String(item["id"]), accountId: String(item["account_id"]), name: String(item["account_name"] ?? item["account_id"]), amountMinor: sqlInteger(item["amount_minor"]!),
+  }));
+  const discountMinor = sqlInteger(row["discount_minor"]!);
+  return { id: saleId, number: String(row["number"]), occurredAt: String(row["occurred_at"]), customerName: typeof row["customer_name"] === "string" ? row["customer_name"] : undefined,
+    returnedMinor: sqlInteger(tx.get(`SELECT coalesce(sum(total_minor),0) AS total FROM business_returns WHERE business_id=? AND kind='SALE' AND original_id=?`,[businessId,saleId])!["total"]!),
+    lines, payments, discountMinor, ...saleTotals({ lines, payments, discountMinor, customerId: typeof row["customer_id"] === "string" ? row["customer_id"] : undefined }) };
+}
 /** Reads one persisted receipt. sales.view_own enforces the creating actor inside the query. */
 export function receipt(context: OperationContext, saleId: string): Receipt {
   return authorizedOperation(context, [], (_db, tx) => {
@@ -106,30 +125,22 @@ export function receipt(context: OperationContext, saleId: string): Receipt {
       LEFT JOIN customers c ON c.business_id=s.business_id AND c.id=s.customer_id WHERE s.business_id=? AND s.id=?${own ? " AND s.user_id=?" : ""}`,
       [context.businessId, saleId, ...(own ? [context.userId] : [])]);
     if (row === undefined) throw new WorkspaceError("scope_mismatch");
-    const lines = tx.all(`SELECT * FROM sale_items WHERE business_id=? AND sale_id=? ORDER BY id`, [context.businessId, saleId]).map(item => ({
-      id: String(item["id"]), productId: String(item["product_id"]), name: String(item["name"]), quantity: sqlInteger(item["quantity"]!),
-      unitPriceMinor: sqlInteger(item["unit_price_minor"]!), discountMinor: sqlInteger(item["discount_minor"]!),
-    }));
-    const payments = tx.all(`SELECT p.*,a.name AS account_name FROM sale_payments p LEFT JOIN financial_accounts a ON a.business_id=p.business_id AND a.id=p.account_id
-      WHERE p.business_id=? AND p.sale_id=? ORDER BY p.id`, [context.businessId, saleId]).map(item => ({
-      id: String(item["id"]), accountId: String(item["account_id"]), name: String(item["account_name"] ?? item["account_id"]), amountMinor: sqlInteger(item["amount_minor"]!),
-    }));
-    const discountMinor = sqlInteger(row["discount_minor"]!);
-    return { id: saleId, number: String(row["number"]), occurredAt: String(row["occurred_at"]), customerName: typeof row["customer_name"] === "string" ? row["customer_name"] : undefined,
-      returnedMinor: sqlInteger(tx.get(`SELECT coalesce(sum(total_minor),0) AS total FROM business_returns WHERE business_id=? AND kind='SALE' AND original_id=?`,[context.businessId,saleId])!["total"]!),
-      lines, payments, discountMinor, ...saleTotals({ lines, payments, discountMinor, customerId: typeof row["customer_id"] === "string" ? row["customer_id"] : undefined }) };
+    return receiptOf(tx, context.businessId, row);
   });
 }
 /** Keyset receipt history, newest first, bounded 1–100 and scoped to current sales authority. */
-export function receipts(context: OperationContext, query: PageQuery = {}): Page<{ id: string; number: string; occurredAt: string }> {
+export function receipts(context: OperationContext, query: PageQuery = {}): Page<ReceiptSummary> {
   return authorizedOperation(context, [], (_db, tx) => {
     const own = salesAuthority(tx, context), { limit } = options(query), values: SqlValue[] = [context.businessId];
-    let where = "business_id=?";
-    if (own) { where += " AND user_id=?"; values.push(context.userId); }
-    if (query.after !== undefined) { where += " AND (occurred_at,id)<(?,?)"; values.push(query.after.name, query.after.id); }
+    let where = "s.business_id=?";
+    if (own) { where += " AND s.user_id=?"; values.push(context.userId); }
+    if (query.after !== undefined) { where += " AND (s.occurred_at,s.id)<(?,?)"; values.push(query.after.name, query.after.id); }
     values.push(limit + 1);
-    const rows = tx.all(`SELECT id,number,occurred_at FROM sales WHERE ${where} ORDER BY occurred_at DESC,id DESC LIMIT ?`, values), shown = rows.slice(0, limit), last = shown.at(-1);
-    return { items: shown.map(row => ({ id: String(row["id"]), number: String(row["number"]), occurredAt: String(row["occurred_at"]) })),
+    const rows = tx.all(`SELECT s.*,c.name AS customer_name FROM sales s LEFT JOIN customers c ON c.business_id=s.business_id AND c.id=s.customer_id
+      WHERE ${where} ORDER BY s.occurred_at DESC,s.id DESC LIMIT ?`, values), shown = rows.slice(0, limit), last = shown.at(-1);
+    // Totals use the same rules as the receipt itself; a page holds at most 100 sales.
+    return { items: shown.map(row => { const item = receiptOf(tx, context.businessId, row);
+        return { id: item.id, number: item.number, occurredAt: item.occurredAt, totalMinor: item.totalMinor, ...(item.customerName === undefined ? {} : { customerName: item.customerName }) }; }),
       next: rows.length > limit && last !== undefined ? { name: String(last["occurred_at"]), id: String(last["id"]) } : undefined };
   });
 }
@@ -214,7 +225,7 @@ export function debtPage(context: OperationContext, kind: "customer" | "supplier
   if (kind !== "customer" && kind !== "supplier") throw new WorkspaceError("invalid_input");
   return authorizedOperation(context,[kind === "customer" ? "reports.customers" : "reports.suppliers"],(_db,tx)=>{
     const {limit,term}=options(query),values:SqlValue[]=[context.businessId];let where="c.business_id=?";
-    if(term!==""){where+=" AND c.name LIKE ? ESCAPE '\\'";values.push(term.replace(/[\\%_]/g,"\\$&")+"%");}
+    if(term!==""){where+=` AND c.search_name LIKE ? ESCAPE '\\'`;values.push(likePattern(term));}
     if(query.after!==undefined){where+=" AND (c.name,c.id)>(?,?)";values.push(query.after.name,query.after.id);}values.push(limit+1);
     const rows=tx.all(`SELECT c.id,c.name,sum(t.amount_minor) AS amount FROM ${kind === "customer" ? "customers" : "suppliers"} c
       JOIN ${kind}_transactions t ON t.business_id=c.business_id AND t.${kind}_id=c.id WHERE ${where} GROUP BY c.id,c.name HAVING sum(t.amount_minor)>0 ORDER BY c.name,c.id LIMIT ?`,values),shown=rows.slice(0,limit),last=shown.at(-1);
@@ -225,7 +236,7 @@ export function debtPage(context: OperationContext, kind: "customer" | "supplier
 export function stockAlertPage(context: OperationContext, query: PageQuery = {}): Page<{ id: string; name: string; quantity: number }> {
   return authorizedOperation(context,["reports.inventory"],(_db,tx)=>{
     const {limit,term}=options(query),values:SqlValue[]=[context.businessId];let where="p.business_id=? AND p.active=1";
-    if(term!==""){where+=" AND p.name LIKE ? ESCAPE '\\'";values.push(term.replace(/[\\%_]/g,"\\$&")+"%");}
+    if(term!==""){where+=` AND p.search_name LIKE ? ESCAPE '\\'`;values.push(likePattern(term));}
     if(query.after!==undefined){where+=" AND (p.name,p.id)>(?,?)";values.push(query.after.name,query.after.id);}values.push(limit+1);
     const rows=tx.all(`SELECT p.id,p.name,coalesce(sum(m.quantity),0) AS quantity FROM products p LEFT JOIN inventory_movements m ON m.business_id=p.business_id AND m.product_id=p.id
       WHERE ${where} GROUP BY p.id,p.name,p.minimum_stock HAVING quantity<0 OR (p.minimum_stock>0 AND quantity<=p.minimum_stock) ORDER BY p.name,p.id LIMIT ?`,values),shown=rows.slice(0,limit),last=shown.at(-1);

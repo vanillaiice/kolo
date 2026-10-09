@@ -219,6 +219,46 @@ async function unlock(input: { readonly userId: string; readonly secret: string 
   });
 }
 
+/**
+ * Host-protected reference that lets a trusted host reopen this member's session after a restart
+ * without a secret. It names the member's current credential, so a code reset, owner recovery or
+ * restored backup makes it stale. Hosts must keep it in OS-protected storage only.
+ */
+export interface RememberedMember { readonly businessId: string; readonly userId: string; readonly credentialReference: string }
+
+/** Returns the remembered-session reference for an unlocked context's member. */
+export function rememberMember(context: OperationContext): RememberedMember {
+  return authorizedOperation(context, [], (_database, tx) => {
+    const row = tx.get(`SELECT credential_reference FROM local_memberships WHERE business_id = ? AND user_id = ?`, [context.businessId, context.userId]);
+    if (row === undefined) throw new WorkspaceError("actor_inactive");
+    return Object.freeze({ businessId: context.businessId, userId: context.userId, credentialReference: String(row["credential_reference"]) });
+  });
+}
+
+/**
+ * Reopens a remembered member without secret proof. The member, device and business must still be
+ * active, not locked out, and hold the same credential; any mismatch throws and grants nothing.
+ */
+export function resumeWorkspace(remembered: RememberedMember, ports: WorkspacePorts): OperationContext {
+  const activeRuntime = runtime(ports.database);
+  if (activeRuntime.replacing === true) throw new WorkspaceError("locked");
+  if (activeRuntime.unlocking) throw new WorkspaceError("retry_later");
+  const state = currentInstallation(ports.database);
+  if (state.state !== "locked" && state.state !== "unlocked") throw new WorkspaceError("not_configured");
+  const install = state.installation;
+  if (install.businessId !== remembered.businessId) throw new WorkspaceError("locked");
+  return ports.database.transaction(tx => {
+    const member = activeMember(tx, install, remembered.userId);
+    if (Number(member["failures"]) >= 10) throw new WorkspaceError("recovery_required");
+    if (member["credential_reference"] !== remembered.credentialReference) throw new WorkspaceError("locked");
+    memberPermissions(member);
+    const context: OperationContext = Object.freeze({ businessId: install.businessId, userId: remembered.userId, deviceId: install.deviceId });
+    activeRuntime.context = context;
+    contexts.set(context, { ...ports });
+    return context;
+  });
+}
+
 /** Invalidates the active capability and in-flight unlocks without altering records/cloud sessions. */
 export function lockWorkspace(database: Database): void {
   const activeRuntime = runtime(database);

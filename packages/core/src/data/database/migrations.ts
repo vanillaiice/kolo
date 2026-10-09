@@ -1,4 +1,5 @@
 import { RETURNS_MIGRATION } from "./returns-migration.ts";
+import { SEARCH_MIGRATION } from "./search-migration.ts";
 import { TRANSFER_MIGRATION } from "./transfer-migration.ts";
 /**
  * The local schema and how a device gets to it.
@@ -984,6 +985,7 @@ export const MIGRATIONS: readonly Migration[] = [
     ],
   },
   RETURNS_MIGRATION,
+  SEARCH_MIGRATION,
 ];
 
 /** The version the code in this build expects. */

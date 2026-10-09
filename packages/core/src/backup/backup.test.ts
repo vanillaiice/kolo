@@ -11,6 +11,10 @@ import type { WorkspacePorts, ProvisionedIdentity } from "../identity/types.ts";
 import { nativeTransferCrypto } from "./native-crypto.ts";
 import { createBackup, previewBackup, restoreWorkspace, cancelBackupPreview } from "../application/backup.ts";
 import { encryptTransfer,decryptTransfer } from "./encryption.ts";
+import { deflateSync } from "fflate";
+import { canonicalJson } from "@kolo/contracts/canonical";
+import { MAX_ENCRYPTED_PAYLOAD_BYTES } from "@kolo/contracts/transfer";
+import { MAX_SNAPSHOT_BYTES } from "./types.ts";
 import * as operations from "../application/operations.ts";
 import type { Database } from "../data/database/driver.ts";
 
@@ -40,6 +44,48 @@ it("native encrypted files authenticate password, purpose, header, ciphertext an
  await assert.rejects(decryptTransfer(one,"exchange","wrong backup password",crypto));await assert.rejects(decryptTransfer(one,"backup",password,crypto));
  for(const field of ["ciphertext","tag"]){const bad=JSON.parse(one);bad[field]=(bad[field][0]==="a"?"b":"a")+bad[field].slice(1);await assert.rejects(decryptTransfer(JSON.stringify(bad),"exchange",password,crypto));}
  const bad=JSON.parse(one);bad.header.file_id=randomUUIDv7();await assert.rejects(decryptTransfer(JSON.stringify(bad),"exchange",password,crypto));bad.header.iterations=1;await assert.rejects(decryptTransfer(JSON.stringify(bad),"exchange",password,crypto));
+});
+/** Encrypts arbitrary payload bytes under a chosen header, as a malicious or legacy writer could. */
+async function craft(header:Record<string,unknown>,payload:Uint8Array):Promise<string>{
+ const full={format:"kolo.encrypted",purpose:"backup",file_id:randomUUIDv7(),cipher:"AES-256-GCM",kdf:"PBKDF2-SHA256",iterations:600000,salt:crypto.randomHex(32),nonce:crypto.randomHex(12),...header,plaintext_bytes:payload.byteLength};
+ const key=await crypto.derive(password,full.salt,600000),result=await crypto.encrypt(key,full.nonce,payload,canonicalJson(full));
+ return JSON.stringify({header:full,...result});
+}
+it("version 2 files deflate before encryption and authenticate compression and content length",async()=>{
+ const content=crypto.encodeText("SQLite page ".repeat(20000)),text=await encryptTransfer(content,"backup",randomUUIDv7(),password,crypto),file=JSON.parse(text);
+ assert.equal(file.header.format_version,2);assert.equal(file.header.compression,"deflate");assert.equal(file.header.content_bytes,content.byteLength);
+ assert.ok(file.header.plaintext_bytes<content.byteLength/20,"repetitive content is stored compressed");
+ assert.deepEqual(await decryptTransfer(text,"backup",password,crypto),content);
+ for(const change of [{content_bytes:content.byteLength-1},{content_bytes:content.byteLength+1},{compression:"none"}]){
+  const bad=JSON.parse(text);Object.assign(bad.header,change);await assert.rejects(decryptTransfer(JSON.stringify(bad),"backup",password,crypto));
+ }
+ const future=JSON.parse(text);future.header.format_version=3;await assert.rejects(decryptTransfer(JSON.stringify(future),"backup",password,crypto),{code:"unsupported_version"});
+ for(const size of [1,2,3,4095,65537]){const bytes=new Uint8Array(randomBytes(size));assert.deepEqual(await decryptTransfer(await encryptTransfer(bytes,"exchange",randomUUIDv7(),password,crypto),"exchange",password,crypto),bytes);}
+});
+it("version 1 uncompressed files written by earlier releases still decrypt",async()=>{
+ const content=crypto.encodeText('{"legacy":true}');
+ assert.deepEqual(await decryptTransfer(await craft({format_version:1},content),"backup",password,crypto),content);
+});
+it("authenticated but lying deflate streams are refused without unbounded inflation",async()=>{
+ const bomb=deflateSync(new Uint8Array(8*1024*1024),{level:9});
+ // A tiny declared size must not let an eight-megabyte stream expand, and a larger one must match exactly.
+ await assert.rejects(decryptTransfer(await craft({format_version:2,compression:"deflate",content_bytes:1024},bomb),"backup",password,crypto),{code:"invalid_file"});
+ await assert.rejects(decryptTransfer(await craft({format_version:2,compression:"deflate",content_bytes:8*1024*1024+1},bomb),"backup",password,crypto),{code:"invalid_file"});
+ await assert.rejects(decryptTransfer(await craft({format_version:2,compression:"deflate",content_bytes:10},crypto.encodeText("not a deflate stream")),"backup",password,crypto),{code:"invalid_file"});
+ assert.equal((await decryptTransfer(await craft({format_version:2,compression:"deflate",content_bytes:8*1024*1024},bomb),"backup",password,crypto)).byteLength,8*1024*1024);
+});
+it("content that stays too large after compression is refused before encryption",async()=>{
+ await assert.rejects(encryptTransfer(new Uint8Array(randomBytes(MAX_ENCRYPTED_PAYLOAD_BYTES+1024)),"backup",randomUUIDv7(),password,crypto),{code:"too_large"});
+});
+it("a shop larger than the former 16 MiB snapshot cap backs up and restores",async()=>{
+ const a=fixture(),b=fixture(),installation=await createWorkspace({businessName:"Busy shop",ownerName:"Owner",deviceLabel:"A",platform:"DESKTOP",currency:"XAF",secret},a.ports),context=await unlockWorkspace({userId:installation.ownerId,secret},a.ports);
+ a.db.transaction(tx=>{for(let i=0;i<120_000;i++)tx.run(`INSERT INTO products(id,business_id,name,barcode,unit,purchase_price_minor,selling_price_minor,currency,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+  [randomUUIDv7(),installation.businessId,`Article ${i} ${randomBytes(24).toString("hex")}`,`B${i}`,"unit",300,500,"XAF",at,at]);});
+ const doc=await createBackup(context,password,a.files,crypto),header=JSON.parse(doc.text).header;
+ assert.ok(header.content_bytes>16*1024*1024&&header.content_bytes<MAX_SNAPSHOT_BYTES,`snapshot of ${header.content_bytes} bytes exercises the raised cap`);
+ const preview=await previewBackup(doc.text,password,b.files,crypto);
+ const restored=await restoreWorkspace(preview,{confirmedBusinessId:installation.businessId,deviceLabel:"B",platform:"DESKTOP",secret},b.ports);databases.push(restored.database);
+ assert.equal(restored.database.get(`SELECT count(*) AS n FROM products`)!["n"],120_000);
 });
 it("WAL-consistent encrypted backup restores a fresh native identity, preserves history and permits new writes",async()=>{
  const a=fixture(),b=fixture(),installation=await createWorkspace({businessName:"Backup shop",ownerName:"Owner",deviceLabel:"A",platform:"DESKTOP",currency:"XAF",secret},a.ports),context=await unlockWorkspace({userId:installation.ownerId,secret},a.ports);

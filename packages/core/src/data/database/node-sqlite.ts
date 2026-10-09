@@ -1,5 +1,5 @@
 import { domainsForWrite, publishChanges, type ChangedDomain } from "./changes.ts";
-import { mkdirSync, readFileSync, writeFileSync, statSync, rmSync, renameSync, openSync, fsyncSync, closeSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, statSync, rmSync, renameSync, openSync, fsyncSync, closeSync, existsSync, readdirSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUIDv7 } from "node:crypto";
 import { MAX_SNAPSHOT_BYTES, TransferError, type SnapshotPort, type SnapshotHandle } from "../../backup/types.ts";
@@ -152,7 +152,7 @@ function describe(cause: unknown): string {
 }
 
 /** Native file slots and private SQLite staging, shared by desktop and real-database recovery tests. */
-export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActive():Database; close():void } {
+export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActive():Database; activeId():string; saved():Promise<readonly {id:string;name:string}[]>; selectSaved(id:string,target:Database):Promise<Database>; close():void } {
   mkdirSync(directory,{recursive:true,mode:0o700});
   const control=openDatabase({location:join(directory,"workspace-slots.db")});
   control.run("PRAGMA synchronous=FULL");
@@ -175,7 +175,9 @@ export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActiv
         const binding=bindings.get(target);if(state!=="open"||binding===undefined)throw new TransferError("activation_failed");
         database.run("PRAGMA wal_checkpoint(TRUNCATE)");database.run("PRAGMA journal_mode=DELETE");database.close();state="closed";
         const finalName=`workspace-${randomUUIDv7()}.db`,finalPath=name(finalName);
-        renameSync(name(filename),finalPath);const file=openSync(finalPath,"r");try{fsyncSync(file);}finally{closeSync(file);}
+        renameSync(name(filename),finalPath);
+        // Windows FlushFileBuffers needs write access: fsync through a read-only handle fails with EPERM there.
+        const file=openSync(finalPath,"r+");try{fsyncSync(file);}finally{closeSync(file);}
         // Persist the directory entry before committing the durable active pointer.
         if(process.platform!=="win32"){const dir=openSync(directory,"r");try{fsyncSync(dir);}finally{closeSync(dir);}}
         const finalDb=openDatabase({location:finalPath});
@@ -187,7 +189,27 @@ export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActiv
     };
   }
   return {
+    /** File name of the active slot; a failed replacement selects it again. */
+    activeId(){return String(control.get(`SELECT filename FROM active_slot WHERE id=1`)!["filename"]);},
     openActive(){const row=control.get(`SELECT * FROM active_slot WHERE id=1`)!;const filename=String(row["filename"]);if(filename!=="kolo.db"&&!existsSync(name(filename)))throw new TransferError("activation_failed");const database=openDatabase({location:name(filename)});bindings.set(database,{filename,generation:Number(row["generation"])});return database;},
+    async saved(){
+      const active=String(control.get("SELECT filename FROM active_slot WHERE id=1")!["filename"]), result:{id:string;name:string}[]=[];
+      for(const filename of readdirSync(directory).sort()){
+        if(filename===active||! /^(kolo\.db|workspace-[0-9a-f-]+\.db)$/.test(filename))continue;
+        let connection:DatabaseSync|undefined;
+        try{if(!lstatSync(name(filename)).isFile())continue;connection=new DatabaseSync(name(filename),{readOnly:true});const shop=connection.prepare("SELECT name FROM businesses ORDER BY id LIMIT 1").get();if(typeof shop?.["name"]==="string")result.push({id:filename,name:shop["name"]});}
+        catch{/* Incomplete or damaged files are never offered as shops. */}finally{connection?.close();}
+      }
+      return result;
+    },
+    async selectSaved(id,target){
+      const binding=bindings.get(target);
+      if(binding===undefined||!(await this.saved()).some(shop=>shop.id===id))throw new TransferError("activation_failed");
+      const next=openDatabase({location:name(id)});
+      try{control.transaction(tx=>{const current=tx.get("SELECT * FROM active_slot WHERE id=1")!;if(current["filename"]!==binding.filename||current["generation"]!==binding.generation)throw new TransferError("activation_failed");tx.run("UPDATE active_slot SET filename=?,generation=generation+1 WHERE id=1",[id]);});}
+      catch(error){next.close();throw error;}
+      bindings.set(next,{filename:id,generation:binding.generation+1});return next;
+    },
     async capture(source){const filename=allocate();try{source.run("VACUUM INTO ?",[name(filename)]);if(statSync(name(filename)).size>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");return handle(filename,openDatabase({location:name(filename)}));}catch(error){rmSync(name(filename),{force:true});throw error;}},
     async open(bytes){if(bytes.byteLength<100||bytes.byteLength>MAX_SNAPSHOT_BYTES)throw new TransferError("invalid_snapshot");const filename=allocate();writeFileSync(name(filename),bytes,{flag:"wx",mode:0o600});try{return handle(filename,openDatabase({location:name(filename)}));}catch{rmSync(name(filename),{force:true});throw new TransferError("invalid_snapshot");}},
     async empty(){const filename=allocate();return handle(filename,openDatabase({location:name(filename)}));},

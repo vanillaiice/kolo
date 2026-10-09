@@ -10,7 +10,7 @@ import { balanceOfAccount } from "../data/finance/cash.ts";
 import { stockOf } from "../data/inventory/movements.ts";
 import * as commands from "../application/operations.ts";
 import { currentInstallation, createWorkspace, recoverWorkspaceSetup, unlockWorkspace, lockWorkspace,
-  grantPermission, revokePermission } from "./workspace.ts";
+  grantPermission, revokePermission, rememberMember, resumeWorkspace } from "./workspace.ts";
 import { authorizedOperation } from "./internal-authority.ts";
 import { resolvePermissions, PERMISSIONS } from "./permissions.ts";
 import { WorkspaceError, type CreateWorkspaceInput, type CredentialPort, type Installation,
@@ -318,6 +318,53 @@ describe("local unlock and authority", () => {
   });
 });
 
+describe("remembered sessions", () => {
+  it("resumes the same member and permissions after a lock without verifying a secret", async () => {
+    const { context, installation } = await cashier();
+    const remembered = rememberMember(context);
+    assert.deepEqual(remembered, { businessId: installation.businessId, userId: remembered.userId, credentialReference: remembered.userId });
+    lockWorkspace(database); verifyCalls = 0;
+    const resumed = resumeWorkspace(remembered, ports);
+    assert.equal(verifyCalls, 0); assert.equal(resumed.userId, remembered.userId);
+    assert.equal(currentInstallation(database).state, "unlocked");
+    assert.throws(() => authorizedOperation(context, [], () => 1), code("locked"));
+    assert.throws(() => authorizedOperation(resumed, ["inventory.adjust"], () => 1), code("permission_denied"));
+    assert.equal(authorizedOperation(resumed, ["sales.create"], () => 42), 42);
+  });
+  it("grants nothing for a changed credential, another shop, an unknown or suspended member, or a locked-out member", async () => {
+    const installation = await createWorkspace(input, ports);
+    const remembered = rememberMember(await owner(installation));
+    for (const forged of [{ ...remembered, credentialReference: "credential-other" }, { ...remembered, businessId: id() }, { ...remembered, userId: id() }]) {
+      lockWorkspace(database);
+      assert.throws(() => resumeWorkspace(forged, ports), error => error instanceof WorkspaceError);
+      assert.equal(currentInstallation(database).state, "locked");
+    }
+    database.run(`UPDATE local_memberships SET failures = 10`);
+    assert.throws(() => resumeWorkspace(remembered, ports), code("recovery_required"));
+    database.run(`UPDATE local_memberships SET failures = 0, active = 0`);
+    assert.throws(() => resumeWorkspace(remembered, ports), code("actor_inactive"));
+    database.run(`UPDATE local_memberships SET active = 1`); database.run(`UPDATE devices SET active = 0`);
+    assert.throws(() => resumeWorkspace(remembered, ports), code("actor_inactive"));
+    assert.equal(currentInstallation(database).state, "locked");
+  });
+  it("is stale after the member's credential is replaced", async () => {
+    const installation = await createWorkspace(input, ports);
+    const remembered = rememberMember(await owner(installation));
+    database.run(`UPDATE local_memberships SET credential_reference = 'credential-replaced' WHERE user_id = ?`, [installation.ownerId]);
+    lockWorkspace(database);
+    assert.throws(() => resumeWorkspace(remembered, ports), code("locked"));
+  });
+  it("refuses while an unlock is in flight and before setup", async () => {
+    assert.throws(() => resumeWorkspace({ businessId: id(), userId: id(), credentialReference: "x" }, ports), code("not_configured"));
+    const installation = await createWorkspace(input, ports);
+    const remembered = rememberMember(await owner(installation));
+    lockWorkspace(database);
+    const pending = owner(installation);
+    assert.throws(() => resumeWorkspace(remembered, ports), code("retry_later"));
+    await pending;
+  });
+});
+
 describe("authorized application writes", () => {
   it("cashier completes a sale without allowing caller-supplied actor/shop/device/persistence time", async () => {
     const { context, installation, productId } = await cashier();
@@ -505,7 +552,7 @@ describe("upgrade from shipped schema 14", () => {
       previous.run(`INSERT INTO device_session VALUES (1,'session','old','user','device',?,'2027-01-01T00:00:00.000Z')`, [AT]);
       previous.run(`INSERT INTO sync_outbox (event_id,business_id,user_id,device_id,type,payload,occurred_at,sequence) VALUES ('event','old','user','device','SALE_COMPLETED','{}',?,1)`, [AT]);
       assert.equal(schemaVersion(previous), 14);
-      assert.deepEqual(migrate(previous).applied.map(m => m.version), [15, 16, 17, 18, 19, 20]);
+      assert.deepEqual(migrate(previous).applied.map(m => m.version), [15, 16, 17, 18, 19, 20, 21]);
       assert.equal(previous.get(`SELECT session_id FROM device_session`)?.["session_id"], "session");
       assert.equal(previous.get(`SELECT event_id FROM sync_outbox WHERE state = 'pending'`)?.["event_id"], "event");
       assert.equal(currentInstallation(previous).state, "legacy");

@@ -105,6 +105,44 @@ export function formatQuantity(thousandths: number, language: Language = "fr"): 
   return negative ? `-${shown}` : shown;
 }
 
+/** Unit symbols and abbreviations never take a plural: 3 kg, 2 L, 5 m². */
+const UNIT_SYMBOLS = new Set(["g", "kg", "mg", "t", "l", "ml", "cl", "dl", "m", "cm", "mm", "km", "m2", "m²", "m3", "m³", "lb", "oz", "pcs", "pc", "u"]);
+
+/**
+ * The plural of a shop-entered unit name, in the interface language. Symbols, abbreviations
+ * (two letters or fewer, all capitals, a full stop or a digit) and words already ending in
+ * s/x/z are kept. Only the first word changes, so "sac de 50 kg" becomes "sacs de 50 kg".
+ * French: -au/-eau/-eu take x, -al becomes -aux. English: consonant + y becomes -ies,
+ * -ch/-sh/-s/-x/-z take es.
+ */
+export function pluralUnit(unit: string, language: Language = "fr"): string {
+  const trimmed = unit.trim(), space = trimmed.search(/\s/);
+  const word = space < 0 ? trimmed : trimmed.slice(0, space), rest = space < 0 ? "" : trimmed.slice(space);
+  if (word.length <= 2 || UNIT_SYMBOLS.has(word.toLowerCase()) || /[.\d]/.test(word) || word === word.toUpperCase()) return trimmed;
+  const lower = word.toLowerCase();
+  let plural: string;
+  if (language === "fr") {
+    if (/[sxz]$/.test(lower)) plural = word;
+    else if (/(au|eu)$/.test(lower)) plural = `${word}x`;
+    else if (/al$/.test(lower)) plural = `${word.slice(0, -1)}ux`;
+    else plural = `${word}s`;
+  } else if (/[^aeiou]y$/.test(lower)) plural = `${word.slice(0, -1)}ies`;
+  else if (/(ch|sh|s|x|z)$/.test(lower)) plural = `${word}es`;
+  else plural = `${word}s`;
+  return plural + rest;
+}
+
+/**
+ * A quantity followed by its unit, singular or plural by the language's own rules
+ * (`Intl.PluralRules`): French keeps 0, 1 and 1,5 singular, English only 1.
+ */
+export function formatQuantityWithUnit(thousandths: number, unit: string, language: Language = "fr"): string {
+  const shown = formatQuantity(thousandths, language);
+  if (!Number.isFinite(thousandths) || unit.trim() === "") return `${shown} ${unit}`.trim();
+  const count = new Intl.PluralRules(language).select(Math.abs(thousandths) / 1000);
+  return `${shown} ${count === "one" ? unit.trim() : pluralUnit(unit, language)}`;
+}
+
 /** What went wrong with something a cashier typed. */
 export type ParseFailure = "EMPTY" | "NOT_A_NUMBER" | "NEGATIVE" | "TOO_LARGE" | "FRACTIONAL";
 

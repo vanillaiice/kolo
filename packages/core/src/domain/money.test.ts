@@ -6,6 +6,8 @@ import {
   formatAmount,
   formatMoney,
   formatQuantity,
+  formatQuantityWithUnit,
+  pluralUnit,
   parseAmount,
   parseQuantity,
 } from "./money.ts";
@@ -196,5 +198,43 @@ describe("reading a quantity a cashier typed", () => {
         );
       }
     }
+  });
+});
+
+describe("units follow the quantity's grammatical number", () => {
+  it("French: 0, 1 and fractions below 2 stay singular; 2 and more are plural", () => {
+    assert.equal(formatQuantityWithUnit(24_000, "sachet"), "24 sachets");
+    assert.equal(formatQuantityWithUnit(1_000, "sachet"), "1 sachet");
+    assert.equal(formatQuantityWithUnit(0, "sachet"), "0 sachet");
+    assert.equal(formatQuantityWithUnit(1_500, "litre"), "1,5 litre");
+    assert.equal(formatQuantityWithUnit(2_000, "litre"), "2 litres");
+    assert.equal(formatQuantityWithUnit(-3_000, "boîte"), "-3 boîtes");
+    assert.equal(formatQuantityWithUnit(12_000, "morceau"), "12 morceaux");
+    assert.equal(formatQuantityWithUnit(4_000, "bocal"), "4 bocaux");
+    assert.equal(formatQuantityWithUnit(1_200_000, "pièce"), `${formatQuantity(1_200_000)} pièces`);
+  });
+  it("English: only exactly one is singular", () => {
+    assert.equal(formatQuantityWithUnit(1_000, "bag", "en"), "1 bag");
+    assert.equal(formatQuantityWithUnit(1_500, "bag", "en"), "1.5 bags");
+    assert.equal(formatQuantityWithUnit(0, "box", "en"), "0 boxes");
+    assert.equal(formatQuantityWithUnit(3_000, "battery", "en"), "3 batteries");
+    assert.equal(formatQuantityWithUnit(3_000, "tray", "en"), "3 trays");
+  });
+  it("symbols, abbreviations and already-plural words are unchanged", () => {
+    for (const unit of ["kg", "g", "L", "ml", "m²", "PCS", "cs.", "50kg", "u", "pcs", "Kg", "prix", "colis", "gaz"]) assert.equal(pluralUnit(unit), unit.trim(), unit);
+    assert.equal(formatQuantityWithUnit(5_000, "kg"), "5 kg");
+    assert.equal(formatQuantityWithUnit(5_000, "  sachet "), "5 sachets");
+    assert.equal(formatQuantityWithUnit(5_000, ""), "5");
+  });
+  it("only the first word of a descriptive unit changes", () => {
+    assert.equal(pluralUnit("sac de 50 kg"), "sacs de 50 kg");
+    assert.equal(pluralUnit("bag of rice", "en"), "bags of rice");
+  });
+  it("matches Intl plural categories for many quantities", () => {
+    for (let thousandths = -5_000; thousandths <= 5_000; thousandths += 250)
+      for (const language of ["fr", "en"] as const) {
+        const one = new Intl.PluralRules(language).select(Math.abs(thousandths) / 1000) === "one";
+        assert.equal(formatQuantityWithUnit(thousandths, "sachet", language).endsWith(one ? "sachet" : "sachets"), true, `${language} ${thousandths}`);
+      }
   });
 });
