@@ -1,6 +1,7 @@
 {
   "name": "@kolo/core",
   "version": "0.1.0",
+  "license": "GPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "Shared business rules, local SQLite operations, and event replay",
@@ -19,10 +20,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'",
-    "test:coverage": "node --test --experimental-test-coverage --experimental-strip-types 'src/**/*.test.ts'"
+    "test": "node --test --experimental-strip-types \"src/**/*.test.ts\"",
+    "test:coverage": "node --test --experimental-test-coverage --experimental-strip-types \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@kolo/contracts": "0.1.0"
+    "@kolo/contracts": "0.1.0",
+    "fflate": "0.8.3"
   }
 }

@@ -1,6 +1,7 @@
 {
   "name": "@kolo/contracts",
   "version": "0.1.0",
+  "license": "GPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "Versioned exchange envelopes and runtime validation",
@@ -19,7 +20,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'"
+    "test": "node --test --experimental-strip-types \"src/**/*.test.ts\""
   },
   "dependencies": {
     "zod": "4.6.5"

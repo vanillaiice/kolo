@@ -1,0 +1,11 @@
+import { createRequire } from "node:module";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
+const directory = mkdtempSync(join(tmpdir(), "kolo-desktop-benchmark-"));
+const runtime = createRequire(import.meta.url)("electron");
+const child = spawn(runtime, ["apps/desktop", "--benchmark-smoke"], { stdio: "inherit", env: { ...process.env, KOLO_DESKTOP_SMOKE_DIR: directory } });
+const timer = setTimeout(() => { child.kill("SIGKILL"); }, 120000);
+child.once("error", () => { process.stderr.write("Electron could not start\n"); });
+child.once("close", code => { clearTimeout(timer); rmSync(directory, { recursive: true, force: true }); process.exitCode = code ?? 1; });

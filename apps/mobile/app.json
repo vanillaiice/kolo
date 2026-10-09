@@ -8,10 +8,18 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "android": {
-      "package": "cm.kolo.app",
-      "edgeToEdgeEnabled": true
+      "package": "cm.kolo.app"
     },
-    "plugins": ["expo-sqlite", ["expo-secure-store", { "configureAndroidBackup": true }], "react-native-quick-crypto"],
+    "plugins": [
+      "expo-sqlite",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ],
+      "react-native-quick-crypto"
+    ],
     "experiments": {
       "typedRoutes": false
     }

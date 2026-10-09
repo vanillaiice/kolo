@@ -34,3 +34,10 @@ apps/mobile/ios/build/
 dist/
 coverage/
 *.log
+
+# Desktop staging and release artifacts
+.packaging/
+release/
+
+# Generated demo shop backups (npm run demo:desktop)
+/kolo-demo/

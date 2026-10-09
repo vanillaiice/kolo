@@ -1,0 +1,48 @@
+{
+  "appId": "com.hblabs.kolo",
+  "productName": "KOLO",
+  "directories": {
+    "app": ".packaging/desktop",
+    "output": "release/desktop"
+  },
+  "files": [
+    "dist/**/*",
+    "package.json",
+    "!**/*.map"
+  ],
+  "asar": true,
+  "npmRebuild": false,
+  "artifactName": "KOLO-${version}-${os}-${arch}.${ext}",
+  "electronFuses": {
+    "runAsNode": false,
+    "enableCookieEncryption": true,
+    "enableNodeOptionsEnvironmentVariable": false,
+    "enableNodeCliInspectArguments": false,
+    "enableEmbeddedAsarIntegrityValidation": true,
+    "onlyLoadAppFromAsar": true
+  },
+  "win": {
+    "target": [
+      "nsis",
+      "portable"
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false,
+    "runAfterFinish": false,
+    "artifactName": "KOLO-${version}-win-${arch}-setup.${ext}"
+  },
+  "portable": {
+    "artifactName": "KOLO-${version}-win-${arch}-portable.${ext}"
+  },
+  "linux": {
+    "target": [
+      "AppImage"
+    ],
+    "executableName": "kolo",
+    "category": "Office"
+  }
+}
