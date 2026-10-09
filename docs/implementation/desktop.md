@@ -17,11 +17,13 @@ The first desktop workflow is implemented: standalone setup/pending recovery, lo
 unlock/lock/owner recovery, product creation with optional opening stock, paginated
 catalogue and stock, keyboard barcode entry, fractional cash checkout and saved receipt
 history. The catalogue work package adds product detail editing, archive/restore,
-categories, manual stock additions, damage, shelf counts and stock history. The React DOM screens depend on a replaceable `ShopService`; only the entry
+categories, manual stock additions, damage, shelf counts and stock history. Checkout now
+splits payments across accounts and puts balances on customers, with a customer section
+for details, payments and statements. The React DOM screens depend on a replaceable `ShopService`; only the entry
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Split/credit checkout, customers, suppliers and purchases, finance, reports, returns, staff
+Discounts, suppliers and purchases, finance, reports, returns, staff
 screens, backup/exchange screens, printers and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
 business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
 
@@ -78,10 +80,20 @@ stock is retained. Stable sale IDs and immutable line/payment facts distinguish 
 retries from changed requests, including across restart. Creation permission is rechecked
 on every retry, while revoked receipt-view permission does not duplicate a saved sale.
 
-Cash checkout records the exact computed total in one active cash account. Split
-payments, credit, discounts and tender/change entry remain subsequent F5 work. A zero
-priced sale records no payment. The selected account is still validated. Payment-account
-queries return names only, with pagination; they disclose no balances.
+Checkout takes up to eight payments, one per active account of any kind, and an optional
+active customer. Anything left unpaid goes on that customer's ledger: it needs
+`customers.credit`, and a configured limit is enforced unless the actor holds
+`customers.credit_override` (refused as `credit_limit`). Overpayment and credit without a
+customer are refused; cash received and change due are computed in the till only and are
+not stored. A retry matches on actor, lines, payment set (order-insensitive) and customer.
+The legacy single `accountId` request still records the exact total in one cash account.
+A zero-priced sale records no payment. Payment-account queries return names and kinds,
+never balances. Sale discounts remain subsequent F5 work.
+
+Customers are created with a stable request ID and edited/archived from their displayed
+version, as products are. Archived customers cannot buy or pay. A payment's request ID is
+its ledger entry ID; paying more than is owed leaves the customer in advance. Statements
+are newest-first, bounded and signed (sales positive, payments negative).
 
 Committed domain invalidations send no business data. DOM views reread current bounded
 pages and drop obsolete async responses. Failed commands retain forms/cart. After an
@@ -122,8 +134,7 @@ shelf and moved nothing. History is newest-first and bounded under `inventory.vi
 
 ## Remaining F5 packages
 
-- Operational breadth: split/credit
-  checkout, customers/collections/statements, suppliers/purchases/payments, accounts/
+- Operational breadth: discounts, suppliers/purchases/payments, accounts/
   transfers/reconciliation, expenses/reversals, reports and sale/purchase returns.
 - Local administration and recovery: staff/grants, backup/restore, pairing/file
   exchange and actionable import/conflict diagnostics through native dialogs.

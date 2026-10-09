@@ -181,7 +181,8 @@ SQLite/keystore, scanner, and chosen receipt hardware are tested on devices.
 
 **Status:** Active phase. The first offline setup → product → cash sale → receipt →
 restart workflow is implemented and verified in actual Linux Electron, followed by product
-editing/archive, categories, manual stock movements, counts and history. Named validated
+editing/archive, categories, manual stock movements, counts and history, split/credit checkout
+and customers with payments and statements. Named validated
 IPC, opaque host authority, recovery, bounded reads and reusable React DOM screens
 are in place. Broader management/transfer UI and Windows/hardware acceptance remain.
 See [desktop implementation](desktop.md). Browser delivery still needs an explicit

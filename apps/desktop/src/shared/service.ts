@@ -5,7 +5,7 @@ import type { Receipt, Page, PageQuery } from "@kolo/core/application/queries";
 export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" |
   "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" |
   "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" |
-  "request_conflict" | "price_changed" | "storage_failed";
+  "request_conflict" | "price_changed" | "storage_failed" | "credit_limit";
 /** Serializable results make transport and operation failures explicit. */
 export type Result<T> = { readonly ok: true; readonly value: T } |
   { readonly ok: false; readonly error: { readonly code: FailureCode; readonly retryAt?: string } };
@@ -67,10 +67,33 @@ export interface StockMoveRequest extends SessionRequest {
 export interface StockCountRequest extends SessionRequest {
   readonly requestId: string; readonly productId: string; readonly countedThousandths: number; readonly reason: string;
 }
-/** Cash checkout carries only selected facts; the host derives actor, shop, time, stock and event IDs. */
+/**
+ * Checkout carries only selected facts; the host derives actor, shop, time, stock and event IDs.
+ * `payments` (one per account) may be split and may leave a balance on the named customer's
+ * account. The legacy single `accountId` form records the exact total in that cash account.
+ */
 export interface CheckoutRequest extends SessionRequest {
-  readonly requestId: string; readonly accountId: string;
+  readonly requestId: string; readonly accountId?: string;
+  readonly payments?: readonly { readonly accountId: string; readonly amountMinor: number }[];
+  readonly customerId?: string;
   readonly lines: readonly { readonly productId: string; readonly quantity: number; readonly unitPriceMinor: number }[];
+}
+/** Account names and kinds for taking money, never balances. */
+export interface PaymentAccountView { readonly id: string; readonly name: string; readonly kind: "CASH" | "MOBILE_MONEY" | "BANK" | "CARD" | "OTHER"; }
+/** Customer details and current balance (positive: owed to the shop; negative: paid in advance). */
+export interface CustomerView {
+  readonly id: string; readonly name: string; readonly phone?: string; readonly address?: string; readonly notes?: string;
+  /** Absent: no limit decided. Zero: no credit allowed. */
+  readonly creditLimitMinor?: number;
+  readonly outstandingMinor: number; readonly active: boolean; readonly version: string;
+}
+/** Editable customer details; absent optional fields are cleared. */
+export interface CustomerDetails {
+  readonly name: string; readonly phone?: string; readonly address?: string; readonly notes?: string; readonly creditLimitMinor?: number;
+}
+/** One immutable customer ledger entry, newest first; payments are negative. */
+export interface StatementEntryView {
+  readonly id: string; readonly occurredAt: string; readonly type: string; readonly amountMinor: number; readonly saleId?: string; readonly note?: string;
 }
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
 export interface ShopService {
@@ -112,6 +135,20 @@ export interface ShopService {
   countStock(input: StockCountRequest): Promise<Result<{ readonly deltaThousandths: number; readonly product: ProductView }>>;
   /** Newest-first bounded stock movements of one product under inventory-view authority. */
   stockHistory(input: SessionRequest & { readonly productId: string; readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<Page<StockMovementView>>>;
+  /** Bounded payment account names and kinds for split checkout and collections. */
+  listPaymentAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<PaymentAccountView>>>;
+  /** Bounded customers with balances under customers.view, optionally including archived ones. */
+  listCustomers(input: CatalogueQuery): Promise<Result<Page<CustomerView>>>;
+  /** One customer, archived or not, with current balance. */
+  getCustomer(input: SessionRequest & { readonly customerId: string }): Promise<Result<CustomerView>>;
+  /** Creates a customer named by the request ID; matching retries return it. */
+  createCustomer(input: SessionRequest & CustomerDetails & { readonly requestId: string }): Promise<Result<CustomerView>>;
+  /** Edits, archives or restores a customer from the displayed version. */
+  updateCustomer(input: SessionRequest & CustomerDetails & { readonly customerId: string; readonly version: string; readonly active: boolean }): Promise<Result<CustomerView>>;
+  /** Takes a customer's payment into one account; the request ID names the ledger entry. */
+  receiveCustomerPayment(input: SessionRequest & { readonly requestId: string; readonly customerId: string; readonly accountId: string; readonly amountMinor: number; readonly note?: string }): Promise<Result<CustomerView>>;
+  /** Newest-first bounded customer ledger. */
+  customerStatement(input: SessionRequest & { readonly customerId: string; readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<Page<StatementEntryView>>>;
   /** Bounded account names for cash checkout, without disclosing financial balances. */
   listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly name: string }>>>;
   /** Atomic cash sale; identical retries return the original saved sale ID. */

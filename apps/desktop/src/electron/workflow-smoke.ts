@@ -85,18 +85,30 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await wait("document.querySelector('.detail-layout h2')?.textContent==='Rice 25kg' && document.querySelector('#edit-name')===null", "product edit");
     await press(".tabs button", "Categories"); await fill("#category-name", "Grain"); await submit("#category-name");
     await wait("Array.from(document.querySelectorAll('tbody')).some(element=>element.textContent.includes('Grain'))", "category created");
+    // Credit: a customer with a limit buys with part payment, then pays some of the balance.
+    await navigate("Customers"); await click(".section-heading .primary"); await fill("#customer-name", "Awa"); await fill("#customer-limit", "1000"); await submit("#customer-name");
+    await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.detail-layout h2')[0]?.textContent==='Awa';})()", "customer created");
+    await navigate("Till"); await wait("document.querySelector('.product-tile')?.textContent.includes('Rice 25kg')", "edited product in till");
+    await click(".product-tile"); await fill("#customer-search", "Aw"); await wait("document.querySelector('.customer-results button')!==null", "customer search");
+    await click(".customer-results button"); await wait("document.querySelector('.customer-choice')?.textContent.includes('Awa')", "customer chosen");
+    await fill(".payment-row input", "200"); await wait("Array.from(document.querySelectorAll('.settlement-line')).some(element=>element.textContent.includes('300'))", "credit remainder");
+    await fill("#cash-received", "500"); await wait("document.querySelector('.change-line')?.textContent.includes('300')", "change due");
+    await click(".checkout"); await wait("document.querySelector('.receipt-paper')?.textContent.includes('Awa') && document.querySelector('.receipt-owing')?.textContent.includes('300')", "credit receipt");
+    await navigate("Customers"); await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.facts')[0]?.textContent.includes('300');})()", "customer balance");
+    await fill("#payment-amount", "100"); await submit("#payment-amount");
+    await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.notice.success').length===1 && v('.facts')[0]?.textContent.includes('200') && v('.detail-layout tbody tr').length===2;})()", "customer payment");
     assert.equal(await evaluate("document.querySelector('.notice.error')===null"), true);
     await click(".topbar-actions .secondary"); await wait("document.querySelector('#local-secret')!==null");
-    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit and category passed\n");
+    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale and customer payment passed\n");
   } else if (phase === "reopen") {
     await wait("document.querySelector('#local-secret')!==null");
     const state = await evaluate<string>("window.kolo.getWorkspace().then(result=>result.value.state)"); assert.equal(state, "locked");
     await fill("#local-secret", "654321"); await submit("#local-secret");
     await wait("document.querySelector('#till-search')!==null");
     await navigate("Receipts"); await wait("document.querySelector('.receipt-choice')!==null"); await click(".receipt-choice");
-    await wait("document.querySelector('.receipt-paper')?.textContent.includes('250')");
+    await wait("document.querySelector('.receipt-paper')?.textContent.includes('Awa')");
     const stateAfter = await evaluate<{ stock: number; total: number }>(`(async()=>{const {sessionId}=(await window.kolo.getWorkspace()).value;const history=(await window.kolo.listReceipts({sessionId})).value;return {stock:(await window.kolo.listProducts({sessionId})).value.items[0].onHandThousandths,total:(await window.kolo.getReceipt({sessionId,saleId:history.items[0].id})).value.totalMinor};})()`);
-    assert.deepEqual(stateAfter, { stock: 4000, total: 250 });
+    assert.deepEqual(stateAfter, { stock: 3000, total: 500 });
     process.stdout.write("Actual Electron process restart, locked boot, credential unlock and persisted receipt/stock passed\n");
   } else throw new Error("unknown workflow smoke phase");
 }

@@ -2,19 +2,32 @@ import { createWorkspace, currentInstallation, recoverWorkspaceSetup, resumeWork
 import { ownerRecoveryCode, recoverOwnerAccess, resumeOwnerRecovery } from "@kolo/core/identity/recovery";
 import { WorkspaceError, type OperationContext, type WorkspacePorts } from "@kolo/core/identity/types";
 import type { Permission } from "@kolo/core/identity/permissions";
-import { capabilities, products, scannedProduct, productStock, paymentAccounts, receipt, receipts, categories, stockHistory } from "@kolo/core/application/queries";
-import { saveProduct, adjustStock, completeSale, countStock, saveCategory } from "@kolo/core/application/operations";
+import { capabilities, products, scannedProduct, productStock, paymentAccounts, receipt, receipts, categories, stockHistory, customers, statement } from "@kolo/core/application/queries";
+import { saveProduct, adjustStock, completeSale, countStock, saveCategory, saveCustomer, receiveCustomerPayment } from "@kolo/core/application/operations";
+import { customerOf, balanceOf, wouldExceedCreditLimit, type Customer } from "@kolo/core/data/customers/customers";
+import type { Queryable } from "@kolo/core/data/database/driver";
 import { productOf, type Product } from "@kolo/core/data/products/products";
 import { categoryOf, type Category } from "@kolo/core/data/products/categories";
 import { accountOf } from "@kolo/core/data/finance/accounts";
-import { subtotalOf } from "@kolo/core/rules/pricing";
+import { subtotalOf, saleTotals } from "@kolo/core/rules/pricing";
 import { RuleError } from "@kolo/core/rules/amounts";
 import { subscribeChanges } from "@kolo/core/data/database/changes";
 import { sealPendingEvents } from "@kolo/core/application/exchange";
 import type { ExchangeCrypto } from "@kolo/core/exchange/types";
-import type { CategoryView, CheckoutRequest, FailureCode, ProductView, Result, ShopService, WorkspaceView } from "../shared/service.js";
+import type { CategoryView, CustomerDetails, CustomerView, FailureCode, ProductView, Result, ShopService, WorkspaceView } from "../shared/service.js";
 import { object, text, uuid, whole, boolean, page, optional } from "./validation.ts";
 
+const customerFields = ["name", "phone", "address", "notes", "creditLimitMinor"] as const;
+function customerDetails(data: Record<string, unknown>): CustomerDetails {
+  const phone = optional(data["phone"], value => text(value, 40)), address = optional(data["address"], value => text(value, 200));
+  const notes = optional(data["notes"], value => text(value, 500)), creditLimitMinor = optional(data["creditLimitMinor"], value => whole(value));
+  return { name: text(data["name"]), ...(phone === undefined ? {} : { phone }), ...(address === undefined ? {} : { address }),
+    ...(notes === undefined ? {} : { notes }), ...(creditLimitMinor === undefined ? {} : { creditLimitMinor }) };
+}
+function sameDetails(stored: Customer, details: CustomerDetails): boolean {
+  return stored.name === details.name && stored.phone === details.phone && stored.address === details.address &&
+    stored.notes === details.notes && stored.creditLimitMinor === details.creditLimitMinor;
+}
 class CommandError extends Error {
   readonly code: FailureCode;
   constructor(code: FailureCode) { super(code); this.code = code; }
@@ -35,7 +48,7 @@ export class DesktopApplication implements ShopService {
   constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto) {
     this.ports = ports; this.crypto = crypto;
     lockWorkspace(ports.database);
-    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "accounts", "authority"], () => this.#notify());
+    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "accounts", "authority"], () => this.#notify());
   }
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   async initialize(): Promise<void> {
@@ -297,16 +310,37 @@ export class DesktopApplication implements ShopService {
       return { ...result, items: result.items.filter(account => account.kind === "CASH").map(({ id, name }) => ({ id, name })) };
     });
   }
-  /** Host-bound atomic cash sale; scoped matching retries return the original ID and differing content is refused. */
+  /** Account names and kinds for payments; balances stay behind finance authority. */
+  listPaymentAccounts(input: unknown): ReturnType<ShopService["listPaymentAccounts"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "term", "after", "limit"]), context = this.#actor(data);
+      const result = paymentAccounts(context, page(data));
+      return { ...result, items: result.items.map(({ id, name, kind }) => ({ id, name, kind })) };
+    });
+  }
+  /**
+   * Host-bound atomic sale with split payments and optional customer credit. Matching retries
+   * (same actor, lines, payments and customer) return the original ID; differing content is refused.
+   * The legacy `accountId` form records the exact total in one active cash account.
+   */
   checkout(input: unknown): ReturnType<ShopService["checkout"]> {
     return this.#run(() => {
-      const data = object(input, ["sessionId", "requestId", "accountId", "lines"]), context = this.#actor(data, ["sales.create", "products.view"]);
-      const id = uuid(data["requestId"]), accountId = uuid(data["accountId"]);
+      const data = object(input, ["sessionId", "requestId", "accountId", "payments", "customerId", "lines"]), context = this.#actor(data, ["sales.create", "products.view"]);
+      const id = uuid(data["requestId"]), customerId = optional(data["customerId"], uuid);
       if (!Array.isArray(data["lines"]) || data["lines"].length < 1 || data["lines"].length > 200) throw new WorkspaceError("invalid_input");
       const lines = data["lines"].map(value => { const item = object(value, ["productId", "quantity", "unitPriceMinor"]);
         return { productId: uuid(item["productId"]), quantity: whole(item["quantity"], 1), unitPriceMinor: whole(item["unitPriceMinor"]) }; });
       if (new Set(lines.map(line => line.productId)).size !== lines.length) throw new WorkspaceError("invalid_input");
-      const request: CheckoutRequest = { sessionId: String(data["sessionId"]), requestId: id, accountId, lines };
+      const total = subtotalOf(lines), legacy = data["payments"] === undefined;
+      if (legacy === (data["accountId"] === undefined)) throw new WorkspaceError("invalid_input");
+      let payments: { accountId: string; amountMinor: number }[];
+      if (legacy) payments = total > 0 ? [{ accountId: uuid(data["accountId"]), amountMinor: total }] : [];
+      else {
+        if (!Array.isArray(data["payments"]) || data["payments"].length > 8) throw new WorkspaceError("invalid_input");
+        payments = data["payments"].map(value => { const item = object(value, ["accountId", "amountMinor"]); return { accountId: uuid(item["accountId"]), amountMinor: whole(item["amountMinor"], 1) }; });
+        if (new Set(payments.map(payment => payment.accountId)).size !== payments.length) throw new WorkspaceError("invalid_input");
+      }
+      const settled = saleTotals({ lines, payments, customerId });
       return this.ports.database.transaction(tx => {
         const saved = tx.get(`SELECT business_id,user_id,device_id,discount_minor,customer_id FROM sales WHERE id=?`, [id]);
         if (saved !== undefined) {
@@ -315,15 +349,18 @@ export class DesktopApplication implements ShopService {
           // receipt-view permission is revoked. No receipt facts are returned here.
           const originalLines = tx.all(`SELECT product_id,quantity,unit_price_minor,discount_minor FROM sale_items WHERE business_id=? AND sale_id=?`, [context.businessId,id]);
           const originalPayments = tx.all(`SELECT account_id,amount_minor FROM sale_payments WHERE business_id=? AND sale_id=?`, [context.businessId,id]);
-          const original = originalLines.map(line=>({productId:String(line["product_id"]),quantity:Number(line["quantity"]),unitPriceMinor:Number(line["unit_price_minor"])}));
-          const sorted = (items: readonly { productId: string; quantity: number; unitPriceMinor: number }[]): string => JSON.stringify([...items].sort((a,b)=>a.productId.localeCompare(b.productId)).map(({productId,quantity,unitPriceMinor})=>({productId,quantity,unitPriceMinor})));
-          const total = subtotalOf(lines);
-          if (saved["discount_minor"] !== 0 || saved["customer_id"] !== null || originalLines.some(line=>line["discount_minor"]!==0) || sorted(original) !== sorted(request.lines) ||
-            originalPayments.length !== (total > 0 ? 1 : 0) || total > 0 && (originalPayments[0]?.["account_id"] !== accountId || originalPayments[0]?.["amount_minor"] !== total)) throw new CommandError("request_conflict");
+          const sorted = (items: readonly Record<string, unknown>[]): string => JSON.stringify(items.map(item => JSON.stringify(item)).sort());
+          if (saved["discount_minor"] !== 0 || saved["customer_id"] !== (customerId ?? null) || originalLines.some(line=>line["discount_minor"]!==0) ||
+            sorted(originalLines.map(line=>({productId:line["product_id"],quantity:line["quantity"],unitPriceMinor:line["unit_price_minor"]}))) !== sorted(lines) ||
+            sorted(originalPayments.map(payment=>({accountId:payment["account_id"],amountMinor:payment["amount_minor"]}))) !== sorted(payments)) throw new CommandError("request_conflict");
           return { saleId: id };
         }
-        const account = accountOf(tx, context.businessId, accountId);
-        if (account?.active !== true || account.kind !== "CASH") throw new WorkspaceError("scope_mismatch");
+        if (legacy) { const account = accountOf(tx, context.businessId, uuid(data["accountId"])); if (account?.active !== true || account.kind !== "CASH") throw new WorkspaceError("scope_mismatch"); }
+        if (settled.outstandingMinor > 0) {
+          const permissions = capabilities(context), customer = customerOf(tx, context.businessId, customerId!);
+          if (!permissions.includes("customers.credit")) throw new WorkspaceError("permission_denied");
+          if (customer?.active === true && !permissions.includes("customers.credit_override") && wouldExceedCreditLimit(tx, context.businessId, customer, settled.outstandingMinor)) throw new CommandError("credit_limit");
+        }
         const at = this.ports.now(), recordedLines = lines.map(line => {
           const product = productOf(tx, context.businessId, line.productId);
           if (product?.active !== true) throw new WorkspaceError("scope_mismatch");
@@ -331,11 +368,84 @@ export class DesktopApplication implements ShopService {
           return { ...line, id: this.ports.newId(), movementId: this.ports.newId(), name: product.name,
             unitCostMinor: product.purchasePriceMinor, taxRateBasisPoints: product.taxRateBasisPoints };
         });
-        const total = subtotalOf(recordedLines);
-        completeSale(context, { id, number: `V-${id}`, occurredAt: at, branchId: unlockedActor(context).branchId,
-          eventId: this.ports.newId(), lines: recordedLines, payments: total > 0 ? [{ id: this.ports.newId(), accountId, amountMinor: total }] : [] });
+        completeSale(context, { id, number: `V-${id}`, occurredAt: at, branchId: unlockedActor(context).branchId, customerId,
+          eventId: this.ports.newId(), lines: recordedLines, payments: payments.map(payment => ({ id: this.ports.newId(), ...payment })),
+          ...(settled.outstandingMinor > 0 ? { creditTransactionId: this.ports.newId() } : {}) });
         return { saleId: id };
       });
+    });
+  }
+  /** Bounded customers with balances under customers.view. */
+  listCustomers(input: unknown): ReturnType<ShopService["listCustomers"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "term", "after", "limit", "includeInactive"]), context = this.#actor(data);
+      const result = customers(context, page(data)); return { ...result, items: result.items.map(item => this.#customer(item, item.outstandingMinor)) };
+    });
+  }
+  /** One scoped customer under customers.view, archived or not. */
+  getCustomer(input: unknown): ReturnType<ShopService["getCustomer"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "customerId"]), context = this.#actor(data, ["customers.view"]);
+      return this.#storedCustomer(this.ports.database, context, uuid(data["customerId"]));
+    });
+  }
+  /** Creates a customer named by its request ID; only this actor's identical creation counts as a retry. */
+  createCustomer(input: unknown): ReturnType<ShopService["createCustomer"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "requestId", ...customerFields]), context = this.#actor(data, ["customers.manage", "customers.view"]);
+      const id = uuid(data["requestId"]), details = customerDetails(data), at = this.ports.now();
+      return this.ports.database.transaction(tx => {
+        if (tx.get(`SELECT 1 FROM customers WHERE id=?`, [id]) !== undefined) {
+          const original = customerOf(tx, context.businessId, id);
+          const actor = tx.get(`SELECT user_id FROM local_audit WHERE business_id=? AND device_id=? AND action='CUSTOMER_SAVED' AND entity_id=? ORDER BY occurred_at LIMIT 1`, [context.businessId, context.deviceId, id]);
+          if (original === undefined || actor?.["user_id"] !== context.userId || original.createdAt !== original.updatedAt || !sameDetails(original, details)) throw new CommandError("request_conflict");
+          return this.#storedCustomer(tx, context, id);
+        }
+        saveCustomer(context, { id, ...details, active: true, createdAt: at, updatedAt: at });
+        return this.#storedCustomer(tx, context, id);
+      });
+    });
+  }
+  /** Edits, archives or restores a customer from the displayed version; identical requests write nothing. */
+  updateCustomer(input: unknown): ReturnType<ShopService["updateCustomer"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "customerId", "version", "active", ...customerFields]), context = this.#actor(data, ["customers.manage", "customers.view"]);
+      const id = uuid(data["customerId"]), version = text(data["version"], 64), active = boolean(data["active"]), details = customerDetails(data);
+      return this.ports.database.transaction(tx => {
+        const stored = customerOf(tx, context.businessId, id);
+        if (stored === undefined) throw new WorkspaceError("scope_mismatch");
+        if (sameDetails(stored, details) && stored.active === active) return this.#storedCustomer(tx, context, id);
+        if (stored.updatedAt !== version) throw new CommandError("request_conflict");
+        if (!saveCustomer(context, { id, ...details, active, createdAt: stored.createdAt, updatedAt: this.#nextVersion(stored.updatedAt) })) throw new CommandError("request_conflict");
+        return this.#storedCustomer(tx, context, id);
+      });
+    });
+  }
+  /** Takes a payment against an active customer's account; the request ID is the ledger entry ID. */
+  receiveCustomerPayment(input: unknown): ReturnType<ShopService["receiveCustomerPayment"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "requestId", "customerId", "accountId", "amountMinor", "note"]), context = this.#actor(data, ["customers.pay", "customers.view"]);
+      const id = uuid(data["requestId"]), customerId = uuid(data["customerId"]), accountId = uuid(data["accountId"]), amountMinor = whole(data["amountMinor"], 1);
+      const note = optional(data["note"], value => text(value, 200));
+      return this.ports.database.transaction(tx => {
+        const saved = tx.get(`SELECT * FROM customer_transactions WHERE id=?`, [id]);
+        if (saved !== undefined) {
+          if (saved["business_id"] !== context.businessId || saved["user_id"] !== context.userId || saved["device_id"] !== context.deviceId || saved["customer_id"] !== customerId ||
+            saved["account_id"] !== accountId || saved["amount_minor"] !== -amountMinor || (saved["reason"] ?? undefined) !== note) throw new CommandError("request_conflict");
+        } else receiveCustomerPayment(context, { id, customerId, accountId, amountMinor, ...(note === undefined ? {} : { note }),
+          occurredAt: this.ports.now(), eventId: this.ports.newId(), branchId: unlockedActor(context).branchId });
+        return this.#storedCustomer(tx, context, customerId);
+      });
+    });
+  }
+  /** Newest-first bounded customer ledger with signed amounts. */
+  customerStatement(input: unknown): ReturnType<ShopService["customerStatement"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "customerId", "after", "limit"]), context = this.#actor(data);
+      const result = statement(context, "customer", uuid(data["customerId"]), page(data));
+      return { ...result, items: result.items.map(row => ({ id: String(row["id"]), occurredAt: String(row["occurred_at"]), type: String(row["type"]), amountMinor: Number(row["amount_minor"]),
+        ...(row["reference_kind"] === "SALE" && typeof row["reference_id"] === "string" ? { saleId: row["reference_id"] } : {}),
+        ...(typeof row["reason"] === "string" && row["reason"] !== "" ? { note: row["reason"] } : {}) })) };
     });
   }
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
@@ -345,6 +455,16 @@ export class DesktopApplication implements ShopService {
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
   listReceipts(input: unknown): ReturnType<ShopService["listReceipts"]> {
     return this.#run(() => { const data = object(input, ["sessionId", "term", "after", "limit"]); return receipts(this.#actor(data), page(data)); });
+  }
+  #storedCustomer(tx: Queryable, context: OperationContext, id: string): CustomerView {
+    const customer = customerOf(tx, context.businessId, id);
+    if (customer === undefined) throw new WorkspaceError("scope_mismatch");
+    return this.#customer(customer, balanceOf(tx, context.businessId, id).outstandingMinor);
+  }
+  #customer(customer: Customer, outstandingMinor: number): CustomerView {
+    return { id: customer.id, name: customer.name, outstandingMinor, active: customer.active, version: customer.updatedAt,
+      ...(customer.phone === undefined ? {} : { phone: customer.phone }), ...(customer.address === undefined ? {} : { address: customer.address }),
+      ...(customer.notes === undefined ? {} : { notes: customer.notes }), ...(customer.creditLimitMinor === undefined ? {} : { creditLimitMinor: customer.creditLimitMinor }) };
   }
   #category(category: Category): CategoryView {
     return { id: category.id, name: category.name, active: category.active, version: category.updatedAt };

@@ -11,6 +11,7 @@ import { localCredentialsOnDesktop, desktopExchangeCrypto, type NativeSafeStorag
 import { balanceOfAccount } from "@kolo/core/data/finance/cash";
 import { createLocalMember } from "@kolo/core/identity/members";
 import { unlockWorkspace } from "@kolo/core/identity/workspace";
+import { saveAccount } from "@kolo/core/application/operations";
 import type { CredentialPort, WorkspacePorts } from "@kolo/core/identity/types";
 import type { ProductRequest, Result, WorkspaceView } from "../shared/service.ts";
 
@@ -271,5 +272,96 @@ it("stock moves and counts are retry-safe, never recount after later sales, and 
     assert.equal(all.length,new Set(all.map(item=>item.id)).size);assert.equal(all.reduce((sum,item)=>sum+item.quantityThousandths,0),10000);
     assert.deepEqual(all.filter(item=>item.type==="DAMAGE").map(item=>[item.quantityThousandths,item.reason]),[[-10000,"Flood"]]);
     failure(await f.application.stockHistory({sessionId:sessionId!,productId:randomUUID()}),"scope_mismatch");
+  }finally{await f.dispose();}
+});
+async function wallet(f:ReturnType<typeof fixture>,workspace:WorkspaceView):Promise<string>{
+  const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports),id=randomUUIDv7(),at=f.ports.now();
+  saveAccount(context,{id,name:"Wallet",kind:"MOBILE_MONEY",currency:"XAF",active:true,createdAt:at,updatedAt:at});return id;
+}
+it("split and credit checkout records payments per account, leaves the balance on the customer and retries by content",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),momo=await wallet(f,workspace),sessionId=value(await f.application.unlock({userId:workspace.members[0]!.id,secret:"654321"})).sessionId!;
+    const item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:10000}))),accounts=value(await f.application.listPaymentAccounts({sessionId})).items;
+    assert.deepEqual(accounts.map(account=>account.kind).sort(),["CASH","MOBILE_MONEY"]);const cash=accounts.find(account=>account.kind==="CASH")!.id;
+    const customer=value(await f.application.createCustomer({sessionId,requestId:randomUUID(),name:"Awa",phone:"670000000",creditLimitMinor:1000}));
+    const request={sessionId,requestId:randomUUID(),customerId:customer.id,lines:[{productId:item.id,quantity:3000,unitPriceMinor:500}],payments:[{accountId:cash,amountMinor:400},{accountId:momo,amountMinor:300}]};
+    const sale=value(await f.application.checkout(request));
+    assert.equal(value(await f.application.checkout({...request,payments:[...request.payments].reverse()})).saleId,sale.saleId);
+    const other=value(await f.application.createCustomer({sessionId,requestId:randomUUID(),name:"Binta"}));
+    failure(await f.application.checkout({...request,customerId:undefined}),"invalid_input");
+    for(const changed of [{customerId:other.id},{payments:[{accountId:cash,amountMinor:700}]},{payments:[{accountId:cash,amountMinor:400}]}])failure(await f.application.checkout({...request,...changed}),"request_conflict");
+    const receipt=value(await f.application.getReceipt({sessionId,saleId:sale.saleId}));
+    assert.deepEqual([receipt.totalMinor,receipt.paidMinor,receipt.outstandingMinor,receipt.customerName,receipt.payments.length],[1500,700,800,"Awa",2]);
+    assert.equal(value(await f.application.getCustomer({sessionId,customerId:customer.id})).outstandingMinor,800);
+    const ledger=value(await f.application.customerStatement({sessionId,customerId:customer.id})).items;
+    assert.deepEqual(ledger.map(entry=>[entry.type,entry.amountMinor,entry.saleId]),[["CREDIT_SALE",800,sale.saleId]]);
+    assert.equal(f.database.get("SELECT count(*) AS n FROM sales")!["n"],1);
+    const full={sessionId,requestId:randomUUID(),lines:[{productId:item.id,quantity:1000,unitPriceMinor:500}],payments:[{accountId:momo,amountMinor:500}]};
+    value(await f.application.checkout(full));assert.equal(value(await f.application.listProducts({sessionId})).items[0]!.onHandThousandths,6000);
+    for(const bad of [{payments:[{accountId:cash,amountMinor:600}]},{payments:[]},{payments:[{accountId:cash,amountMinor:200},{accountId:cash,amountMinor:300}]},
+      {payments:new Array(9).fill({accountId:cash,amountMinor:1})},{payments:[{accountId:cash,amountMinor:0}]},{accountId:cash},{payments:undefined},{customerId:"x"}])
+      failure(await f.application.checkout({...full,requestId:randomUUID(),...bad}),"invalid_input");
+    failure(await f.application.checkout({...full,requestId:randomUUID(),payments:[{accountId:randomUUID(),amountMinor:500}]}),"scope_mismatch");
+    assert.equal(f.database.get("SELECT count(*) AS n FROM sales")!["n"],2);
+  }finally{await f.dispose();}
+});
+it("credit needs permission and respects the limit unless overridden; nothing is written when refused",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:10000})));
+    const cash=value(await f.application.listPaymentAccounts({sessionId})).items[0]!.id;
+    const limited=value(await f.application.createCustomer({sessionId,requestId:randomUUID(),name:"Limited",creditLimitMinor:1000}));
+    const none=value(await f.application.createCustomer({sessionId,requestId:randomUUID(),name:"Cash only",creditLimitMinor:0}));
+    const open=value(await f.application.createCustomer({sessionId,requestId:randomUUID(),name:"Regular"}));
+    const sale=(session:string,customerId:string|undefined,quantity:number,paid:number)=>f.application.checkout({sessionId:session,requestId:randomUUID(),...(customerId===undefined?{}:{customerId}),
+      lines:[{productId:item.id,quantity,unitPriceMinor:500}],payments:paid===0?[]:[{accountId:cash,amountMinor:paid}]});
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const managerId=await createLocalMember(context,{name:"Manager",role:"MANAGER",secret:"765432"}),cashierId=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"876543"});
+    f.database.run(`UPDATE local_memberships SET revoked='["customers.credit_override"]',revision=revision+1 WHERE user_id=?`,[managerId]);
+    const manager=value(await f.application.unlock({userId:managerId,secret:"765432"})).sessionId!;
+    value(await sale(manager,limited.id,2000,0));failure(await sale(manager,limited.id,1000,0),"credit_limit");
+    failure(await sale(manager,none.id,1000,500-1),"credit_limit");value(await sale(manager,none.id,1000,500));
+    value(await sale(manager,open.id,10000,0));failure(await sale(manager,undefined,1000,0),"invalid_input");
+    assert.equal(f.database.get("SELECT count(*) AS n FROM sales")!["n"],3);
+    const ownerSession=value(await f.application.unlock({userId:workspace.members.find(member=>member.name==="Owner")!.id,secret:"654321"})).sessionId!;
+    value(await sale(ownerSession,limited.id,1000,0));assert.equal(value(await f.application.getCustomer({sessionId:ownerSession,customerId:limited.id})).outstandingMinor,1500);
+    const cashier=value(await f.application.unlock({userId:cashierId,secret:"876543"})).sessionId!;
+    failure(await sale(cashier,open.id,1000,0),"permission_denied");value(await sale(cashier,open.id,1000,500));
+    failure(await f.application.createCustomer({sessionId:cashier,requestId:randomUUID(),name:"New"}),"permission_denied");
+    assert.equal(f.database.get("SELECT count(*) AS n FROM sales")!["n"],5);
+  }finally{await f.dispose();}
+});
+it("customer details, archive and payments are versioned, retry-safe, scoped and roll back on failure",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false})));
+    const cash=value(await f.application.listPaymentAccounts({sessionId})).items[0]!.id,request={sessionId,requestId:randomUUID(),name:"Awa",notes:"Market"};
+    const created=value(await f.application.createCustomer(request));
+    assert.equal(value(await f.application.createCustomer(request)).id,created.id);failure(await f.application.createCustomer({...request,phone:"1"}),"request_conflict");
+    for(const bad of [{name:" "},{phone:"9".repeat(41)},{creditLimitMinor:-1},{creditLimitMinor:1.5},{businessId:randomUUID()}])failure(await f.application.createCustomer({...request,requestId:randomUUID(),...bad}),"invalid_input");
+    const edit={sessionId,customerId:created.id,version:created.version,name:"Awa N.",phone:"690000000",active:true};
+    const edited=value(await f.application.updateCustomer(edit));assert.deepEqual([edited.name,edited.phone,edited.notes],["Awa N.","690000000",undefined]);
+    assert.equal(value(await f.application.updateCustomer(edit)).version,edited.version);failure(await f.application.updateCustomer({...edit,name:"Other"}),"request_conflict");
+    value(await f.application.checkout({sessionId,requestId:randomUUID(),customerId:created.id,lines:[{productId:item.id,quantity:2000,unitPriceMinor:500}],payments:[]}));
+    const pay={sessionId,requestId:randomUUID(),customerId:created.id,accountId:cash,amountMinor:300,note:"Friday"};
+    assert.equal(value(await f.application.receiveCustomerPayment(pay)).outstandingMinor,700);assert.equal(value(await f.application.receiveCustomerPayment(pay)).outstandingMinor,700);
+    for(const changed of [{amountMinor:400},{note:undefined},{accountId:randomUUID()}])failure(await f.application.receiveCustomerPayment({...pay,...changed}),"request_conflict");
+    for(const bad of [{amountMinor:0},{amountMinor:-5},{note:"x".repeat(201)}])failure(await f.application.receiveCustomerPayment({...pay,requestId:randomUUID(),...bad}),"invalid_input");
+    // Paying more than is owed leaves the customer in credit with the shop.
+    assert.equal(value(await f.application.receiveCustomerPayment({...pay,requestId:randomUUID(),amountMinor:1000,note:undefined})).outstandingMinor,-300);
+    f.database.run(`CREATE TRIGGER fail_payment BEFORE INSERT ON local_audit WHEN NEW.action='CUSTOMER_PAYMENT' BEGIN SELECT RAISE(ABORT,'failpoint'); END`);
+    const failed={...pay,requestId:randomUUID(),note:undefined};failure(await f.application.receiveCustomerPayment(failed),"storage_failed");
+    assert.equal(value(await f.application.getCustomer({sessionId,customerId:created.id})).outstandingMinor,-300);
+    f.database.run("DROP TRIGGER fail_payment");assert.equal(value(await f.application.receiveCustomerPayment(failed)).outstandingMinor,-600);
+    const page=value(await f.application.customerStatement({sessionId,customerId:created.id,limit:2})),rest=value(await f.application.customerStatement({sessionId,customerId:created.id,after:page.next!}));
+    assert.deepEqual([...page.items,...rest.items].map(entry=>entry.amountMinor).reduce((sum,amount)=>sum+amount,0),-600);
+    assert.ok([...page.items,...rest.items].some(entry=>entry.note==="Friday"));
+    const archived=value(await f.application.updateCustomer({...edit,version:edited.version,active:false}));assert.equal(archived.active,false);
+    assert.equal(value(await f.application.listCustomers({sessionId})).items.length,0);assert.equal(value(await f.application.listCustomers({sessionId,includeInactive:true})).items[0]!.outstandingMinor,-600);
+    failure(await f.application.receiveCustomerPayment({...pay,requestId:randomUUID()}),"scope_mismatch");
+    failure(await f.application.checkout({sessionId,requestId:randomUUID(),customerId:created.id,lines:[{productId:item.id,quantity:1000,unitPriceMinor:500}],payments:[{accountId:cash,amountMinor:500}]}),"scope_mismatch");
+    failure(await f.application.getCustomer({sessionId,customerId:randomUUID()}),"scope_mismatch");
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const staff=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"765432"}),cashier=value(await f.application.unlock({userId:staff,secret:"765432"})).sessionId!;
+    failure(await f.application.updateCustomer({...edit,sessionId:cashier,version:archived.version,active:true}),"permission_denied");
+    assert.equal(value(await f.application.listCustomers({sessionId:cashier,includeInactive:true})).items.length,1);
   }finally{await f.dispose();}
 });

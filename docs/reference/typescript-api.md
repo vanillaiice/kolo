@@ -58,8 +58,24 @@ class DesktopApplication implements ShopService {
   stockHistory(input: unknown): Promise<Result<Page<StockMovementView>>>;
   /** Bounded cash-account names only; balances are never exposed to payment-only readers. */
   listCashAccounts(input: unknown): Promise<Result<Page<{ readonly id: string; readonly name: string; }>>>;
-  /** Host-bound atomic cash sale; scoped matching retries return the original ID and differing content is refused. */
+  /** Account names and kinds for payments; balances stay behind finance authority. */
+  listPaymentAccounts(input: unknown): Promise<Result<Page<PaymentAccountView>>>;
+  /** Host-bound atomic sale with split payments and optional customer credit. Matching retries
+   * (same actor, lines, payments and customer) return the original ID; differing content is refused.
+   * The legacy `accountId` form records the exact total in one active cash account. */
   checkout(input: unknown): Promise<Result<{ readonly saleId: string; }>>;
+  /** Bounded customers with balances under customers.view. */
+  listCustomers(input: unknown): Promise<Result<Page<CustomerView>>>;
+  /** One scoped customer under customers.view, archived or not. */
+  getCustomer(input: unknown): Promise<Result<CustomerView>>;
+  /** Creates a customer named by its request ID; only this actor's identical creation counts as a retry. */
+  createCustomer(input: unknown): Promise<Result<CustomerView>>;
+  /** Edits, archives or restores a customer from the displayed version; identical requests write nothing. */
+  updateCustomer(input: unknown): Promise<Result<CustomerView>>;
+  /** Takes a payment against an active customer's account; the request ID is the ledger entry ID. */
+  receiveCustomerPayment(input: unknown): Promise<Result<CustomerView>>;
+  /** Newest-first bounded customer ledger with signed amounts. */
+  customerStatement(input: unknown): Promise<Result<Page<StatementEntryView>>>;
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): Promise<Result<Receipt>>;
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
@@ -223,7 +239,7 @@ runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void>;
 Stable application failures; native exception text, credentials and paths never cross the bridge.
 
 ```ts
-export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed";
+export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit";
 ```
 
 Serializable results make transport and operation failures explicit.
@@ -386,17 +402,75 @@ export interface StockCountRequest extends SessionRequest {
 }
 ```
 
-Cash checkout carries only selected facts; the host derives actor, shop, time, stock and event IDs.
+Checkout carries only selected facts; the host derives actor, shop, time, stock and event IDs.
+`payments` (one per account) may be split and may leave a balance on the named customer's
+account. The legacy single `accountId` form records the exact total in that cash account.
 
 ```ts
 export interface CheckoutRequest extends SessionRequest {
     readonly requestId: string;
-    readonly accountId: string;
+    readonly accountId?: string;
+    readonly payments?: readonly {
+        readonly accountId: string;
+        readonly amountMinor: number;
+    }[];
+    readonly customerId?: string;
     readonly lines: readonly {
         readonly productId: string;
         readonly quantity: number;
         readonly unitPriceMinor: number;
     }[];
+}
+```
+
+Account names and kinds for taking money, never balances.
+
+```ts
+export interface PaymentAccountView {
+    readonly id: string;
+    readonly name: string;
+    readonly kind: "CASH" | "MOBILE_MONEY" | "BANK" | "CARD" | "OTHER";
+}
+```
+
+Customer details and current balance (positive: owed to the shop; negative: paid in advance).
+
+```ts
+export interface CustomerView {
+    readonly id: string;
+    readonly name: string;
+    readonly phone?: string;
+    readonly address?: string;
+    readonly notes?: string;
+    readonly creditLimitMinor?: number;
+    readonly outstandingMinor: number;
+    readonly active: boolean;
+    readonly version: string;
+}
+```
+
+Editable customer details; absent optional fields are cleared.
+
+```ts
+export interface CustomerDetails {
+    readonly name: string;
+    readonly phone?: string;
+    readonly address?: string;
+    readonly notes?: string;
+    readonly creditLimitMinor?: number;
+}
+```
+
+One immutable customer ledger entry, newest first; payments are negative.
+
+```ts
+export interface StatementEntryView {
+    readonly id: string;
+    readonly occurredAt: string;
+    readonly type: string;
+    readonly amountMinor: number;
+    readonly saleId?: string;
+    readonly note?: string;
 }
 ```
 
@@ -456,6 +530,31 @@ export interface ShopService {
         readonly after?: PageQuery["after"];
         readonly limit?: number;
     }): Promise<Result<Page<StockMovementView>>>;
+    listPaymentAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<PaymentAccountView>>>;
+    listCustomers(input: CatalogueQuery): Promise<Result<Page<CustomerView>>>;
+    getCustomer(input: SessionRequest & {
+        readonly customerId: string;
+    }): Promise<Result<CustomerView>>;
+    createCustomer(input: SessionRequest & CustomerDetails & {
+        readonly requestId: string;
+    }): Promise<Result<CustomerView>>;
+    updateCustomer(input: SessionRequest & CustomerDetails & {
+        readonly customerId: string;
+        readonly version: string;
+        readonly active: boolean;
+    }): Promise<Result<CustomerView>>;
+    receiveCustomerPayment(input: SessionRequest & {
+        readonly requestId: string;
+        readonly customerId: string;
+        readonly accountId: string;
+        readonly amountMinor: number;
+        readonly note?: string;
+    }): Promise<Result<CustomerView>>;
+    customerStatement(input: SessionRequest & {
+        readonly customerId: string;
+        readonly after?: PageQuery["after"];
+        readonly limit?: number;
+    }): Promise<Result<Page<StatementEntryView>>>;
     listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{
         readonly id: string;
         readonly name: string;

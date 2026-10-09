@@ -549,3 +549,44 @@ Implemented:
 Split/credit checkout, customers, suppliers/purchases, finance, reports, returns, staff
 and backup/exchange screens; printers/scanners, accessibility/performance measurement and
 Windows packaging remain as previously recorded.
+
+
+## 2026-10-09 — Desktop split/credit checkout and customers (F5)
+
+Implemented:
+
+- Checkout with up to eight payments (one per active account of any kind) and an optional
+  customer. The unpaid remainder goes on the customer's ledger under `customers.credit`;
+  configured limits are enforced unless the actor holds `customers.credit_override`, with
+  a dedicated `credit_limit` failure. Retries match lines, payment set and customer. The
+  legacy single cash `accountId` request is still accepted.
+- Till: payment rows where the first untouched row takes the remainder, customer search
+  showing balance and limit, remainder/credit display, and cash received with change due
+  (computed in the UI only, not stored). Receipts show the customer and what is left owing.
+- Customers section: list with balances and archived filter, creation with a stable
+  request ID, versioned edits, archive/restore, payments with stable ledger IDs and
+  frozen drafts after uncertain failures, and a bounded signed statement.
+- Seven new named, validated IPC commands (`listPaymentAccounts`, `listCustomers`,
+  `getCustomer`, `createCustomer`, `updateCustomer`, `receiveCustomerPayment`,
+  `customerStatement`) and the extended `checkout`. Change subscriptions include customers.
+
+### Verification
+
+- Real-SQLite host cases cover split payments across account kinds, order-insensitive
+  retries, conflicting retries (customer/payments), credit receipts and statements,
+  overpayment, credit without a customer, duplicate/zero/too many payments, foreign
+  accounts, limit and zero-limit refusals for a manager without override, owner override,
+  cashier credit refusal, customer versioning/archive, payment retries/conflicts/advance
+  balances, rollback failpoint and statement paging.
+- The actual Electron workflow adds a customer with a limit, sells partly on credit with
+  change due, checks the receipt and balance, takes a payment and checks the statement,
+  then verifies stock and the credit receipt after restart. Till and customer screens were
+  visually inspected.
+- `npm run check`: 668 tests passed (631 core, 8 contracts, 20 desktop, 7 mobile,
+  2 server); the real-PostgreSQL readiness case remains skipped without its database URL.
+  `npm run bundle:mobile` (992 modules) and `npm run smoke:desktop:workflow` passed.
+
+### Remaining
+
+Discounts, suppliers/purchases, finance, reports, returns, staff and backup/exchange
+screens; printers/scanners, accessibility/performance measurement and Windows packaging.
