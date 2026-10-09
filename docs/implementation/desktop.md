@@ -23,8 +23,8 @@ for details, payments and statements. The React DOM screens depend on a replacea
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Staff
-screens, backup/exchange screens, printers and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
+Backup/exchange
+screens, printers and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
 business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
 
 ## First usable desktop milestone
@@ -188,11 +188,23 @@ must cover the whole value. The request ID names the return; a retry matches kin
 original, reason, item set and refund set. Core `ExchangeError` codes are translated to
 desktop failures. Receipts show returned value. Commands live in `electron/returns.ts`.
 
+## Staff contract
+
+The Staff section lists members with effective permissions (role defaults plus grants
+minus revocations) under `users.view`. Only the owner changes staff; core rechecks owner
+authority. Member creation and code replacement run through the native vault and are
+single-flight with setup/unlock. Core draws member identities, so a retried creation is
+recognised by name: a member with the same name (case-insensitive) is refused as
+`request_conflict` instead of duplicated. Grants/revokes and suspension requested for the
+current state change nothing; the owner cannot suspend themselves or replace their own code
+here (owner recovery stays on the recovery-key flow). Commands live in `electron/staff.ts`;
+permission labels are copied from the mobile keyed strings.
+
 ## Remaining F5 packages
 
 - Operational breadth: accounts/
   transfers/reconciliation, expenses/reversals, reports and sale/purchase returns.
-- Local administration and recovery: staff/grants, backup/restore, pairing/file
+- Local administration and recovery: backup/restore, pairing/file
   exchange and actionable import/conflict diagnostics through native dialogs.
 - Desktop acceptance: keyboard/focus/accessibility, selected printer/scanner adapters,
   crash/close recovery, measured startup/search/report/memory behavior on shop PCs,

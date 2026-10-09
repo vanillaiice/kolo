@@ -710,3 +710,26 @@ code `stale_return`.
 
 Staff and backup/exchange screens; receipt printing; hardware, accessibility/performance
 and Windows packaging acceptance.
+
+## 2026-10-09 — Desktop staff (F5)
+
+Implemented a Staff section: member list with role and status, owner-only member creation
+with role and confirmed code, a grouped permission checklist showing effective permissions
+with per-permission grant/revoke, suspend/reinstate, and code replacement. Five validated
+IPC commands in `electron/staff.ts`. The smoke runner now waits for click targets and, in
+smoke mode only, prints the failure message.
+
+### Verification
+
+- A real-SQLite host case covers creation, duplicate names, malformed roles/codes/names,
+  grant/revoke with no-op repeats (no authority revision change), cashier refusal,
+  suspension blocking unlock, owner self-suspension refusal, reinstatement, code
+  replacement and old-code refusal.
+- The actual Electron workflow adds a cashier through the OS vault and grants credit
+  sales; five consecutive workflow runs passed after making clicks wait for their targets.
+- `npm run check` and `npm run smoke:desktop:workflow` passed.
+
+### Remaining
+
+Backup/restore and pairing/file-exchange screens; receipt printing; hardware,
+accessibility/performance and Windows packaging acceptance.
