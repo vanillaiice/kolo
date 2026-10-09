@@ -24,7 +24,7 @@ export function Field({ label, value, onChange, numeric = false, onSubmit }: { r
 }
 /** Explicit choice values, bounded by the caller's paginated local lookup. */
 export function Choices({ label, value, items, onChange }: { readonly label: string; readonly value: string; readonly items: readonly { id: string; name: string }[]; readonly onChange: (value: string) => void }): React.JSX.Element {
-  return <View style={styles.field}><Text style={styles.label}>{label}</Text><View style={styles.row}>{items.map(item => <Pressable key={item.id} accessibilityRole="radio" accessibilityState={{ selected: value === item.id }} onPress={() => onChange(item.id)} style={[styles.choice, value === item.id && styles.selected]}><Text style={styles.text}>{item.name}</Text></Pressable>)}</View></View>;
+  return <View style={styles.field}><Text style={styles.label}>{label}</Text><View style={styles.row}>{items.map(item => <Pressable key={item.id} accessibilityRole="radio" accessibilityState={{ checked: value === item.id }} onPress={() => onChange(item.id)} style={[styles.choice, value === item.id && styles.selected]}><Text style={styles.text}>{item.name}</Text></Pressable>)}</View></View>;
 }
 /** Accessible boolean field. */
 export function Toggle({ label, value, onChange }: { readonly label: string; readonly value: boolean; readonly onChange: (value: boolean) => void }): React.JSX.Element {
