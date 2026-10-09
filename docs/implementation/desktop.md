@@ -23,7 +23,7 @@ for details, payments and statements. The React DOM screens depend on a replacea
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Receipt printing, hardware adapters and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
+Hardware adapters, Windows packaging and acceptance remain. A browser app, browser storage/credentials and authenticated
 business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
 
 ## First usable desktop milestone
@@ -224,13 +224,26 @@ closes its database after the activating command answers. The previous workspace
 kept on disk. The new shop opens locked. Core `TransferError`/`ExchangeError` codes become
 bridge failure codes with localized messages. Commands live in `electron/transfer.ts`.
 
-## Remaining F5 packages
+## Receipt printing
 
-- Operational breadth: accounts/
-  transfers/reconciliation, expenses/reversals, reports and sale/purchase returns.
-- Desktop acceptance: keyboard/focus/accessibility, selected printer/scanner adapters,
-  crash/close recovery, measured startup/search/report/memory behavior on shop PCs,
-  Windows installer and protected storage, signing/update/recovery decisions.
+Saved receipts print through the operating system's print dialog (`window.print()`), so
+any printer with an OS driver works, including thermal printers. A print stylesheet prints
+only the receipt at 72 mm with the shop name, hiding actions and app chrome. The workflow
+smoke renders the receipt to PDF through the same stylesheet. Direct ESC/POS printer
+adapters, cash-drawer kick and paper-width settings are not implemented.
+
+## Remaining F5 work: acceptance, not software packages
+
+The planned desktop software packages are implemented. F5 stays open for acceptance that
+cannot be proven from Linux Node/Electron runs:
+
+- Windows: packaging spike, installer, protected storage (DPAPI via `safeStorage`), signing
+  and update approach (following the Rebar Studio release style when the user asks).
+- Hardware: physical barcode scanners and receipt printers on shop PCs; optional ESC/POS
+  adapter and cash drawer if the user wants them.
+- Measured startup/search/report/memory budgets on target hardware, crash/close recovery
+  drills, keyboard/focus/screen-reader passes.
+- Cross-device exchange with Android/Windows tills (desktop-to-desktop is covered).
 
 The shared operations, strict event schemas, exact arithmetic and SQLite accounting
 fixtures are reused. React Native screen components require a DOM UI implementation;

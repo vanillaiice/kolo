@@ -62,7 +62,7 @@ const strings = {
   overpaid: ["Les paiements dépassent le total. Utilisez « Espèces reçues » pour la monnaie.", "Payments exceed the total. Use “Cash received” for change."],
   received: ["Espèces reçues (facultatif)", "Cash received (optional)"], change: ["Monnaie à rendre", "Change due"],
   receivedShort: ["Les espèces reçues sont inférieures au montant payé en espèces.", "Cash received is less than the cash amount."],
-  outstanding: ["Reste dû", "Left owing"],
+  outstanding: ["Reste dû", "Left owing"], printReceipt: ["Imprimer le reçu", "Print receipt"],
   devices: ["Sauvegarde & appareils", "Backup & devices"], devicesHelp: ["Sauvegardez la boutique, reliez d’autres caisses et échangez leurs opérations par fichier.", "Back up the shop, pair other tills and exchange their operations by file."],
   filePassword: ["Mot de passe du fichier", "File password"], confirmFilePassword: ["Confirmer le mot de passe du fichier", "Confirm file password"],
   filePasswordHelp: ["Au moins 12 caractères. Il faudra le même mot de passe pour ouvrir le fichier.", "At least 12 characters. The same password is needed to open the file."],

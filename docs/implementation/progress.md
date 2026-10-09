@@ -766,3 +766,19 @@ Implemented:
 
 Receipt printing; hardware, accessibility/performance and Windows packaging acceptance;
 Android/Windows cross-device exchange acceptance.
+
+## 2026-10-09 — Desktop receipt printing; F5 software complete (F5)
+
+Saved receipts gain a "Print receipt" action using the OS print dialog, with a print
+stylesheet that prints only the receipt at 72 mm under the shop name. The workflow smoke
+renders the receipt to PDF through that stylesheet (output inspected).
+
+With this, the planned F5 desktop software packages are implemented: setup/unlock/recovery,
+catalogue and stock, split/credit/discounted checkout, customers, suppliers and purchases,
+accounts/cash/expenses, reports, returns, staff, backup/restore, pairing/file exchange and
+receipt printing. F5 remains open for Windows packaging, hardware, performance,
+accessibility and cross-device acceptance listed in the desktop guide.
+
+### Verification
+
+- `npm run check`, `npm run bundle:mobile` and `npm run smoke:desktop:workflow` passed.

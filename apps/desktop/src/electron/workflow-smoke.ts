@@ -140,6 +140,10 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await fill(".return-form .cell-input", "1"); await wait(`${visible(".return-form .total-line")}[0]?.textContent.replace(/[^0-9]/g,'')==='500'`, "return preview");
     await fill("#return-reason", "Damaged"); await submit("#return-reason");
     await wait(`document.querySelector('.return-form')===null && ${visible(".receipt-paper")}[0]?.textContent.includes('Returned')`, "return recorded");
+    // Printing uses the OS print path; rendering to PDF exercises the same print stylesheet without a dialog.
+    const printed = await window.webContents.printToPDF({ pageSize: { width: 2.83, height: 11 }, printBackground: false });
+    assert.ok(printed.length > 1000 && printed.subarray(0, 4).toString() === "%PDF", "receipt print rendering");
+    if (process.env["KOLO_DESKTOP_SMOKE_RECEIPT_PDF"] !== undefined) await writeFile(process.env["KOLO_DESKTOP_SMOKE_RECEIPT_PDF"], printed);
     // Staff: the owner adds a cashier through the native vault and grants credit sales.
     await navigate("Staff"); await clickVisible(".section-heading .primary");
     for (const [selector, value] of [["#member-name", "Zoé"], ["#member-secret", "765432"], ["#member-confirm", "765432"]]) await fill(selector!, value!);

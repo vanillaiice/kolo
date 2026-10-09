@@ -179,7 +179,7 @@ SQLite/keystore, scanner, and chosen receipt hardware are tested on devices.
 
 ## F5 — Standalone desktop MVP
 
-**Status:** Active phase. The first offline setup → product → cash sale → receipt →
+**Status:** Active phase; desktop software packages implemented, acceptance open. The first offline setup → product → cash sale → receipt →
 restart workflow is implemented and verified in actual Linux Electron, followed by product
 editing/archive, categories, manual stock movements, counts and history, split/credit checkout
 and customers with payments and statements, discounts, suppliers and purchases, accounts/transfers/counts, expenses, reports, returns, staff, and backup/restore, pairing and file exchange through native dialogs. Named validated
