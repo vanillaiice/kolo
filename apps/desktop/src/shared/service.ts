@@ -95,7 +95,31 @@ export interface CustomerDetails {
 }
 /** One immutable customer ledger entry, newest first; payments are negative. */
 export interface StatementEntryView {
-  readonly id: string; readonly occurredAt: string; readonly type: string; readonly amountMinor: number; readonly saleId?: string; readonly note?: string;
+  readonly id: string; readonly occurredAt: string; readonly type: string; readonly amountMinor: number; readonly saleId?: string; readonly purchaseId?: string; readonly note?: string;
+}
+/** Supplier details and current payable (positive: the shop owes them). */
+export interface SupplierView {
+  readonly id: string; readonly name: string; readonly phone?: string; readonly address?: string; readonly contact?: string; readonly notes?: string;
+  readonly outstandingMinor: number; readonly active: boolean; readonly version: string;
+}
+/** Editable supplier details; absent optional fields are cleared. */
+export interface SupplierDetails { readonly name: string; readonly phone?: string; readonly address?: string; readonly contact?: string; readonly notes?: string; }
+/**
+ * A delivery received into stock at recorded unit costs. An optional single door payment is
+ * taken from one account; any remainder is owed to the named supplier.
+ */
+export interface PurchaseRequest extends SessionRequest {
+  readonly requestId: string; readonly supplierId?: string; readonly reference?: string;
+  readonly lines: readonly { readonly productId: string; readonly quantity: number; readonly unitCostMinor: number }[];
+  readonly payment?: { readonly accountId: string; readonly amountMinor: number };
+}
+/** Purchase history row with exact total from historical costs. */
+export interface PurchaseSummary { readonly id: string; readonly occurredAt: string; readonly supplierName: string; readonly reference: string; readonly totalMinor: number; }
+/** Immutable recorded delivery. */
+export interface PurchaseView extends PurchaseSummary {
+  readonly supplierId?: string;
+  readonly lines: readonly { readonly id: string; readonly productId: string; readonly name: string; readonly quantity: number; readonly unitCostMinor: number }[];
+  readonly paidMinor: number; readonly outstandingMinor: number;
 }
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
 export interface ShopService {
@@ -151,6 +175,24 @@ export interface ShopService {
   receiveCustomerPayment(input: SessionRequest & { readonly requestId: string; readonly customerId: string; readonly accountId: string; readonly amountMinor: number; readonly note?: string }): Promise<Result<CustomerView>>;
   /** Newest-first bounded customer ledger. */
   customerStatement(input: SessionRequest & { readonly customerId: string; readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<Page<StatementEntryView>>>;
+  /** Bounded suppliers with payables under suppliers.view, optionally including archived ones. */
+  listSuppliers(input: CatalogueQuery): Promise<Result<Page<SupplierView>>>;
+  /** One supplier, archived or not, with current payable. */
+  getSupplier(input: SessionRequest & { readonly supplierId: string }): Promise<Result<SupplierView>>;
+  /** Creates a supplier named by the request ID; matching retries return it. */
+  createSupplier(input: SessionRequest & SupplierDetails & { readonly requestId: string }): Promise<Result<SupplierView>>;
+  /** Edits, archives or restores a supplier from the displayed version. */
+  updateSupplier(input: SessionRequest & SupplierDetails & { readonly supplierId: string; readonly version: string; readonly active: boolean }): Promise<Result<SupplierView>>;
+  /** Pays a supplier from one account; the request ID names the ledger entry. */
+  paySupplier(input: SessionRequest & { readonly requestId: string; readonly supplierId: string; readonly accountId: string; readonly amountMinor: number; readonly note?: string }): Promise<Result<SupplierView>>;
+  /** Newest-first bounded supplier ledger; purchases positive, payments negative. */
+  supplierStatement(input: SessionRequest & { readonly supplierId: string; readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<Page<StatementEntryView>>>;
+  /** Records a delivery, its stock and any door payment/payable atomically; matching retries return the same ID. */
+  recordPurchase(input: PurchaseRequest): Promise<Result<{ readonly purchaseId: string }>>;
+  /** Bounded newest-first purchase history under purchases.view. */
+  listPurchases(input: SessionRequest & { readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<Page<PurchaseSummary>>>;
+  /** One recorded purchase with its lines and settlement. */
+  getPurchase(input: SessionRequest & { readonly purchaseId: string }): Promise<Result<PurchaseView>>;
   /** Bounded account names for cash checkout, without disclosing financial balances. */
   listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly name: string }>>>;
   /** Atomic cash sale; identical retries return the original saved sale ID. */

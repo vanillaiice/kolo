@@ -23,7 +23,7 @@ for details, payments and statements. The React DOM screens depend on a replacea
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Suppliers and purchases, finance, reports, returns, staff
+Finance, reports, returns, staff
 screens, backup/exchange screens, printers and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
 business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
 
@@ -134,9 +134,22 @@ the movement and the local audit, so a retried count returns its original differ
 and never recounts against sales recorded after it, including counts that matched the
 shelf and moved nothing. History is newest-first and bounded under `inventory.view`.
 
+## Suppliers and purchases contract
+
+A purchase receives up to 200 distinct active products at whole-franc unit costs, with an
+optional supplier and delivery reference. It needs `purchases.create`, plus
+`purchases.pay` when a single door payment is taken from one account. Any unpaid
+remainder is owed to the named supplier; without a supplier the delivery must be paid in
+full. Stock, cost, payment, payable, event and audit commit together. A retry matches on
+actor, supplier, reference, line set and door payment (found through the purchase
+event's claimed account movements, since door payments carry no purchase reference).
+Supplier details, archive and payments follow the customer pattern; supplier statements
+show purchases on credit positive and payments negative. Feature commands live in
+`electron/purchasing.ts` behind the small `Host` interface in `electron/host.ts`.
+
 ## Remaining F5 packages
 
-- Operational breadth: suppliers/purchases/payments, accounts/
+- Operational breadth: accounts/
   transfers/reconciliation, expenses/reversals, reports and sale/purchase returns.
 - Local administration and recovery: staff/grants, backup/restore, pairing/file
   exchange and actionable import/conflict diagnostics through native dialogs.

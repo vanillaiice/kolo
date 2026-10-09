@@ -76,6 +76,16 @@ class DesktopApplication implements ShopService {
   receiveCustomerPayment(input: unknown): Promise<Result<CustomerView>>;
   /** Newest-first bounded customer ledger with signed amounts. */
   customerStatement(input: unknown): Promise<Result<Page<StatementEntryView>>>;
+  /** Supplier and purchase commands; see purchasing.ts. */
+  listSuppliers(input: unknown): Promise<Result<Page<SupplierView>>>;
+  getSupplier(input: unknown): Promise<Result<SupplierView>>;
+  createSupplier(input: unknown): Promise<Result<SupplierView>>;
+  updateSupplier(input: unknown): Promise<Result<SupplierView>>;
+  paySupplier(input: unknown): Promise<Result<SupplierView>>;
+  supplierStatement(input: unknown): Promise<Result<Page<StatementEntryView>>>;
+  recordPurchase(input: unknown): Promise<Result<{ readonly purchaseId: string; }>>;
+  listPurchases(input: unknown): Promise<Result<Page<PurchaseSummary>>>;
+  getPurchase(input: unknown): Promise<Result<PurchaseView>>;
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): Promise<Result<Receipt>>;
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
@@ -103,6 +113,38 @@ A host-owned dispatcher map; none of its channel names are supplied by the rende
 
 ```ts
 desktopHandlers(application: DesktopApplication, status: () => DesktopStatus, trusted: (event: unknown) => boolean): Readonly<Record<string, (event: unknown, ...args: unknown[]) => unknown>>;
+```
+
+## [apps/desktop/src/electron/host.ts](../../apps/desktop/src/electron/host.ts)
+
+A stable command failure the host returns as-is; native and storage errors never cross the bridge.
+
+```ts
+class CommandError extends Error {
+  code: FailureCode;
+  constructor(code: FailureCode);
+}
+```
+
+What feature modules need from the desktop host: ports and the current actor, never the session itself.
+
+```ts
+export interface Host {
+    readonly ports: WorkspacePorts;
+    actor(data: Record<string, unknown>, required?: readonly Permission[]): OperationContext;
+}
+```
+
+Local edits of the displayed version win locally even when this clock is behind the stored edit.
+
+```ts
+nextVersion(host: Host, stored: string): string;
+```
+
+Order-insensitive comparison of retried facts.
+
+```ts
+sameSet(left: readonly Record<string, unknown>[], right: readonly Record<string, unknown>[]): boolean;
 ```
 
 ## [apps/desktop/src/electron/ipc.ts](../../apps/desktop/src/electron/ipc.ts)
@@ -160,6 +202,63 @@ Native authenticated file encryption; uses the measured credential KDF with inde
 
 ```ts
 const desktopTransferCrypto: TransferCrypto;
+```
+
+## [apps/desktop/src/electron/purchasing.ts](../../apps/desktop/src/electron/purchasing.ts)
+
+Bounded suppliers with payables under suppliers.view.
+
+```ts
+listSuppliers(host: Host, input: unknown): Page<SupplierView>;
+```
+
+One scoped supplier under suppliers.view, archived or not.
+
+```ts
+getSupplier(host: Host, input: unknown): SupplierView;
+```
+
+Creates a supplier named by its request ID; only this actor's identical creation counts as a retry.
+
+```ts
+createSupplier(host: Host, input: unknown): SupplierView;
+```
+
+Edits, archives or restores a supplier from the displayed version; identical requests write nothing.
+
+```ts
+updateSupplier(host: Host, input: unknown): SupplierView;
+```
+
+Pays an active supplier from one account; the request ID is the ledger entry ID.
+
+```ts
+paySupplier(host: Host, input: unknown): SupplierView;
+```
+
+Newest-first bounded supplier ledger with signed amounts.
+
+```ts
+supplierStatement(host: Host, input: unknown): Page<StatementEntryView>;
+```
+
+Records a delivery: stock in at the given costs, an optional door payment and any payable, in
+one transaction. A matching retry (actor, supplier, reference, lines, payment) returns the same ID.
+
+```ts
+recordPurchase(host: Host, input: unknown): { readonly purchaseId: string; };
+```
+
+Bounded newest-first purchase history under purchases.view.
+
+```ts
+listPurchases(host: Host, input: unknown): Page<PurchaseSummary>;
+```
+
+One recorded purchase with lines, door payments and payable.
+
+```ts
+getPurchase(host: Host, input: unknown): PurchaseView;
 ```
 
 ## [apps/desktop/src/electron/transfer-files.ts](../../apps/desktop/src/electron/transfer-files.ts)
@@ -471,7 +570,85 @@ export interface StatementEntryView {
     readonly type: string;
     readonly amountMinor: number;
     readonly saleId?: string;
+    readonly purchaseId?: string;
     readonly note?: string;
+}
+```
+
+Supplier details and current payable (positive: the shop owes them).
+
+```ts
+export interface SupplierView {
+    readonly id: string;
+    readonly name: string;
+    readonly phone?: string;
+    readonly address?: string;
+    readonly contact?: string;
+    readonly notes?: string;
+    readonly outstandingMinor: number;
+    readonly active: boolean;
+    readonly version: string;
+}
+```
+
+Editable supplier details; absent optional fields are cleared.
+
+```ts
+export interface SupplierDetails {
+    readonly name: string;
+    readonly phone?: string;
+    readonly address?: string;
+    readonly contact?: string;
+    readonly notes?: string;
+}
+```
+
+A delivery received into stock at recorded unit costs. An optional single door payment is
+taken from one account; any remainder is owed to the named supplier.
+
+```ts
+export interface PurchaseRequest extends SessionRequest {
+    readonly requestId: string;
+    readonly supplierId?: string;
+    readonly reference?: string;
+    readonly lines: readonly {
+        readonly productId: string;
+        readonly quantity: number;
+        readonly unitCostMinor: number;
+    }[];
+    readonly payment?: {
+        readonly accountId: string;
+        readonly amountMinor: number;
+    };
+}
+```
+
+Purchase history row with exact total from historical costs.
+
+```ts
+export interface PurchaseSummary {
+    readonly id: string;
+    readonly occurredAt: string;
+    readonly supplierName: string;
+    readonly reference: string;
+    readonly totalMinor: number;
+}
+```
+
+Immutable recorded delivery.
+
+```ts
+export interface PurchaseView extends PurchaseSummary {
+    readonly supplierId?: string;
+    readonly lines: readonly {
+        readonly id: string;
+        readonly productId: string;
+        readonly name: string;
+        readonly quantity: number;
+        readonly unitCostMinor: number;
+    }[];
+    readonly paidMinor: number;
+    readonly outstandingMinor: number;
 }
 ```
 
@@ -556,6 +733,40 @@ export interface ShopService {
         readonly after?: PageQuery["after"];
         readonly limit?: number;
     }): Promise<Result<Page<StatementEntryView>>>;
+    listSuppliers(input: CatalogueQuery): Promise<Result<Page<SupplierView>>>;
+    getSupplier(input: SessionRequest & {
+        readonly supplierId: string;
+    }): Promise<Result<SupplierView>>;
+    createSupplier(input: SessionRequest & SupplierDetails & {
+        readonly requestId: string;
+    }): Promise<Result<SupplierView>>;
+    updateSupplier(input: SessionRequest & SupplierDetails & {
+        readonly supplierId: string;
+        readonly version: string;
+        readonly active: boolean;
+    }): Promise<Result<SupplierView>>;
+    paySupplier(input: SessionRequest & {
+        readonly requestId: string;
+        readonly supplierId: string;
+        readonly accountId: string;
+        readonly amountMinor: number;
+        readonly note?: string;
+    }): Promise<Result<SupplierView>>;
+    supplierStatement(input: SessionRequest & {
+        readonly supplierId: string;
+        readonly after?: PageQuery["after"];
+        readonly limit?: number;
+    }): Promise<Result<Page<StatementEntryView>>>;
+    recordPurchase(input: PurchaseRequest): Promise<Result<{
+        readonly purchaseId: string;
+    }>>;
+    listPurchases(input: SessionRequest & {
+        readonly after?: PageQuery["after"];
+        readonly limit?: number;
+    }): Promise<Result<Page<PurchaseSummary>>>;
+    getPurchase(input: SessionRequest & {
+        readonly purchaseId: string;
+    }): Promise<Result<PurchaseView>>;
     listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{
         readonly id: string;
         readonly name: string;

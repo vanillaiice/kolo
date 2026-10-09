@@ -21,9 +21,10 @@ export function Customers({ service, sessionId, revision, permissions }: Props):
     {selectedId!==undefined&&<CustomerDetail key={selectedId} service={service} sessionId={sessionId} revision={revision} permissions={permissions} customerId={selectedId} onBack={()=>setSelectedId(undefined)}/>}
   </section>;
 }
-function Balance({value}:{value:number}):React.JSX.Element{
+/** Signed ledger balance: positive is owed (by a customer, or to a supplier), negative is paid in advance. */
+export function Balance({value,owedLabel="owes"}:{value:number;owedLabel?:TextKey}):React.JSX.Element{
   const {t,language}=useText();
-  return value===0?<span className="money">{formatMoney(0,language)}</span>:<span className={`money ${value>0?"negative":""}`}>{formatMoney(Math.abs(value),language)} <small>{t(value>0?"owes":"inAdvance")}</small></span>;
+  return value===0?<span className="money">{formatMoney(0,language)}</span>:<span className={`money ${value>0?"negative":""}`}>{formatMoney(Math.abs(value),language)} <small>{t(value>0?owedLabel:"inAdvance")}</small></span>;
 }
 function CustomerList({service,sessionId,revision,onOpen}:{service:ShopService;sessionId:string;revision:number;onOpen:(id:string)=>void}):React.JSX.Element{
   const {t}=useText();
@@ -62,7 +63,7 @@ function CustomerDetail({service,sessionId,revision,permissions,customerId,onBac
     </div>
     {editing!==undefined&&<CustomerForm key={editing.version} service={service} sessionId={sessionId} customer={editing} onReload={()=>setEditing(shown)} onDone={value=>{if(value!==undefined)setShown(value);setEditing(undefined);}}/>}
     {shown.active&&permissions.includes("customers.pay")&&<TakePayment service={service} sessionId={sessionId} customer={shown} onSaved={setShown}/>}
-    <Statement service={service} sessionId={sessionId} revision={revision} customerId={customerId}/>
+    <Statement service={service} sessionId={sessionId} revision={revision} kind="customer" id={customerId}/>
   </div>;
 }
 /** Creation keeps one request ID per draft; editing names the displayed version. */
@@ -119,11 +120,13 @@ function TakePayment({service,sessionId,customer,onSaved}:{service:ShopService;s
     <div className="actions"><button className="primary" type="submit" disabled={action.busy||account===""}>{action.busy?t("recording"):uncertain?t("retry"):t("takePayment")}</button></div></form>
   </ReadState></div>;
 }
-function Statement({service,sessionId,revision,customerId}:{service:ShopService;sessionId:string;revision:number;customerId:string}):React.JSX.Element{
+/** Newest-first signed customer or supplier ledger. */
+export function Statement({service,sessionId,revision,kind,id}:{service:ShopService;sessionId:string;revision:number;kind:"customer"|"supplier";id:string}):React.JSX.Element{
   const {t,language}=useText();
   const [cursor,setCursor]=useState<{ after: Cursor; revision: number }>();
-  const list=useRead(()=>service.customerStatement({sessionId,customerId,...(cursor?.revision===revision?{after:cursor.after}:{})}),[service,sessionId,customerId,cursor,revision]);
-  const label=(type:string):string=>["CREDIT_SALE","PAYMENT","RETURN","ADJUSTMENT","OPENING_BALANCE","WRITE_OFF"].includes(type)?t(`ledger${type}` as TextKey):type;
+  const after=cursor?.revision===revision?{after:cursor.after}:{};
+  const list=useRead(()=>kind==="customer"?service.customerStatement({sessionId,customerId:id,...after}):service.supplierStatement({sessionId,supplierId:id,...after}),[service,sessionId,kind,id,cursor,revision]);
+  const label=(type:string):string=>["CREDIT_SALE","PURCHASE","PAYMENT","RETURN","ADJUSTMENT","OPENING_BALANCE","WRITE_OFF"].includes(type)?t(`ledger${type}` as TextKey):type;
   return <div className="panel"><h2>{t("statement")}</h2>
     <ReadState loading={list.loading} error={list.error} empty={list.data?.items.length===0} emptyText={t("noStatement")} retry={list.retry}>
       <div className="table-wrap"><table><thead><tr><th>{t("date")}</th><th>{t("movementType")}</th><th>{t("amount")}</th><th>{t("notesLabel")}</th></tr></thead><tbody>

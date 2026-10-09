@@ -5,6 +5,7 @@ import { Products } from "./components/Products.tsx";
 import { Till } from "./components/Till.tsx";
 import { Receipts } from "./components/Receipts.tsx";
 import { Customers } from "./components/Customers.tsx";
+import { Purchases } from "./components/Purchases.tsx";
 import { call, ErrorText, Field, TextContext, useAction, useText, type Message } from "./components/ui.tsx";
 import { text, type Language } from "./text.ts";
 
@@ -40,12 +41,12 @@ export function App({service}:{readonly service:ShopService}):React.JSX.Element{
 }
 function Shop({service,view,sessionId,revision,refresh,onRecoveryKey}:{service:ShopService;view:WorkspaceView;sessionId:string;revision:number;refresh:()=>void;onRecoveryKey:(key:string,sessionId:string)=>void}):React.JSX.Element{
   const {t}=useText(),action=useAction();
-  const permissions=view.actor!.permissions,canTill=permissions.includes("sales.create")&&permissions.includes("products.view"),canProducts=permissions.includes("products.view"),canReceipts=permissions.includes("sales.view")||permissions.includes("sales.view_own"),canCustomers=permissions.includes("customers.view");
-  const [selected,setSelected]=useState<"till"|"products"|"customers"|"receipts">(canTill?"till":canProducts?"products":"receipts"),[receiptId,setReceiptId]=useState<string>(),[keyForm,setKeyForm]=useState(false),[secret,setSecret]=useState("");
-  const section=selected==="till"&&canTill||selected==="products"&&canProducts||selected==="customers"&&canCustomers||selected==="receipts"&&canReceipts?selected:canTill?"till":canProducts?"products":canReceipts?"receipts":undefined;
+  const permissions=view.actor!.permissions,canTill=permissions.includes("sales.create")&&permissions.includes("products.view"),canProducts=permissions.includes("products.view"),canReceipts=permissions.includes("sales.view")||permissions.includes("sales.view_own"),canCustomers=permissions.includes("customers.view"),canPurchases=permissions.includes("purchases.view")||permissions.includes("suppliers.view");
+  const [selected,setSelected]=useState<"till"|"products"|"customers"|"purchases"|"receipts">(canTill?"till":canProducts?"products":"receipts"),[receiptId,setReceiptId]=useState<string>(),[keyForm,setKeyForm]=useState(false),[secret,setSecret]=useState("");
+  const section=selected==="till"&&canTill||selected==="products"&&canProducts||selected==="customers"&&canCustomers||selected==="purchases"&&canPurchases||selected==="receipts"&&canReceipts?selected:canTill?"till":canProducts?"products":canReceipts?"receipts":undefined;
   return <>
     <aside className="sidebar"><div className="brand">KOLO<span className="brand-mark" aria-hidden="true">.</span></div><div className="shop-label"><span className="eyebrow">{t("local")}</span><strong>{view.shopName}</strong></div>
-      <nav aria-label="KOLO">{([{id:"till",allowed:canTill,mark:"▦"},{id:"products",allowed:canProducts,mark:"▤"},{id:"customers",allowed:canCustomers,mark:"◍"},{id:"receipts",allowed:canReceipts,mark:"▧"}] as const).filter(item=>item.allowed).map(item=><button className={`nav-item ${section===item.id?"selected":""}`} aria-current={section===item.id?"page":undefined} key={item.id} onClick={()=>{setSelected(item.id);if(item.id==="receipts")setReceiptId(undefined);}}><span aria-hidden="true">{item.mark}</span>{t(item.id)}</button>)}</nav>
+      <nav aria-label="KOLO">{([{id:"till",allowed:canTill,mark:"▦"},{id:"products",allowed:canProducts,mark:"▤"},{id:"customers",allowed:canCustomers,mark:"◍"},{id:"purchases",allowed:canPurchases,mark:"⬓"},{id:"receipts",allowed:canReceipts,mark:"▧"}] as const).filter(item=>item.allowed).map(item=><button className={`nav-item ${section===item.id?"selected":""}`} aria-current={section===item.id?"page":undefined} key={item.id} onClick={()=>{setSelected(item.id);if(item.id==="receipts")setReceiptId(undefined);}}><span aria-hidden="true">{item.mark}</span>{t(item.id)}</button>)}</nav>
       <div className="sidebar-footer"><span className="status-dot"/>{t("offline")}</div>
     </aside>
     <main className="main-content"><header className="topbar"><span>{view.shopName}</span><div className="topbar-actions"><span className="user-name">{view.actor?.name}</span>{view.actor?.isOwner&&<button className="text-button" onClick={()=>setKeyForm(!keyForm)}>{t("viewKey")}</button>}<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.lock()).then(()=>refresh());}}>{t("lock")}</button></div></header>
@@ -54,6 +55,7 @@ function Shop({service,view,sessionId,revision,refresh,onRecoveryKey}:{service:S
       {canTill&&<div hidden={section!=="till"}><Till service={service} sessionId={sessionId} revision={revision} permissions={permissions} onReceipt={id=>{setReceiptId(id);if(canReceipts)setSelected("receipts");}}/></div>}
       {canProducts&&<div hidden={section!=="products"}><Products service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {canCustomers&&<div hidden={section!=="customers"}><Customers service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
+      {canPurchases&&<div hidden={section!=="purchases"}><Purchases service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {section==="receipts"&&<Receipts key={receiptId??"history"} service={service} sessionId={sessionId} revision={revision} initialId={receiptId} onNewSale={()=>setSelected(canTill?"till":"products")}/>}
       {section===undefined&&<p className="notice error">{t("noAccess")}</p>}
     </main>

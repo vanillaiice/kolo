@@ -14,8 +14,10 @@ import { RuleError } from "@kolo/core/rules/amounts";
 import { subscribeChanges } from "@kolo/core/data/database/changes";
 import { sealPendingEvents } from "@kolo/core/application/exchange";
 import type { ExchangeCrypto } from "@kolo/core/exchange/types";
-import type { CategoryView, CustomerDetails, CustomerView, FailureCode, ProductView, Result, ShopService, WorkspaceView } from "../shared/service.js";
+import type { CategoryView, CustomerDetails, CustomerView, ProductView, Result, ShopService, WorkspaceView } from "../shared/service.js";
 import { object, text, uuid, whole, boolean, page, optional } from "./validation.ts";
+import { CommandError, nextVersion, type Host } from "./host.ts";
+import * as purchasing from "./purchasing.ts";
 
 const customerFields = ["name", "phone", "address", "notes", "creditLimitMinor"] as const;
 function customerDetails(data: Record<string, unknown>): CustomerDetails {
@@ -27,10 +29,6 @@ function customerDetails(data: Record<string, unknown>): CustomerDetails {
 function sameDetails(stored: Customer, details: CustomerDetails): boolean {
   return stored.name === details.name && stored.phone === details.phone && stored.address === details.address &&
     stored.notes === details.notes && stored.creditLimitMinor === details.creditLimitMinor;
-}
-class CommandError extends Error {
-  readonly code: FailureCode;
-  constructor(code: FailureCode) { super(code); this.code = code; }
 }
 /** Desktop authority and operations. The opaque core context never leaves this host object. */
 export class DesktopApplication implements ShopService {
@@ -44,11 +42,12 @@ export class DesktopApplication implements ShopService {
   #unsubscribe: () => void;
   #sealing = false;
   private readonly ports: WorkspacePorts;
+  readonly #host: Host;
   private readonly crypto: ExchangeCrypto | undefined;
   constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto) {
-    this.ports = ports; this.crypto = crypto;
+    this.ports = ports; this.crypto = crypto; this.#host = { ports, actor: (data, required) => this.#actor(data, required) };
     lockWorkspace(ports.database);
-    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "accounts", "authority"], () => this.#notify());
+    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "authority"], () => this.#notify());
   }
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   async initialize(): Promise<void> {
@@ -448,6 +447,16 @@ export class DesktopApplication implements ShopService {
         ...(typeof row["reason"] === "string" && row["reason"] !== "" ? { note: row["reason"] } : {}) })) };
     });
   }
+  /** Supplier and purchase commands; see purchasing.ts. */
+  listSuppliers(input: unknown): ReturnType<ShopService["listSuppliers"]> { return this.#run(() => purchasing.listSuppliers(this.#host, input)); }
+  getSupplier(input: unknown): ReturnType<ShopService["getSupplier"]> { return this.#run(() => purchasing.getSupplier(this.#host, input)); }
+  createSupplier(input: unknown): ReturnType<ShopService["createSupplier"]> { return this.#run(() => purchasing.createSupplier(this.#host, input)); }
+  updateSupplier(input: unknown): ReturnType<ShopService["updateSupplier"]> { return this.#run(() => purchasing.updateSupplier(this.#host, input)); }
+  paySupplier(input: unknown): ReturnType<ShopService["paySupplier"]> { return this.#run(() => purchasing.paySupplier(this.#host, input)); }
+  supplierStatement(input: unknown): ReturnType<ShopService["supplierStatement"]> { return this.#run(() => purchasing.supplierStatement(this.#host, input)); }
+  recordPurchase(input: unknown): ReturnType<ShopService["recordPurchase"]> { return this.#run(() => purchasing.recordPurchase(this.#host, input)); }
+  listPurchases(input: unknown): ReturnType<ShopService["listPurchases"]> { return this.#run(() => purchasing.listPurchases(this.#host, input)); }
+  getPurchase(input: unknown): ReturnType<ShopService["getPurchase"]> { return this.#run(() => purchasing.getPurchase(this.#host, input)); }
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): ReturnType<ShopService["getReceipt"]> {
     return this.#run(() => { const data = object(input, ["sessionId", "saleId"]); return receipt(this.#actor(data), uuid(data["saleId"])); });
@@ -470,9 +479,7 @@ export class DesktopApplication implements ShopService {
     return { id: category.id, name: category.name, active: category.active, version: category.updatedAt };
   }
   /** Local edits of the displayed version win locally even when this clock is behind the stored edit. */
-  #nextVersion(stored: string): string {
-    const now = this.ports.now(); return now > stored ? now : new Date(Date.parse(stored) + 1).toISOString();
-  }
+  #nextVersion(stored: string): string { return nextVersion(this.#host, stored); }
   #product(context: OperationContext, product: Product): ProductView {
     return { id: product.id, name: product.name, unit: product.unit, divisible: product.divisible, sellingPriceMinor: product.sellingPriceMinor,
       minimumStockThousandths: product.minimumStock, active: product.active, version: product.updatedAt, ...(product.categoryId === undefined ? {} : { categoryId: product.categoryId }),

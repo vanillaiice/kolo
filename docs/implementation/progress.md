@@ -598,3 +598,36 @@ discount and total; receipts show the discount. The host validates it against th
 subtotal before settlement and includes it in retry identity; legacy single-account
 requests cannot carry one. A host case covers authority, bounds, malformed values,
 overpayment after discount and conflicting retries.
+
+
+## 2026-10-09 — Desktop suppliers and purchases (F5)
+
+Implemented:
+
+- Purchases section with a purchase history and detail (lines, total, paid, owed), and a
+  delivery form: supplier search, delivery reference, product search adding lines with
+  editable quantity and unit cost (defaulting to the product cost), total, an amount paid
+  now from one account (defaulting to the total) and the remainder owed to the supplier.
+- Suppliers tab: list with payables and archived filter, versioned details with contact,
+  archive/restore, payments with stable ledger IDs and a signed statement shared with the
+  customer statement component.
+- Nine new named, validated IPC commands in `electron/purchasing.ts`, introduced with a
+  small `Host` interface so feature groups no longer grow `application.ts`.
+
+### Verification
+
+- Real-SQLite host cases cover stock received at cost, door payment plus payable,
+  order-insensitive retries, conflicts on door account/amount/reference/lines (door
+  payments located via the event's claimed movements), supplier payments and statements,
+  market purchases without a supplier, overpayment, missing supplier for a payable,
+  malformed/duplicate/fractional lines, foreign products, rollback failpoint, archived
+  supplier refusals, and inventory-role/cashier authority.
+- The actual Electron workflow creates a supplier, records a part-paid delivery through the
+  DOM, checks the supplier payable, and verifies the received stock after restart.
+- `npm run check` and `npm run smoke:desktop:workflow` passed.
+
+### Remaining
+
+Finance (accounts, transfers, reconciliation, expenses), reports, returns, staff and
+backup/exchange screens; receipt printing; hardware, accessibility/performance and
+Windows packaging acceptance.

@@ -382,3 +382,58 @@ it("sale discounts need discount authority, reduce the total before settlement a
     assert.equal(f.database.get("SELECT count(*) AS n FROM sales")!["n"],1);
   }finally{await f.dispose();}
 });
+it("purchases add stock at cost, pay at the door or owe the supplier, and retry by content including door payments",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),momo=await wallet(f,workspace),sessionId=value(await f.application.unlock({userId:workspace.members[0]!.id,secret:"654321"})).sessionId!;
+    const item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:0}))),oil=value(await f.application.createProduct(product(sessionId,{name:"Oil",barcode:"77",openingThousandths:0})));
+    const cash=value(await f.application.listPaymentAccounts({sessionId})).items.find(account=>account.kind==="CASH")!.id;
+    const supplier=value(await f.application.createSupplier({sessionId,requestId:randomUUID(),name:"Grossiste",contact:"Paul"}));
+    const request={sessionId,requestId:randomUUID(),supplierId:supplier.id,reference:"BL-12",lines:[{productId:item.id,quantity:10000,unitCostMinor:300},{productId:oil.id,quantity:2500,unitCostMinor:1000}],payment:{accountId:cash,amountMinor:2000}};
+    const purchase=value(await f.application.recordPurchase(request));assert.equal(value(await f.application.recordPurchase({...request,lines:[...request.lines].reverse()})).purchaseId,purchase.purchaseId);
+    for(const changed of [{payment:{accountId:momo,amountMinor:2000}},{payment:{accountId:cash,amountMinor:2100}},{reference:"BL-13"},{lines:[request.lines[0]!]}])failure(await f.application.recordPurchase({...request,...changed}),"request_conflict");
+    const detail=value(await f.application.getPurchase({sessionId,purchaseId:purchase.purchaseId}));
+    assert.deepEqual([detail.totalMinor,detail.paidMinor,detail.outstandingMinor,detail.supplierName,detail.lines.length],[5500,2000,3500,"Grossiste",2]);
+    assert.deepEqual(value(await f.application.listProducts({sessionId})).items.map(p=>[p.name,p.onHandThousandths]),[["Oil",2500],["Rice",10000]]);
+    assert.equal(value(await f.application.getSupplier({sessionId,supplierId:supplier.id})).outstandingMinor,3500);
+    const pay={sessionId,requestId:randomUUID(),supplierId:supplier.id,accountId:momo,amountMinor:1500,note:"Avance"};
+    assert.equal(value(await f.application.paySupplier(pay)).outstandingMinor,2000);assert.equal(value(await f.application.paySupplier(pay)).outstandingMinor,2000);
+    failure(await f.application.paySupplier({...pay,amountMinor:1}),"request_conflict");
+    const ledger=value(await f.application.supplierStatement({sessionId,supplierId:supplier.id})).items;
+    assert.deepEqual(ledger.map(entry=>[entry.type,entry.amountMinor]).sort(),[["PAYMENT",-1500],["PURCHASE",3500]]);
+    assert.equal(ledger.find(entry=>entry.type==="PURCHASE")!.purchaseId,purchase.purchaseId);
+    const market={sessionId,requestId:randomUUID(),lines:[{productId:item.id,quantity:1000,unitCostMinor:250}],payment:{accountId:cash,amountMinor:250}};
+    value(await f.application.recordPurchase(market));assert.equal(value(await f.application.recordPurchase(market)).purchaseId,market.requestId);
+    assert.deepEqual(value(await f.application.listPurchases({sessionId})).items.map(row=>row.totalMinor).sort(),[250,5500]);
+    for(const bad of [{payment:undefined},{payment:{accountId:cash,amountMinor:300}},{lines:[]},{lines:[{productId:item.id,quantity:500,unitCostMinor:250}]},
+      {lines:[market.lines[0]!,market.lines[0]!]},{reference:" "},{supplierId:"x"}])failure(await f.application.recordPurchase({...market,requestId:randomUUID(),...bad}),"invalid_input");
+    failure(await f.application.recordPurchase({...market,requestId:randomUUID(),lines:[{productId:randomUUID(),quantity:1000,unitCostMinor:250}]}),"scope_mismatch");
+    assert.equal(f.database.get("SELECT count(*) AS n FROM purchases")!["n"],2);
+  }finally{await f.dispose();}
+});
+it("supplier details are versioned and purchase authority is enforced; failed purchases leave nothing",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:0})));
+    const cash=value(await f.application.listPaymentAccounts({sessionId})).items[0]!.id,request={sessionId,requestId:randomUUID(),name:"Grossiste",phone:"699"};
+    const created=value(await f.application.createSupplier(request));assert.equal(value(await f.application.createSupplier(request)).id,created.id);
+    failure(await f.application.createSupplier({...request,name:"Other"}),"request_conflict");
+    const edit={sessionId,supplierId:created.id,version:created.version,name:"Grossiste SA",active:true};
+    const edited=value(await f.application.updateSupplier(edit));assert.deepEqual([edited.name,edited.phone],["Grossiste SA",undefined]);
+    failure(await f.application.updateSupplier({...edit,address:"Douala"}),"request_conflict");
+    f.database.run(`CREATE TRIGGER fail_purchase BEFORE INSERT ON local_audit WHEN NEW.action='PURCHASE_RECORDED' BEGIN SELECT RAISE(ABORT,'failpoint'); END`);
+    const purchase={sessionId,requestId:randomUUID(),supplierId:created.id,lines:[{productId:item.id,quantity:4000,unitCostMinor:300}]};
+    failure(await f.application.recordPurchase(purchase),"storage_failed");
+    assert.deepEqual([f.database.get("SELECT count(*) AS n FROM purchases")!["n"],value(await f.application.listProducts({sessionId})).items[0]!.onHandThousandths,value(await f.application.getSupplier({sessionId,supplierId:created.id})).outstandingMinor],[0,0,0]);
+    f.database.run("DROP TRIGGER fail_purchase");value(await f.application.recordPurchase(purchase));
+    assert.equal(value(await f.application.getSupplier({sessionId,supplierId:created.id})).outstandingMinor,1200);
+    value(await f.application.updateSupplier({...edit,version:edited.version,active:false}));
+    failure(await f.application.recordPurchase({...purchase,requestId:randomUUID()}),"scope_mismatch");
+    failure(await f.application.paySupplier({sessionId,requestId:randomUUID(),supplierId:created.id,accountId:cash,amountMinor:100}),"scope_mismatch");
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const keeperId=await createLocalMember(context,{name:"Stock",role:"INVENTORY",secret:"765432"}),cashierId=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"876543"});
+    const keeper=value(await f.application.unlock({userId:keeperId,secret:"765432"})).sessionId!;
+    failure(await f.application.recordPurchase({sessionId:keeper,requestId:randomUUID(),lines:[{productId:item.id,quantity:1000,unitCostMinor:1}],payment:{accountId:cash,amountMinor:1}}),"permission_denied");
+    assert.equal(value(await f.application.listPurchases({sessionId:keeper})).items.length,1);
+    const cashier=value(await f.application.unlock({userId:cashierId,secret:"876543"})).sessionId!;
+    failure(await f.application.listSuppliers({sessionId:cashier}),"permission_denied");failure(await f.application.listPurchases({sessionId:cashier}),"permission_denied");
+  }finally{await f.dispose();}
+});

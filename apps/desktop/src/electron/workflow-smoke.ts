@@ -20,6 +20,11 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
   const click = async (selector: string): Promise<void> => { await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`); };
   const submit = async (selector: string): Promise<void> => { await evaluate(`document.querySelector(${JSON.stringify(selector)}).closest('form').requestSubmit()`); };
   const press = async (scope: string, label: string): Promise<void> => { await evaluate(`Array.from(document.querySelectorAll(${JSON.stringify(scope)})).find(element=>element.textContent.trim()===${JSON.stringify(label)}).click()`); };
+  // Hidden sections stay mounted to keep drafts, so later sections act on visible elements only.
+  const visible = (selector: string): string => `Array.from(document.querySelectorAll(${JSON.stringify(selector)})).filter(element=>element.offsetParent!==null)`;
+  const clickVisible = async (selector: string, label?: string): Promise<void> => {
+    await evaluate(`${visible(selector)}.find(element=>${label === undefined ? "true" : `element.textContent.trim()===${JSON.stringify(label)}`}).click()`);
+  };
   const navigate = async (name: string): Promise<void> => { await evaluate(`Array.from(document.querySelectorAll('.nav-item')).find(element=>element.textContent.includes(${JSON.stringify(name)})).click()`); };
   if (phase === "create") {
     await wait("document.querySelector('#shop-name')!==null");
@@ -97,9 +102,19 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await navigate("Customers"); await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.facts')[0]?.textContent.includes('300');})()", "customer balance");
     await fill("#payment-amount", "100"); await submit("#payment-amount");
     await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.notice.success').length===1 && v('.facts')[0]?.textContent.includes('200') && v('.detail-layout tbody tr').length===2;})()", "customer payment");
+    // Purchase: a supplier delivery received at cost, part paid at the door and the rest owed.
+    await navigate("Purchases & suppliers"); await clickVisible(".tabs button", "Suppliers"); await clickVisible(".actions.spaced button");
+    await fill("#supplier-name", "Grossiste"); await submit("#supplier-name"); await wait(`${visible(".detail-layout h2")}[0]?.textContent==='Grossiste'`, "supplier created");
+    await clickVisible(".tabs button", "Purchases"); await clickVisible(".section-heading .primary");
+    await fill("#supplier-search", "Gro"); await wait(`${visible(".customer-results button")}.length===1`, "supplier search"); await clickVisible(".customer-results button");
+    await fill("#purchase-product", "Rice"); await wait(`${visible(".customer-results button")}.length===1`, "product search"); await clickVisible(".customer-results button");
+    await fill(".purchase-form .cell-input", "5"); await fill(".purchase-form td:nth-child(3) .cell-input", "300"); await fill("#purchase-paid", "500");
+    await wait(`${visible(".purchase-form .settlement-line")}[0]?.textContent.includes('1,000')`, "supplier payable");
+    await submit("#purchase-reference"); await wait("document.querySelector('.purchase-form')===null && document.querySelector('.receipt-layout tbody tr')!==null", "purchase recorded");
+    await clickVisible(".tabs button", "Suppliers"); await wait(`${visible(".facts")}[0]?.textContent.includes('1,000')`, "supplier balance");
     assert.equal(await evaluate("document.querySelector('.notice.error')===null"), true);
     await click(".topbar-actions .secondary"); await wait("document.querySelector('#local-secret')!==null");
-    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale and customer payment passed\n");
+    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment and supplier purchase passed\n");
   } else if (phase === "reopen") {
     await wait("document.querySelector('#local-secret')!==null");
     const state = await evaluate<string>("window.kolo.getWorkspace().then(result=>result.value.state)"); assert.equal(state, "locked");
@@ -108,7 +123,7 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await navigate("Receipts"); await wait("document.querySelector('.receipt-choice')!==null"); await click(".receipt-choice");
     await wait("document.querySelector('.receipt-paper')?.textContent.includes('Awa')");
     const stateAfter = await evaluate<{ stock: number; total: number }>(`(async()=>{const {sessionId}=(await window.kolo.getWorkspace()).value;const history=(await window.kolo.listReceipts({sessionId})).value;return {stock:(await window.kolo.listProducts({sessionId})).value.items[0].onHandThousandths,total:(await window.kolo.getReceipt({sessionId,saleId:history.items[0].id})).value.totalMinor};})()`);
-    assert.deepEqual(stateAfter, { stock: 3000, total: 500 });
+    assert.deepEqual(stateAfter, { stock: 8000, total: 500 });
     process.stdout.write("Actual Electron process restart, locked boot, credential unlock and persisted receipt/stock passed\n");
   } else throw new Error("unknown workflow smoke phase");
 }
