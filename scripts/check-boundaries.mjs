@@ -8,13 +8,14 @@ function walk(directory) {
 }
 let errors = 0;
 for (const root of ["packages/core/src", "packages/contracts/src", "apps/mobile/src", "apps/desktop/src/renderer", "apps/desktop/src/shared", "apps/server/src"]) {
-  for (const path of walk(root)) {
+  for (const nativePath of walk(root)) {
+    const path = nativePath.replaceAll("\\", "/");
     if (path.endsWith(".test.ts")) continue;
     const source = readFileSync(path, "utf8");
     const imports = [...source.matchAll(/(?:from\s+|import\s*\(|import\s+)["']([^"']+)["']/g)].map(match => match[1]);
     for (const specifier of imports) {
       let invalid = false;
-      if (path.startsWith("packages/")) invalid ||= /^(expo|react|electron|@nestjs)/.test(specifier) || specifier.includes("/apps/");
+      if (path.startsWith("packages/")) invalid ||= /^(expo|react|electron|fastify|@fastify)/.test(specifier) || specifier.includes("/apps/");
       if (path.startsWith("packages/contracts/")) invalid ||= /^(node:|@kolo\/core)/.test(specifier);
       if (path.startsWith("packages/core/")) invalid ||= specifier.startsWith("node:") && !path.endsWith("/database/node-sqlite.ts");
       if (path.startsWith("apps/mobile/") || path.startsWith("apps/desktop/src/renderer/") || path.startsWith("apps/desktop/src/shared/")) invalid ||= /^(node:|electron)/.test(specifier) || specifier.includes("database/node-sqlite");
