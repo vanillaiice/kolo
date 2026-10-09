@@ -13,7 +13,8 @@ Normal boot is offline create/unlock, with optional explicit legacy migration.
 empty database. Normal start does not seed data; an existing demo database is preserved.
 `npm run dev:desktop` builds and launches the first offline desktop workflow; it does not currently
 provide Vite hot reload. Pinned Electron downloads its runtime on first developer launch;
-standalone installers will bundle that runtime. `npm run smoke:desktop` verifies actual
+standalone installers bundle that runtime. `npm run dist:desktop:win` builds
+NSIS and portable artifacts without publishing; see [desktop release](desktop-release.md). `npm run smoke:desktop` verifies actual
 Electron SQLite/preload boot with a disposable database and requires a graphical session.
 `npm run smoke:desktop:workflow` adds actual setup/product/cash-sale/receipt DOM interaction
 and a second process to verify locked restart and persistence. `npm run dev:server` builds and watches emitted JS; rerun the
@@ -39,7 +40,7 @@ only. Source JSDoc and guides own invariants and planned behaviors.
 Existing core SQL/JSDoc/tests move together. Native wrappers and app imports now use
 package subpaths. Mobile native SDK versions stay Expo-controlled. Go fixtures are
 reference evidence; no financial behavior is removed merely because its server is
-archived. The Nest scaffold cannot replace a running Go deployment until F6 parity.
+archived. The Fastify scaffold cannot replace a running Go deployment until F6 parity.
 
 ## SQLite and PostgreSQL migrations
 
@@ -51,8 +52,8 @@ upgrade, preserve v1 outbox content and report totals, and reject databases newe
 the app. Migration completion is a transaction; do not start the UI against a partial
 schema. A released migration is immutable; fixes are a new migration.
 
-Nest will have its own versioned SQL migration runner in F6. Port archived schema
-constraints intentionally; do not run Go migrations from Nest by accident. Separate
+The server will have its own versioned SQL migration runner in F6. Port archived schema
+constraints intentionally; do not run Go migrations from the server by accident. Separate
 deployment migration command from request handling, acquire a migration lock, and
 verify version before declaring sync ready. SQL rollback that destroys new financial
 facts is forbidden; application downgrade requires compatible schema or verified restore.
@@ -90,7 +91,7 @@ database for a scaffold test.
 ## Upgrade methods
 
 One root lock records exact resolved versions. Update one stack at a time: TypeScript
-and Node, shared schemas, Nest, Electron, Expo/native modules. Regenerate lock via root
+and Node, shared schemas, Fastify, Electron, Expo/native modules. Regenerate lock via root
 install; run affected unit/integration/bundle/runtime checks. Electron bundles its own
 Node, so test its SQLite/preload runtime rather than assuming host Node behavior.
 Expo owns its React/React Native/native SDK version matrix.
@@ -109,3 +110,17 @@ Do not claim a feature from a schema declaration alone. The open F1 native gate 
 F2/F3 real SQLite convergence and Linux native backup/restore checks are recorded.
 Android/Windows installed-device transfer acceptance remains open; see
 [F3 native validation](f3-native-validation.md).
+
+## Android native test APK
+
+Install JDK 21 and the Expo SDK-compatible Android SDK/NDK; set `ANDROID_HOME` to
+the SDK directory. `npm run build:mobile:android` runs Android prebuild, assembles a
+release-variant APK with bundled JavaScript, and copies it to `release/mobile`. It
+limits Gradle workers to two and retains the generated project for incremental builds.
+Native directories remain generated/ignored. The manual Android CI workflow provides
+the same artifact. There is no Metro dependency at test runtime.
+
+This is a test APK using the generated debug signing identity, not a production store
+release. Versioning, release keystore management and store signing remain release work.
+An APK build does not verify SQLite/keystore runtime, offline shop-day behavior, TalkBack
+or recovery on a device; follow [F4 acceptance](f4-native-validation.md).

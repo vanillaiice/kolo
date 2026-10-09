@@ -7,7 +7,7 @@ on 2026-10-05 supersede the old Go/server-required setup architecture through AD
 ## Current state
 
 The active repository is an npm workspace: TypeScript core/contracts, Expo mobile,
-Electron desktop, NestJS server. Existing business/data logic and tests moved into
+Electron desktop, Fastify server (ADR-025). Existing business/data logic and tests moved into
 `packages/core/src` without redesigning behavior. `archive/legacy-go` preserves the
 previous server and pre-existing work. Historical root guidance is preserved in
 `docs/history/legacy-project-guidance.md`.
@@ -15,7 +15,7 @@ previous server and pre-existing work. Historical root guidance is preserved in
 Mobile has offline setup/unlock/recovery/staff and F4 operational screens/partial returns; demo is opt-in.
 F1 native acceptance remains pending; see the progress log and native validation guide. Desktop has a migrated
 local setup/unlock/recovery, product/category editing, stock movements/counts, split/credit
-till, customers, suppliers/purchases, accounts/expenses, reports, returns, staff, backup/pairing/exchange and receipt screens behind a validated command bridge. Broader management/transfer UI and Windows acceptance remain. Nest has health/readiness/capabilities,
+till, customers, suppliers/purchases, accounts/expenses, reports, returns, staff, backup/pairing/exchange and receipt screens behind a validated command bridge. Broader management/transfer UI and Windows acceptance remain. The Fastify server has health/readiness/capabilities,
 not synchronization. F2 provides shared exact rules, strict signed payloads, replay and destination receipts;
 F3 adds owner-confirmed pairing, encrypted backups/files and mobile transfer screens.
 Android/Windows transfer acceptance remains open; broader desktop workflows remain F5. Active mobile
@@ -29,7 +29,7 @@ a capability exists.
 ## Boundaries
 
 - Platform SDK wiring stays in apps. Shared code never imports Expo, React, Electron,
-  or Nest. Only the explicit Node SQLite adapter may import Node in the core.
+  or Fastify. Only the explicit Node SQLite adapter may import Node in the core.
 - `core/domain` holds existing pure screen/domain functions. Cart currently imports
   arithmetic from `core/rules`; compatibility exports remain in the data layer.
   Server code must not import the SQLite data layer.
@@ -42,7 +42,7 @@ a capability exists.
   from zero. Permission/tenant checks belong inside operations, not just screens.
 - Preserve origin identity when forwarding. Delivery is per destination. The v1 queue remains for compatibility;
   HTTP v1 sync is restricted to unconverted legacy workspaces.
-- SQLite migrations 1–20 are immutable. Migration 18 adds F3 pairing progress; 19 adds category ordering/indexes, 20 immutable returns. Add forward migrations; do not rewrite shipped
+- SQLite migrations 1–21 are immutable. Migration 18 adds F3 pairing progress; 19 adds category ordering/indexes, 20 immutable returns, 21 trigger-maintained accent-folded `search_name` keys (SQL pinned by a digest test). Add forward migrations; do not rewrite shipped
   schemas. Keep the Node/Expo synchronous transaction interface synchronous.
 - Go is an archived reference. Port rules/behavior, not repository plumbing.
 

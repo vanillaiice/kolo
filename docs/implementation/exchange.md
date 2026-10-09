@@ -16,7 +16,7 @@ and exact-digest owner review. `application/event-delivery` implements
 `createPeerReceipt` and `acknowledgeDelivery`.
 
 F3 adds encrypted native files, snapshots, pairing and mobile screens around these
-shared operations. Bluetooth and Nest v2 ingestion remain later phases. Read [ADR-021](../adr/ADR-021-signed-journal-and-late-event-policy.md)
+shared operations. Bluetooth and server v2 ingestion remain later phases. Read [ADR-021](../adr/ADR-021-signed-journal-and-late-event-policy.md)
 for byte encoding, trust, revisions and late-event decisions.
 
 ## Signed containers
@@ -96,7 +96,7 @@ Migration 17 copies v1 outbox/inbox IDs, positions and delivery metadata into an
 archive and declares unsigned baseline provenance. Original queues remain unchanged;
 old events and pruned history are never invented or retroactively signed. The HTTP v1
 engine accepts unconverted legacy workspaces only. New configured workspaces require
-signed v2 exchange; Nest parity is F6. Peer receipts cannot clear old cloud work.
+signed v2 exchange; server parity is F6. Peer receipts cannot clear old cloud work.
 No pruning is enabled without backup/baseline and peer retention rules.
 
 ## F3 backup and trusted file exchange
@@ -108,8 +108,10 @@ desktop has native crypto/active-slot/file-dialog adapters, with renderer work i
 
 AES-256-GCM with fresh nonce/salt and PBKDF2-SHA256/600,000 iterations protects the F2
 signed batches/receipts. File passwords are independent of unlock PINs. Input is bounded
-before allocation/KDF/application: 24 MiB encrypted file, 8 MiB batch, 16 MiB SQLite
-snapshot. No compressed archive is accepted. Previews have no business effects and
+before allocation/KDF/application: 48 MiB encrypted file, 32 MiB encrypted payload,
+8 MiB batch, 128 MiB SQLite snapshot. Content is deflated before encryption (format
+version 2) and inflated only up to its authenticated length; version 1 files remain
+readable ([ADR-026](../adr/ADR-026-compressed-transfer-files.md)). Previews have no business effects and
 actual imports recheck authority. Receipts can be regenerated after loss/cancellation;
 exports remain offered until the correct receiver's receipt arrives.
 

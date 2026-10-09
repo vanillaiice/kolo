@@ -1,6 +1,7 @@
 # F4 mobile acceptance procedure
 
-Status: software checks available; Android shop-day/hardware/accessibility/performance
+Status: software checks and a bundled native test APK are available through
+`npm run build:mobile:android`; Android shop-day/hardware/accessibility/performance
 acceptance has not run. F1/F3 native gates remain required. Record actual device model,
 Android version, RAM/storage, application/native build, scanner model/interface and
 receipt printer/model/interface. Do not substitute Expo export for installed validation.

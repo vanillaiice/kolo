@@ -17,8 +17,9 @@
   fails with `device offline`. A non-destructive `adb reconnect offline` removed
   the stale connection and left no attached devices. No usable emulator/device was
   available for acceptance.
-  This host's SDK has platforms/build tools 31/35 and lacks the emulator binary/AVD;
-  an actual Expo SDK 57 native build needs its compatible Android toolchain.
+  That was the 2026-10-06 environment. On 2026-10-09, SDK/build-tools 36, NDK
+  27.1.12297006 and JDK 21 build the actual Android release-variant test APK.
+  No device/emulator is attached; SecureStore runtime acceptance remains pending.
 
 ## Android acceptance procedure
 

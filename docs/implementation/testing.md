@@ -6,13 +6,17 @@
 |---|---|
 | `npm run boundaries` | Shared/platform/server/renderer import constraints |
 | `npm run typecheck` | Builds package declarations then checks all active workspaces |
-| `npm test` | Real SQLite business/core tests, contract failures, Nest HTTP, desktop persistence |
-| `npm run build` | Shared JS/declarations, Nest emitted JS, Electron main/preload/renderer |
+| `npm test` | Real SQLite business/core tests, contract failures, server HTTP, desktop persistence |
+| `npm run build` | Shared JS/declarations, server emitted JS, Electron main/preload/renderer |
 | `npm run smoke:server` | Build image and test real PostgreSQL readiness in disposable containers |
 | `npm run smoke:desktop:workflow` | Actual Electron DOM setup, OS-vault unlock, barcode/cash sale, persisted receipt and process restart with disposable data |
+| `npm run pack:desktop` / `dist:desktop:win` | Stage production dependencies and build unpacked / NSIS + portable artifacts without publishing |
+| `npm run smoke:desktop:packaged` | Packaged workflow, axe audits, minimize lock, renderer/main termination and persisted checkout |
+| `npm run benchmark:desktop` | Actual renderer/preload/SQLite timings with 10k products and 100k stock movements |
 | `npm run smoke:desktop` | Actual Electron SQLite/preload/renderer boot using disposable user data |
 | `npm run smoke:credentials` | Actual Electron crypto/OS vault contract in disposable user data; unavailable encryption exits 2 |
 | `npm run benchmark:credentials` | Five native KDF measurements on the host; does not verify OS storage |
+| `npm run build:mobile:android` | Expo prebuild and real native Android release-variant test APK with bundled JS; not device acceptance |
 | `npm run bundle:mobile` | Metro resolution of Expo workspace source/native entry imports |
 | `npm run docs:api` / `docs:check` | Current public declarations/JSDoc and local links |
 | `npm run check` | Boundaries + types + tests + docs + builds |
@@ -24,7 +28,7 @@ and real file-backed SQLite device-preference tests (restart, independent busine
 replacement, corrupt/unsupported values and failed-write retry). These host tests do
 not render React Native or exercise installed expo-sqlite. Native/platform verification
 is a separate gate.
-Nest controller tests make real HTTP requests. The real-PostgreSQL readiness test
+Server tests make real HTTP requests or Fastify `inject()` calls. The real-PostgreSQL readiness test
 skips without `KOLO_TEST_DATABASE_URL`; `npm run smoke:server` runs it in a fresh
 private Docker network/database and cleans up only its own resources. Electron persistence tests call the
 actual Node SQLite adapter on a temporary file and reopen it.
@@ -132,3 +136,25 @@ Desktop file tests cover bounded descriptor reads, cancellation, native AES and 
 overwrite. `npm run smoke:credentials` now also tests real Linux Electron/OS-vault backup,
 fresh restore and a new sale. Hardware gates still require Android/Windows installed
 native file dialogs, KDF/memory measurements and interrupted/power-loss activation drills.
+
+## Desktop release work (2026-10-09)
+
+See [desktop release](desktop-release.md) for the Windows CI, installed-version transition,
+credential checks, signing/manual update approach and pending target-platform evidence.
+Packaged Linux workflow and WCAG axe audits of setup, till, reports and transfer pass;
+this does not establish a Windows result or a full screen-reader audit.
+
+### Restoring a real backup (Linux or Windows/Wine)
+
+The `restore-file` workflow phase restores a supplied backup from a fresh installation's entry screen:
+
+```sh
+KOLO_DESKTOP_SMOKE_DIR=<empty dir> KOLO_DESKTOP_SMOKE_PHASE=restore-file \
+KOLO_DESKTOP_SMOKE_OPEN_FILE=<backup.json> KOLO_DESKTOP_SMOKE_OPEN_PASSWORD=<password> \
+KOLO_DESKTOP_SMOKE_OPEN_SHOP="<shop name>" KOLO_DESKTOP_AXE_PATH=node_modules/axe-core/axe.min.js \
+  node_modules/.bin/electron apps/desktop --workflow-smoke
+```
+
+Under Wine, run `wine release/desktop/win-unpacked/KOLO.exe --workflow-smoke` and give paths as `Z:/…`.
+A timeout writes its diagnostic to `workflow-smoke.log` in the smoke directory. `npm run demo:desktop`
+produces a suitable backup.

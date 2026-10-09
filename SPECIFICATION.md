@@ -7,7 +7,7 @@
 **Primary platforms:** Android / Desktop (Windows first)
 **Secondary platforms:** iOS / Optional web management
 **Client:** React Native/Expo mobile + Electron/React desktop; shared TypeScript core
-**Backend:** Optional NestJS + TypeScript (Go implementation archived as reference)
+**Backend:** Optional Fastify + TypeScript (Go implementation archived as reference)
 **Local database:** SQLite
 **Server database:** PostgreSQL
 **Architecture:** Standalone-first; optional file/Bluetooth/hosted/self-hosted event exchange
@@ -826,7 +826,7 @@ This is a foundational architectural requirement.
 
 Mobile and desktop each maintain a local SQLite database and perform all core
 operations locally, including first shop setup and local user authentication.
-The optional NestJS server maintains PostgreSQL for hosted or self-hosted exchange.
+The optional Fastify server maintains PostgreSQL for hosted or self-hosted exchange.
 A standalone installation needs no server or online account. File exchange and
 Bluetooth merge versioned events; snapshots are for bootstrap and backup/restore.
 
@@ -836,7 +836,7 @@ Electron desktop    ── Shared TypeScript core ── Local SQLite
                               │
                    File / Bluetooth / HTTP exchange
                               │
-                  Optional NestJS sync server
+                  Optional Fastify sync server
                               │
                           PostgreSQL
 ```
@@ -1038,14 +1038,14 @@ Conflict policies must be explicit.
 
 # 30. Server Architecture
 
-The optional backend is implemented in NestJS + TypeScript. Shared pure rules and
+The optional backend is implemented in Fastify + TypeScript (ADR-025). Shared pure rules and
 contracts are reused from packages; PostgreSQL and SQLite repositories remain separate.
 The old Go backend is preserved in `archive/legacy-go` for parity/migration reference.
 
 High-level structure:
 
 ```text
-NestJS Backend
+Fastify Backend
 
 API
 ├── Authentication
@@ -1726,7 +1726,7 @@ Integrations
 apps/
   mobile/          Expo/React Native and native adapters
   desktop/         Electron main/preload + React renderer
-  server/          Optional NestJS server
+  server/          Optional Fastify server
 packages/
   core/            Shared business rules, local SQLite operations, replay
   contracts/       Versioned runtime-validated exchange/API contracts
@@ -1859,7 +1859,7 @@ Client:
 React Native + TypeScript
 
 Backend:
-Optional NestJS + TypeScript
+Optional Fastify + TypeScript
 
 Local database:
 SQLite
@@ -2186,7 +2186,7 @@ The accepted baseline as of 2026-10-05 (ADR-017–019):
 | Desktop | Electron + React + TypeScript |
 | Shared business core | Strict TypeScript; pure rules plus explicit storage adapters |
 | Local operational database | SQLite on every installed client |
-| Optional server | NestJS + TypeScript, explicit PostgreSQL repositories |
+| Optional server | Fastify + TypeScript, explicit PostgreSQL repositories |
 | Server database | PostgreSQL |
 | Exchange | Immutable versioned events; file/Bluetooth/HTTP transports |
 | Product editions | Standalone mobile/desktop, hosted subscription, self-hosted server |

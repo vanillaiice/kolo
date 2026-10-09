@@ -782,3 +782,220 @@ accessibility and cross-device acceptance listed in the desktop guide.
 ### Verification
 
 - `npm run check`, `npm run bundle:mobile` and `npm run smoke:desktop:workflow` passed.
+
+## 2026-10-09 — Desktop shipping, recovery and accessibility; mobile next
+
+User manually tested desktop and reported LGTM. Product scope reaffirmed: two installed
+clients with independent local SQLite, shared rules and event exchange, and an optional
+paid hosted event-sync server. Physical hardware and cross-device acceptance are deferred.
+
+Implemented Rebar Studio-style electron-builder packaging: self-contained production
+staging, ASAR/fuses, Windows x64 NSIS/portable, stable existing app-data location, retained
+shop data on uninstall, Windows acceptance CI and draft-release artifacts/checksums.
+Initial updates use full installers; background automatic updating and production
+signing credentials/provider are not configured. Windows CI exercises real Electron
+credentials and a baseline-to-current installer version transition with disposable data.
+
+Extended the Electron workflow with native owner-code recovery, minimize lock, renderer
+termination/locked reload, and a forced main-process kill after checkout. The sale must
+survive once with expected stock. Shutdown now refuses incoming IPC and avoids sending
+notifications into a disposed renderer. Added localized keyboard skip navigation,
+scrollable sidebar, readable secondary text and axe WCAG audits. Windows shell quoting
+and path normalization in test/documentation/boundary tools were corrected. Overview
+docs now describe the completed desktop software and current two-client priority.
+
+### Verification and limits
+
+- `npm run check` and final packaged Linux workflow pass, including native owner
+  recovery, accessibility audits and forced-termination persistence.
+- Actual and packaged Linux workflows passed, including native vault, backup/restore,
+  keyboard scanner, axe setup/till/reports/transfer, renderer kill and durable checkout kill.
+- Windows NSIS and portable artifacts build successfully on Linux; Windows acceptance CI
+  has been configured but has not run here. Cross-compilation is not a DPAPI/installer result.
+- Production archive inspection finds core/contracts/Zod and excludes axe, builder,
+  mobile and server application code.
+- Large fixture: 10k products/100k movements on Ryzen 7 7730U, ~15 GiB RAM. First
+  runtime sample: startup-to-renderer 268 ms, search p95 30.6 ms, barcode p95 0.9 ms,
+  stock-value report p95 626.8 ms, checkout p95 27.6 ms; main RSS ~245 MiB and renderer
+  working set ~121 MiB. A second sample during Android compilation had search p95
+  65.1 ms and checkout p95 270.9 ms. These are host measurements, not target-PC budgets.
+- Clean Windows-user default data/uninstall retention, interactive dialogs/OS locking,
+  assistive technology, low-cost-PC budgets and signing remain pending evidence.
+
+See [desktop release](desktop-release.md). Mobile native build validation has started;
+no Android device or emulator is attached. Native installation acceptance remains open.
+
+## 2026-10-09 — Mobile native APK build and first accessibility fixes
+
+A real Android release-variant APK now builds from Expo prebuild with bundled JavaScript
+and the native SQLite, SecureStore, Nitro and QuickCrypto modules. Added
+`npm run build:mobile:android` and a manual Android test-APK CI workflow; artifacts
+are copied to `release/mobile`. Native projects remain generated/ignored. This is
+a locally installable test build using generated debug signing, not a store release.
+
+Radio choices in operational forms, staff and transfer now expose `checked` instead
+of `selected` for correct assistive-technology semantics. Added SDK-matched
+`expo-system-ui` 57.0.2 for the configured light appearance and removed the ignored
+Android edge-to-edge customization. Expo 57.0.15 and React Native 0.86.2 remain unchanged.
+Targeted `shell-quote` 1.10.0 → 1.12.0 removes the reported critical build-tool advisory.
+Other reported Expo/Metro and builder transitive advisories remain a release gate;
+blanket audit fixes proposing an older Expo/React Native line were not applied.
+
+### Verification and remaining work
+
+- First native build passed with JDK 21, Android SDK/build-tools 36, NDK 27.1.12297006
+  and Gradle 9.3.1; all four Android ABIs were built. The updated build also passes
+  through `npm run build:mobile:android`, producing
+  `release/mobile/KOLO-0.0.0-android-test.apk` with bundled JavaScript.
+- `adb devices -l` reports no attached devices; there is no installed emulator binary.
+  Native build success does not establish offline SQLite/keystore runtime acceptance.
+- Next mobile acceptance: install the test APK, execute offline setup/shop-day/restart,
+  credential recovery, backup/restore, permissions, large text and TalkBack. Physical
+  scanners/printers and desktop/mobile exchange remain deferred by user direction.
+
+Final verification for this work: `npm run check`, `npm run bundle:mobile`, final
+packaged Linux workflow and final native Android APK build pass. Android APK signature
+verifies with the generated Android Debug certificate; package `cm.kolo.app`, minimum
+API 24, target API 36, all four ABIs, non-debuggable release manifest. Windows artifact
+PE certificate tables confirm unsigned builds, compiled files match final source, and
+SHA-256 sums are saved beside the NSIS/portable executables. No release was published.
+
+## 2026-10-09 — Linux AppImage for user testing
+
+Added `npm run dist:desktop:linux` and electron-builder's x64 AppImage target.
+`release/desktop/KOLO-0.1.0-linux-x86_64.AppImage` builds successfully and is executable.
+Actual AppImage launch in extract-and-run mode passes the disposable boot, local SQLite
+and preload IPC smoke. Documentation checks pass and the artifact SHA-256 is recorded
+in `release/desktop/SHA256SUMS.txt`. FUSE-mounted and target-user shop acceptance remain
+separate from this launch check. No artifact was published.
+
+## 2026-10-09 — Desktop 0.1.1: start fresh after forgotten codes
+
+User forgot all codes and confirmed that the previous data is not needed. Added
+"Start a new shop" to locked, pending-setup and legacy screens, with typed name
+confirmation and a fresh setup using new codes. The existing "Forgot your code?"
+form now explains the saved recovery key and the fresh-start alternative.
+
+One strict IPC command `startNewShop` stages/migrates an empty database and atomically
+activates its slot using the restore/pairing infrastructure. It never grants access
+to existing data and retains old database/credential files separately. Unlocked,
+missing/malformed and unconfirmed requests are refused; activation failure leaves
+the previous shop active. Native identity work stays single-flight.
+
+Desktop version is 0.1.1 so the updated AppImage can sit alongside the running 0.1.0
+build. Real-SQLite host tests pass for fresh activation, old-fact retention, empty
+restart, new-code setup, old-session refusal and failed-activation recovery. The actual
+Electron workflow adds locked-screen/confirmation accessibility audits and fresh setup
+without the old code, followed by process restart and new-code unlock.
+
+Verification: `npm run check` and the final packaged Electron workflow pass, including
+new locked-screen/fresh-confirmation axe audits, confirmation refusal, fresh setup
+without the old code and new-code unlock after restart. The 0.1.1 AppImage builds
+and passes its actual extract-and-run SQLite/preload boot smoke.
+
+### Desktop saved-shop picker — 2026-10-09
+
+Added **Open a saved shop** / **Ouvrir une boutique conservée** to the welcome and locked screens. The main process enumerates retained local shop databases without exposing business data or credentials, excluding the current slot, staging files, empty databases, and unreadable files. Selection uses the durable slot generation check and serves the selected database locked; its original credentials are required. Both databases remain on disk.
+
+Validation: full `npm run check` passed; real SQLite tests reopen the retained shop with its original code and product after restart and reject forged paths and unlocked selection. Packaged Electron workflow passed saved-shop selection, accessibility audit, original-code login and another process restart. Linux AppImage 0.1.2 built.
+
+### Desktop entry redesign — 2026-10-09
+
+Replaced the compact stacked entry card with a desktop task panel and contextual side panel. The welcome screen explains new-shop creation, backup restoration and joining another till, alongside retained shops. Setup has two steps, preserves names when going back, and offers optional till/cash account customization. Login names the selected shop and keeps switching separate from code recovery. Code recovery explains the owner key and returns to login with a success message. The owner appears first in the login roster so recovery returns to the intended account. Restore/join entry screens explain file requirements and display stage headings; Back waits for staged-file cleanup and is disabled during native work. The recovery-key dialog explains how to save the key.
+
+Validation: full repository `npm run check` passed, followed by desktop typechecks and tests after final roster/validation refinements. The actual packaged Electron workflow passed welcome/create/restore/join accessibility checks, two-step setup with back navigation and mismatched-code rejection, login at 880×620, recovery through the DOM, fresh setup, saved-shop reopening and restart persistence. Screenshots were reviewed at desktop and compact window sizes. Linux AppImage 0.1.3 built and its disposable runtime boot/SQLite/preload smoke passed. User app data was not changed during implementation or verification.
+
+### Desktop light and dark themes — 2026-10-09
+
+The desktop stylesheet now uses semantic color tokens with light and dark sets selected by the system appearance. Green anchors the workspace, with yellow and red as small accents; the sidebar keeps a dark green palette in both themes and printed receipts stay light. Electron follows `nativeTheme` and updates the window background when the system appearance changes, so there is no light flash in dark mode.
+
+Validation: full `npm run check` passed. The actual Electron workflow audits every captured screen with axe-core WCAG 2 A/AA and 2.1 AA in both light and dark appearance, and asserts the theme token follows native appearance changes. Light/dark screenshots were reviewed. The packaged Electron workflow passed, and Linux AppImage 0.1.4 built and passed its extract-and-run SQLite/preload boot smoke.
+
+### Desktop settings page and softer dark theme — 2026-10-09
+
+After user feedback that the dark theme was too dark, its palette was lifted to softer green-grey surfaces (canvas `#1f2b25`) with the same semantic tokens. A **Settings / Paramètres** page, available to every signed-in user, chooses the appearance (System, Light, Dark) and the language for this computer. The appearance is a renderer preference stored locally and applied before the first paint; "System" follows the OS theme, and explicit choices override it on screen while printed receipts stay light. The native window background before the first paint still follows the OS theme.
+
+Validation: the actual Electron workflow audits Settings in light and dark, selects Dark over a light OS theme and Light over a dark one, checks the persisted choice and returns to System. Screenshots were reviewed. Full `npm run check` and the packaged Electron workflow passed; Linux AppImage 0.1.5 built and passed its extract-and-run boot smoke.
+
+### Desktop stay signed in — 2026-10-09
+
+At the user's request, the desktop keeps the last signed-in user open across restarts unless **Settings → Stay signed in on this computer** is turned off (on by default). Core adds `rememberMember`/`resumeWorkspace`: the remembered record names the business, user and current credential reference and is stored only in the OS-protected vault; resuming rechecks active business/device/member, lockout and an unchanged credential, so code resets, owner recovery, restore and pairing invalidate it. While on, minimize and OS lock/suspend do not lock; renderer loss/navigation still locks the running session. **Lock** and owner recovery forget the remembered user. The initial renderer load no longer counts as a locking navigation. Desktop version is 0.1.6.
+
+Validation: core real-SQLite tests cover resume without secret proof, unchanged permissions, forged/changed/foreign credentials, suspended member/device, lockout and in-flight unlock. Desktop host tests use real SQLite, vault files and the session-memory module across restarts: default on, away vs integrity locks, Lock, turning off/on, owner recovery, forged and suspended remembered users, malformed commands and encrypted, damaged or missing records. The actual Electron workflow turns the option off before the locked-boot phases, then turns it on from Settings, minimizes without locking, restarts directly into the till, locks and restarts locked. Full `npm run check` and the packaged workflow passed; Linux AppImage 0.1.6 built and passed its extract-and-run boot smoke.
+
+### Desktop receipt branding and layout pass — 2026-10-09
+
+Receipts end with a thank-you line and "Generated by kolo · made by hblabs" (French: "Généré par kolo · conçu par hblabs"), shown on screen and printed; the "saved on this computer" note is screen-only. A layout pass unified control heights (inputs, selects and buttons at 46px), reserved a stable scrollbar gutter so pages no longer shift sideways, aligned cart quantities with their amounts, gave till settlement rows one spacing rhythm and full-width payment rows, widened create forms to the detail width, spaced staff permission groups, and laid backup/pairing panels out as an even two-column grid. Desktop version is 0.1.7.
+
+Validation: the actual Electron workflow asserts the receipt footer and renders the print stylesheet to PDF; it now also captures the working screens (product form/detail, till cart and credit settlement, receipts, customer, supplier, purchase, account count, expenses, return, staff, backup/restore) when a screenshot directory is set. Screenshots and the receipt PDF were reviewed. Full `npm run check` and the packaged workflow passed; Linux AppImage 0.1.7 built and passed its extract-and-run boot smoke.
+
+The credit is written "kolo" and "hblabs" in lowercase (user correction); Linux AppImage 0.1.9 carries it.
+
+### Desktop show/hide for codes and passwords — 2026-10-09
+
+Every code and password field (login, setup, recovery, staff codes, backup/restore/pairing passwords) has a **Show / Afficher** toggle beside the input that reveals the typed value and switches to **Hide / Masquer**. The toggle is a separate button outside the field's label, names the field it controls and is disabled with the field. Desktop version is 0.1.10.
+
+Validation: the actual Electron workflow types a code on the login screen, reveals it, runs the axe audit in light and dark, hides it and then unlocks normally. Full `npm run check` and the packaged workflow passed; Linux AppImage 0.1.10 built and passed its extract-and-run boot smoke.
+
+### Desktop terms, privacy notice and open-source notices — 2026-10-09
+
+Added basic French/English **Terms of use**, a **Privacy notice** and **Open-source software** notices (effective 2026-10-09), shown in an in-app reader opened from the entry-screen footer, from setup step 2 ("By creating the shop, you accept…") and from a new **Settings → About** panel that also shows the app version (injected from the desktop package at build time). The texts describe actual behaviour: offline, no data sent to hblabs, local SQLite and OS-protected codes, encrypted user-placed files, the shop owner's responsibility for customer/staff data, not a certified fiscal device, "as is" with limited liability, and stay-signed-in on shared computers. The open-source list covers the shipped Electron, Chromium, Node.js, React/React DOM/Scheduler and Zod, whose full Electron/Chromium texts are installed with the app. They are templates written without legal review: governing law, a contact address and fiscal-certification claims still need confirmation by the user. Desktop version is 0.1.11.
+
+Validation: the actual Electron workflow opens the terms from the French welcome footer, audits the reader in light and dark, switches to privacy and open-source tabs, closes it, checks the setup acceptance line and the Settings version. Full `npm run check` and the packaged workflow passed; Linux AppImage 0.1.11 built and passed its extract-and-run boot smoke.
+
+### Server framework: Fastify — 2026-10-09
+
+Replaced the NestJS/Express scaffold with Fastify 5 ([ADR-025](../adr/ADR-025-fastify-server.md)); `@nestjs/*`, `reflect-metadata`, `rxjs` and decorator compiler options are gone. Routes and responses are unchanged (`/healthz`, `/readyz`, `/api/v2/capabilities`). New: unknown routes, malformed bodies and unexpected failures return a uniform `{"error":{"code":…}}` (`not_found`, `bad_request`, `internal`) without internals, and SIGTERM/SIGINT close the listener and PostgreSQL pool. Earlier entries that say "Nest" refer to this server. No client code changed. Licensing (ADR-024): clients GPL-3.0, server closed for now.
+
+Validation: server tests pass, including readiness against a real PostgreSQL 17 container.
+
+### Desktop demo shop generator — 2026-10-09
+
+`npm run demo:desktop -- [directory] [days]` builds "Alimentation Chez Mama Ngono" through the real `DesktopApplication` operations with a simulated clock (default 45 days ending 2026-10-09): 51 products in 7 categories with barcodes and reorder levels, cash/MTN/Orange/bank accounts, an owner, cashier and manager (credit allowed), 10 customers with credit limits, 5 suppliers, about 1,100 sales (cash, mobile money, split, credit, discounts), deliveries with partial payments, customer and supplier payments, expenses, returns, damage, counts, cash counts and bank deposits. It writes an encrypted backup (`kolo-demo-2026`) plus a README into `kolo-demo/` (git-ignored), then restores that backup on a fresh installation and checks the sales report. Staff codes do not travel in backups; the owner resets them after restore.
+
+**Limit found and fixed the same day:** such a shop grows its database about 0.3 MiB per day, and backups refused snapshots above 16 MiB after roughly 50 days. See "Compressed transfer files" below.
+
+### Compressed transfer files — 2026-10-09
+
+Encrypted files are now `kolo.encrypted` format version 2 ([ADR-026](../adr/ADR-026-compressed-transfer-files.md)): content is deflated with fflate before AES-256-GCM, and the header authenticates `compression`, the encrypted length and the exact decompressed `content_bytes`. Inflation writes into a buffer one byte larger than that length and refuses any mismatch, so lying or bomb streams cannot allocate beyond the cap. Version 1 files still decrypt. Limits moved to `@kolo/contracts/transfer`: 128 MiB raw snapshot (previously 16), 32 MiB encrypted payload, 48 MiB file (previously 24); the signed manifest's `snapshot_bytes` cap follows. A 90-day demo shop (25.5 MiB raw) produces a backup of about 6 MiB. Older installations reject version 2 files with `unsupported_version`. Peak backup/restore memory at the new ceiling is unmeasured on Android/Windows hardware and remains part of the F3/F5 native gates.
+
+Validation: new core tests cover the version 2 round trip and header authentication, legacy version 1 decryption, refusal of authenticated streams that expand beyond or fall short of their declared length or are not deflate data, refusal of incompressible content above the payload cap, and an end-to-end backup/restore of a shop whose snapshot exceeds the former 16 MiB cap. The demo generator now defaults to 90 days and verifies its restore.
+
+Desktop version is 0.1.12 (compressed transfer files); Linux AppImage and Windows NSIS/portable 0.1.12 built and the packaged workflow smoke passed.
+
+### Bundled Inter font — 2026-10-09
+
+The desktop renderer now ships Inter (`@fontsource-variable/inter`, SIL OFL 1.1) instead of relying on installed fonts, which fell back to an unattractive default under Wine and on PCs without Inter or Segoe UI. The variable woff2 subsets (about 220 KB) are emitted as app files allowed by the existing `default-src 'self'` policy. Settings → About → Open-source software lists Inter and shows the full OFL text. The actual Electron workflow now asserts that the bundled face loads. Desktop version is 0.1.13.
+
+### Windows restore activation, licence and field alignment — 2026-10-09
+
+**Fixed: restore and pairing activation failed on Windows** ("La nouvelle boutique n'a pas pu être activée"). After renaming the staged database, `nodeWorkspaceFiles` fsynced it through a read-only handle. Windows `FlushFileBuffers` requires write access, so this failed with EPERM and every desktop restore/pairing activation on Windows was refused; Linux accepts it, so Linux tests passed. The file is now opened read-write for the fsync. Reproduced and verified with the Windows build under Wine 11.18: a new `restore-file` workflow-smoke phase restores a supplied backup (`KOLO_DESKTOP_SMOKE_OPEN_FILE`, `_PASSWORD`, `_SHOP`) from the entry screen of a fresh installation. It failed with `activation_failed` before the fix and passes after it. Workflow timeouts are also appended to `workflow-smoke.log` in the disposable profile, because Windows GUI builds under Wine expose no console. The Windows CI job (`npm run check`, packaged workflow smoke) exercises the same activation and would have caught this once it runs.
+
+**Licence:** client packages (desktop, mobile, core, contracts) carry the canonical GPL-3.0 text as `LICENSE` and `"license": "GPL-3.0-only"`; the closed server is `UNLICENSED`. The in-app terms (section 2) now grant the GPL-3.0 instead of forbidding redistribution, and state that the kolo/hblabs names and logos are not licensed. The open-source notices show the full GPL text. The terms say source is provided under the GPL but give no URL yet; add one when the repository is public.
+
+**Alignment:** in paired fields, when one label wraps (French), inputs now share a baseline (`.two-fields > .field` aligns to the end), except rows holding a customer/supplier search whose results list grows.
+
+Desktop version is 0.1.14.
+
+### Restore or join from the login page — 2026-10-09
+
+The login page of an existing shop now offers **Restore a backup** and **Join a shop from another till** under "other options", as the first-run welcome screen already did. Both reuse the existing safe switch: the user types the current shop's name, that shop is kept as a saved shop (reopenable with its usual code), and the file is restored or joined into a separate empty slot. Previously restore was only reachable on a computer with no shop, so it was missing on any installation already in use. The `restore-file` workflow phase now also covers this path: run after `create` in the same directory, it restores from the login page and checks the previous shop is still listed. Desktop version is 0.1.15.
+
+### Simplified desktop entry: one shop per computer — 2026-10-09
+
+User decision: one shop per computer; the entry offers sign-in, forgotten-code recovery and import. Replaces the previous entry, which reached restore by two routes and offered saved shops, start-a-new-shop and join from several screens (including the login-page additions in 0.1.15).
+
+- New computer: **Create a shop** or **Import a file**. Computer with a shop: login, **Forgot your code?**, **Import a backup**. Legacy tills: import a backup or start a new shop.
+- `chooseImportFile` opens one native dialog and recognizes a backup or pairing invite by structure (anything else is `invalid_file`); `openBackup`/`openInvite` then use that file without a second dialog.
+- Signed out on a computer with a shop, `restoreBackup` needs `replace: true` (otherwise `not_empty`). It validates the new code first, moves the current shop aside as a safety copy, restores into a fresh slot and, if the restore fails, selects the previous shop again. `nodeWorkspaceFiles` exposes `activeId()` for that rollback.
+- Removed from the UI: saved-shops page and pickers, start-a-new-shop from login, separate join entry, the shop-name detour before restore. `savedShops`/`openSavedShop`/`startNewShop` remain in the bridge (support recovery of safety copies; legacy start-over).
+
+Validation: new desktop host tests cover file recognition (backup, invite, malformed, cancelled, no second dialog), refusal without `replace`, malformed `replace` and an invalid code before any switch, replacement with a persisted safety copy, and rollback to the previous shop when the restore fails after the switch. The actual Electron workflow now checks the welcome screen offers exactly create/import, and replaces the fresh/saved-shop phases with `import-replace` (login → import → password → warning naming the current shop → restore → unlock → safety copy listed) and `import-reopen` (survives restart). Desktop version is 0.1.16.
+
+### Units, list layouts and accent-insensitive search — 2026-10-09
+
+- **Plural units:** `formatQuantityWithUnit`/`pluralUnit` (core `domain/money`) pick singular or plural with `Intl.PluralRules` (French keeps 0, 1 and 1,5 singular; English only 1) and pluralize shop-entered units ("24 sachets", "12 morceaux", "4 bocaux"; English "3 batteries", "0 boxes"). Symbols and abbreviations (kg, L, m², PCS, two letters or fewer, digits, full stops) and words ending in s/x/z are unchanged; only the first word of "sac de 50 kg" changes. Used for stock on product lists, minimum stock, count differences and till tiles.
+- **Lists:** purchase and receipt history span the page; selecting a row adds the detail beside it (`.record-layout`). Receipt history is a table (date, short receipt number `V-` + last eight characters, customer, total; the receipt still shows the full number). `receipts()` now returns each sale's `totalMinor` and `customerName`, computed by the same rules as the receipt itself. Tables have no divider under their last row.
+- **Search:** migration 21 adds `search_name` to products, categories, customers, suppliers and financial accounts: the name folded for accents, ligatures (œ, æ), curly apostrophes and ASCII case, backfilled on upgrade and kept current by insert/rename triggers. Catalogue, till and report searches compare it with the term folded the same way in JavaScript, so "cafe" finds "Café". Folding inside each query measured 139 ms per search on the 10,000-product benchmark; the stored key measures 13 ms (12 ms before the change). Tests run real SQLite: folding agreement between SQL and JavaScript for every mapped character, backfill, insert/rename triggers, wildcard escaping, and a digest pinning migration 21's SQL.
+
+Desktop version is 0.1.17.

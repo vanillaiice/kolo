@@ -4,16 +4,20 @@ Accepted 2026-10-05. Sequence is driven by the standalone product: a server must
 be needed to create a shop or complete a sale. Estimates are intentionally omitted
 until the device/desktop spikes measure the remaining native work.
 
-**Priority update (2026-10-06):** The user requested desktop/web first before further
-mobile work. F5 is the next active implementation phase; F4 native acceptance remains
-open. Existing F1–F4 shared business logic is reused. See [desktop implementation](desktop.md)
-for the first usable offline desktop milestone and the separate browser scope.
+**Priority update (2026-10-09):** Two installed clients, desktop and mobile, each
+with local SQLite and shared business/event rules. File/Bluetooth/future transports
+merge events; an optional paid hosted server stores and synchronizes those events.
+Self-hosting remains a deployment option. Desktop software packages are complete;
+release work now covers packaging, Windows credentials, recovery, performance,
+accessibility and documentation. Physical hardware and cross-device acceptance are
+deferred. Mobile is the next focus after this desktop work; browser delivery is deferred.
+See [desktop implementation](desktop.md) and [desktop release](desktop-release.md).
 
 ## F0 — Repository and stack foundations
 
 **Dependencies:** existing implementation. **Delivered in this change:** npm workspaces,
 one root lock, shared-core extraction, native wiring retained in mobile, Electron boot
-and persistent SQLite adapter, Nest health/readiness/capabilities, versioned exchange
+and persistent SQLite adapter, server health/readiness/capabilities, versioned exchange
 envelope validation, explicit Go archive, documentation/reference generation, CI.
 
 **Acceptance:** existing core tests still pass; all workspaces typecheck; dependency
@@ -184,10 +188,10 @@ restart workflow is implemented and verified in actual Linux Electron, followed 
 editing/archive, categories, manual stock movements, counts and history, split/credit checkout
 and customers with payments and statements, discounts, suppliers and purchases, accounts/transfers/counts, expenses, reports, returns, staff, and backup/restore, pairing and file exchange through native dialogs. Named validated
 IPC, opaque host authority, recovery, bounded reads and reusable React DOM screens
-are in place. Broader management/transfer UI and Windows/hardware acceptance remain.
-See [desktop implementation](desktop.md). Browser delivery still needs an explicit
-runtime/storage or server-API choice; the user confirmed desktop first with reusable
-React UI for that later browser version.
+and OS-dialog receipt printing are in place. Windows release acceptance remains;
+physical hardware and cross-device acceptance are deferred.
+See [desktop implementation](desktop.md). Browser delivery is deferred; the reusable
+DOM service boundary does not introduce a third client into the current release scope.
 
 **Dependencies:** F1/F2; F3 for exchange; F4 business behavior may guide UI.
 
@@ -204,7 +208,7 @@ tools, sells, prints, restarts, restores, and exchanges with mobile. Renderer es
 untrusted navigation and malformed IPC cannot access unrestricted files/SQL. Measure
 startup/search latency/memory on target hardware and record budgets/results.
 
-## F6 — Optional NestJS synchronization server
+## F6 — Optional Fastify synchronization server
 
 **Dependencies:** F2/F3 format/identity. **Modules:** identity, enrollment, memberships,
 sync, domain appliers, reports, audit, postgres; contracts shared with clients.
@@ -222,7 +226,7 @@ structured errors without logging credentials or full financial payloads.
 
 **Acceptance:** real clients synchronize with real PostgreSQL, survive delayed/reordered
 events and lost responses, and converge. Cross-tenant reads/writes are impossible via
-HTTP/repositories. Invalid events are visible and retained. Nest behavior matches the
+HTTP/repositories. Invalid events are visible and retained. Server behavior matches the
 archived fixtures for money, sales, credit, cash and purchases.
 
 ## F7 — Hosted subscription and self-hosted edition

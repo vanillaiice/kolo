@@ -38,7 +38,7 @@ infer them from shared tests or Linux runtime success:
    active-pointer commit. Before commit, the old slot remains; after commit, restart
    selects the new slot. Run actual power-loss/file-system durability drills, including
    missing active file and retained old file. Never delete business databases as a test.
-5. Measure 600,000-iteration PBKDF2 latency, 16 MiB snapshot and 8 MiB batch memory/UI
+5. Measure 600,000-iteration PBKDF2 latency, snapshot (up to 128 MiB raw, deflated) and 8 MiB batch memory/UI
    responsiveness on low-cost Android and supported Windows hardware. Review native
    AES-GCM/Ed25519, SecureStore/DPAPI, backup exclusion, protected directory permissions,
    plaintext-buffer lifetimes and password handling. Record hardware/OS/app versions.

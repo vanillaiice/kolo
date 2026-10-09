@@ -4,7 +4,7 @@
 
 Default development address: `http://127.0.0.1:8080`. No route accepts business writes,
 credentials or event pushes yet. No migration runs automatically. HTTP tests start a
-real Nest listener on an ephemeral port; optional PostgreSQL readiness uses a real pool.
+real Fastify listener or `inject()` on an ephemeral port; optional PostgreSQL readiness uses a real pool.
 
 | Method/path | Auth | Result |
 |---|---|---|
@@ -13,9 +13,10 @@ real Nest listener on an ephemeral port; optional PostgreSQL readiness uses a re
 | `GET /api/v2/capabilities` | None | 200 API 2, exchange format 1, `sync:false`, `enrollment:false` |
 
 The current core/mobile HTTP implementation speaks archived `/api/v1`; it is not
-compatible with future v2 merely by changing `API_BASE_URL`. Nest advertises disabled
-features until implemented. Missing Nest routes currently use Nest's default 404 shape;
-the uniform error filter below is planned in F6, not silently claimed as implemented.
+compatible with future v2 merely by changing `API_BASE_URL`. The server advertises disabled
+features until implemented. Unknown routes return 404 `{"error":{"code":"not_found"}}`,
+malformed bodies 400 `bad_request` and unexpected failures 500 `internal`, without
+internals. Per-endpoint codes below are planned in F6.
 
 ## Planned API conventions (F6)
 

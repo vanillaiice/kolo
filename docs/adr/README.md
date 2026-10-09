@@ -25,7 +25,7 @@ corrections are new records rather than destructive edits.
 | [015](ADR-015-last-write-wins-for-products.md) | Last-write-wins for products, customers, accounts and suppliers | Accepted |
 | [016](ADR-016-expo-and-the-device-sqlite-driver.md) | Expo, and the device's SQLite driver | Accepted |
 
-| [017](ADR-017-typescript-workspaces-and-optional-server.md) | TypeScript workspaces, Electron desktop, optional NestJS server | Accepted |
+| [017](ADR-017-typescript-workspaces-and-optional-server.md) | TypeScript workspaces, Electron desktop, optional NestJS server | Server framework superseded by ADR-025 |
 | [018](ADR-018-standalone-editions-and-local-authority.md) | Standalone editions and local authority | Accepted |
 | [019](ADR-019-event-exchange-and-destination-delivery.md) | Event exchange and per-destination delivery | Accepted |
 
@@ -40,3 +40,9 @@ consult and supersede, per §55.
 - [ADR-022: Encrypted files and approved snapshots](ADR-022-encrypted-files-and-approved-snapshots.md)
 
 - [ADR-023: Partial returns and source ordering](ADR-023-partial-returns-and-source-ordering.md) — exact compensating returns and competing offline source chains.
+
+- [ADR-024: Licensing and paid cosmetic unlocks](ADR-024-licensing-and-paid-unlocks.md) — clients GPL-3.0, server closed for now; draft trademark, offline-signed one-time branding unlock.
+
+- [ADR-025: Fastify for the optional server](ADR-025-fastify-server.md) — replaces NestJS/Express; TypeScript, pg and shared contracts stay.
+
+- [ADR-026: Compressed transfer files and larger snapshots](ADR-026-compressed-transfer-files.md) — deflate before encryption (format v2), bounded inflation, 128 MiB snapshots; supersedes ADR-022 limits.

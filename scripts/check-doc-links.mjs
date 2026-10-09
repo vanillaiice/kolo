@@ -6,7 +6,7 @@ function walk(directory) {
     ? walk(join(directory, entry.name)) : entry.name.endsWith(".md") ? [join(directory, entry.name)] : []);
 }
 let errors = 0;
-const files = ["README.md", "CLAUDE.md", ...walk("docs").filter(path => !path.startsWith("docs/history/"))];
+const files = ["README.md", "CLAUDE.md", ...walk("docs").filter(path => !path.replaceAll("\\", "/").startsWith("docs/history/"))];
 for (const path of files) {
   for (const match of readFileSync(path, "utf8").matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
     const link = match[1].split("#")[0];

@@ -8,7 +8,7 @@ function walk(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
     ? walk(join(directory, entry.name)) : entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") ? [join(directory, entry.name)] : []);
 }
-const files = roots.flatMap(walk).sort();
+const files = roots.flatMap(walk).map(path => path.replaceAll("\\", "/")).sort();
 const program = ts.createProgram(files, { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, skipLibCheck: true });
 const checker = program.getTypeChecker();
 const printer = ts.createPrinter({ removeComments: true });

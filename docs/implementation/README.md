@@ -8,6 +8,7 @@ the architecture changes. The plan describes work, not a claim that work is done
 |---|---|
 | [Architecture](architecture.md) | Editions, stack, modules, data flow, boundaries |
 | [Plan](plan.md) | Dependencies, work packages, methods, acceptance gates |
+| [Desktop release](desktop-release.md) | Installers, signing, upgrade/recovery checks and platform evidence |
 | [Desktop implementation](desktop.md) | Desktop-first priority, current foundation and first usable F5 milestone |
 | [Mobile operations](mobile.md) | F4 screens, bounded local reads, returns and refresh contract |
 | [F4 native validation](f4-native-validation.md) | Full offline shop-day, scanner/receipt and measured device gates |

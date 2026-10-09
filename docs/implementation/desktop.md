@@ -23,8 +23,10 @@ for details, payments and statements. The React DOM screens depend on a replacea
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Hardware adapters, Windows packaging and acceptance remain. A browser app, browser storage/credentials and authenticated
-business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
+Installer tooling and Windows acceptance automation are now provided; passing Windows
+evidence remains required. Physical hardware testing is deferred. See
+[desktop release](desktop-release.md). A browser app, browser storage/credentials and authenticated
+business HTTP API do not exist. The Fastify server still supplies health/readiness/capabilities.
 
 ## First usable desktop milestone
 
@@ -53,6 +55,17 @@ DOM workflow and separate real SQLite boundary/failure cases pass. This establis
 the first usable software slice, not Windows/installer/hardware acceptance or the
 whole desktop edition.
 
+## Forgotten codes and replacing the shop
+
+The locked screen offers "Forgot your code?" for owner recovery with the saved recovery
+key. When neither the code nor the key is available, **Import a backup** replaces the
+computer's shop (see "Desktop entry flow"). Legacy installations can import a backup or
+start a new shop, which confirms the displayed name (`KOLO` when none is configured) and
+activates a migrated empty slot. Existing files and credential records stay separate and
+protected; neither path unlocks or modifies the old shop.
+The command is refused while unlocked and must be used after locking. Durable slot
+activation and single-flight identity handling reuse the restore/pairing infrastructure.
+
 ## Command and refresh contract
 
 `ShopService` is defined in `apps/desktop/src/shared/service.ts`. Named preload methods
@@ -67,8 +80,20 @@ The host holds the real opaque unlock context. Protected requests include the di
 session marker, which must still match the current host session. Core commands/queries
 recheck current membership and permissions. Setup/unlock/recovery work is single-flight;
 lock cancels pending proofs. Shutdown invalidates authority, waits for pending native
-work/signing, then closes SQLite. Minimize, OS screen lock/suspend, renderer loss/reload
-and application close lock the desktop. Cold boot always starts locked.
+work/signing, then closes SQLite. Renderer loss/reload and application close always lock
+the running session.
+
+**Stay signed in** (Settings, on by default per user decision 2026-10-09) lets a cold
+boot reopen the last unlocked user without a code. Unlock saves a remembered member
+(business, user, current credential reference) only in the OS-protected vault under
+`userData/session`; the on/off flag is a plain file there. Core `resumeWorkspace`
+reopens it only if the business, device and member are active, the member is not
+locked out and the credential reference is unchanged, so a code reset, owner recovery,
+restore or pairing makes it stale; a stale or unreadable record is forgotten and grants
+nothing. While on, minimize and OS screen lock/suspend do not lock. The **Lock** button
+and owner recovery forget the remembered user; turning the option off forgets it and
+restores locking on minimize, OS lock/suspend and cold boot. Anyone with access to the
+computer's user account can open a remembered till, so it should be off on shared PCs.
 
 Product creation and optional opening stock commit together. A matching creation retry
 uses its stable product ID; changed/cross-actor/cross-origin/foreign existing records
@@ -237,8 +262,8 @@ adapters, cash-drawer kick and paper-width settings are not implemented.
 The planned desktop software packages are implemented. F5 stays open for acceptance that
 cannot be proven from Linux Node/Electron runs:
 
-- Windows: packaging spike, installer, protected storage (DPAPI via `safeStorage`), signing
-  and update approach (following the Rebar Studio release style when the user asks).
+- Windows: run the supplied NSIS/portable build and installed upgrade/native-vault
+  acceptance jobs; verify signing and the manual installer update procedure.
 - Hardware: physical barcode scanners and receipt printers on shop PCs; optional ESC/POS
   adapter and cash drawer if the user wants them.
 - Measured startup/search/report/memory budgets on target hardware, crash/close recovery
@@ -249,7 +274,13 @@ The shared operations, strict event schemas, exact arithmetic and SQLite account
 fixtures are reused. React Native screen components require a DOM UI implementation;
 keep business calculations out of those new components.
 
-## Browser scope
+## Current priority and browser scope
+
+On 2026-10-09 the user selected packaging, Windows credentials, crash/recovery,
+performance/accessibility and documentation work, then mobile. Physical hardware and
+cross-device acceptance are deferred. Bluetooth and optional paid-server sync remain
+shared roadmap work, independent of standalone operation.
+
 
 The user confirmed desktop first, with reusable React UI for a later browser version.
 Build DOM UI components against a narrow platform service interface; the Electron
@@ -261,3 +292,22 @@ server business API. It cannot use the Electron preload/Node SQLite/OS-vault ada
 Choose that product/runtime explicitly before promising browser offline operation or
 moving business writes to a server. Keep standalone desktop behavior independent of
 this later choice.
+
+### Safety copies
+
+One computer holds one shop. Replacing it (importing a backup over it, or starting a new
+shop from a legacy till) only moves the durable active-database pointer: the previous
+database and its credentials stay on disk as a safety copy. The entry screens do not list
+safety copies; `savedShops`/`openSavedShop` remain in the bridge for support recovery.
+
+### Desktop entry flow
+
+One shop per computer, three tasks (user decision 2026-10-09):
+
+- **New computer:** *Create a shop* (two steps: shop details, then owner access; details are kept when going back and till/cash names have defaults) or *Import a file*.
+- **Computer with a shop:** the login (user and code; "Stay signed in" skips it), *Forgot your code?* (recovery key), and *Import a backup*.
+- **Import:** one native dialog (`chooseImportFile`) reads the file and recognizes a backup or a pairing invite by its structure; the next `openBackup`/`openInvite` uses that file without asking again. A backup asks for its password, shows the shop, then the typed shop name and a new code for this computer. An invite continues with the joining steps and needs a computer without a shop. Over an existing shop, the confirmation names the shop being replaced; `restoreBackup` requires `replace: true`, validates the new code before switching, moves the current shop aside as a safety copy, restores into a fresh slot, and selects the previous shop again if the restore fails.
+
+Saved-shop pickers and "start a new shop" on the login page were removed. Adding another till is started by the owner from Backup & devices.
+
+The welcome screen presents three explained choices: create a shop, restore a backup file, or join another till’s shop. Retained shops appear alongside these choices and open with their original code. New setup has two steps (shop details, then owner access), keeps details when going back, and supplies default till/cash account names under an optional customization section. Login names the selected shop, groups the user/code fields together, and keeps shop switching in the side panel. Owner-code recovery explains the saved recovery key and returns to login with a confirmation after replacement. Backup and joining screens share the same desktop task/guidance layout and explain their file requirements before opening native pickers.
