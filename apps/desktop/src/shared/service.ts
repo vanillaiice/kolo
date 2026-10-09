@@ -5,7 +5,7 @@ import type { Receipt, Page, PageQuery } from "@kolo/core/application/queries";
 export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" |
   "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" |
   "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" |
-  "request_conflict" | "price_changed" | "storage_failed" | "credit_limit";
+  "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return";
 /** Serializable results make transport and operation failures explicit. */
 export type Result<T> = { readonly ok: true; readonly value: T } |
   { readonly ok: false; readonly error: { readonly code: FailureCode; readonly retryAt?: string } };
@@ -155,6 +155,23 @@ export type ReportResult =
   | { readonly kind: "fastMoving"; readonly products: readonly { readonly productId: string; readonly name: string; readonly soldThousandths: number; readonly revenueMinor: number; readonly onHandThousandths: number }[] }
   | { readonly kind: "stockAlerts"; readonly products: readonly { readonly productId: string; readonly name: string; readonly onHandThousandths: number }[]; readonly truncated: boolean }
   | { readonly kind: "purchases"; readonly totalMinor: number; readonly deliveries: number; readonly bySupplier: readonly ReportLine[]; readonly truncated: boolean };
+/** What remains returnable from a sale or purchase, at the original net prices or costs. */
+export interface ReturnSourceView {
+  readonly kind: "SALE" | "PURCHASE"; readonly originalId: string; readonly priorId?: string; readonly hasCounterparty: boolean;
+  readonly items: readonly { readonly id: string; readonly name: string; readonly originalQuantity: number; readonly returnedQuantity: number }[];
+}
+/** Exact value of a selected return before it is recorded. */
+export interface ReturnPreview { readonly totalMinor: number; readonly lines: readonly { readonly originalItemId: string; readonly quantity: number; readonly amountMinor: number }[] }
+/**
+ * Records a partial or full return against the predecessor the preview was made from. The
+ * refund (sale: paid out; purchase: received back) is at most the value; any remainder goes to
+ * the customer's or supplier's ledger. A return recorded meanwhile makes this one stale.
+ */
+export interface ReturnRequest extends SessionRequest {
+  readonly requestId: string; readonly kind: "SALE" | "PURCHASE"; readonly originalId: string; readonly priorId?: string; readonly reason: string;
+  readonly items: readonly { readonly originalItemId: string; readonly quantity: number }[];
+  readonly refund?: { readonly accountId: string; readonly amountMinor: number };
+}
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
 export interface ShopService {
   /** Public boot status; no credentials or key references are returned. */
@@ -252,6 +269,12 @@ export interface ShopService {
    * local calendar days. Period-free reports (valuation, debts, alerts) ignore the period.
    */
   report(input: SessionRequest & { readonly kind: ReportKind; readonly from: string; readonly until: string }): Promise<Result<ReportResult>>;
+  /** Returnable lines of a sale (sales.refund) or purchase (purchases.create and purchases.pay). */
+  returnSource(input: SessionRequest & { readonly kind: "SALE" | "PURCHASE"; readonly originalId: string }): Promise<Result<ReturnSourceView>>;
+  /** Exact value of a selection against the current predecessor. */
+  previewReturn(input: SessionRequest & { readonly kind: "SALE" | "PURCHASE"; readonly originalId: string; readonly items: ReturnRequest["items"] }): Promise<Result<ReturnPreview>>;
+  /** Records a compensating return; the request ID names it and matching retries return it. */
+  recordReturn(input: ReturnRequest): Promise<Result<{ readonly returnId: string }>>;
   /** Bounded account names for cash checkout, without disclosing financial balances. */
   listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly name: string }>>>;
   /** Atomic cash sale; identical retries return the original saved sale ID. */

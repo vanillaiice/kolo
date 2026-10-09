@@ -99,6 +99,10 @@ class DesktopApplication implements ShopService {
   reverseExpense(input: unknown): Promise<Result<ExpenseView>>;
   /** Period and snapshot reports; see reports.ts. */
   report(input: unknown): Promise<Result<ReportResult>>;
+  /** Sale and purchase returns; see returns.ts. */
+  returnSource(input: unknown): Promise<Result<ReturnSourceView>>;
+  previewReturn(input: unknown): Promise<Result<ReturnPreview>>;
+  recordReturn(input: unknown): Promise<Result<{ readonly returnId: string; }>>;
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): Promise<Result<Receipt>>;
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
@@ -350,6 +354,26 @@ One report under its core permission; the period is at most about ten years and 
 report(host: Host, input: unknown): ReportResult;
 ```
 
+## [apps/desktop/src/electron/returns.ts](../../apps/desktop/src/electron/returns.ts)
+
+Returnable lines and remaining quantities at original net values.
+
+```ts
+returnSource(host: Host, input: unknown): ReturnSourceView;
+```
+
+Exact return value against the current predecessor; nothing is written.
+
+```ts
+previewReturn(host: Host, input: unknown): ReturnPreview;
+```
+
+Records a compensating return named by the request ID; stale predecessors are refused as stale_return.
+
+```ts
+recordReturn(host: Host, input: unknown): { readonly returnId: string; };
+```
+
 ## [apps/desktop/src/electron/transfer-files.ts](../../apps/desktop/src/electron/transfer-files.ts)
 
 Reads a selected regular file through one descriptor, capped even if it grows after the initial stat.
@@ -427,7 +451,7 @@ runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void>;
 Stable application failures; native exception text, credentials and paths never cross the bridge.
 
 ```ts
-export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit";
+export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return";
 ```
 
 Serializable results make transport and operation failures explicit.
@@ -882,6 +906,58 @@ export type ReportResult = {
 };
 ```
 
+What remains returnable from a sale or purchase, at the original net prices or costs.
+
+```ts
+export interface ReturnSourceView {
+    readonly kind: "SALE" | "PURCHASE";
+    readonly originalId: string;
+    readonly priorId?: string;
+    readonly hasCounterparty: boolean;
+    readonly items: readonly {
+        readonly id: string;
+        readonly name: string;
+        readonly originalQuantity: number;
+        readonly returnedQuantity: number;
+    }[];
+}
+```
+
+Exact value of a selected return before it is recorded.
+
+```ts
+export interface ReturnPreview {
+    readonly totalMinor: number;
+    readonly lines: readonly {
+        readonly originalItemId: string;
+        readonly quantity: number;
+        readonly amountMinor: number;
+    }[];
+}
+```
+
+Records a partial or full return against the predecessor the preview was made from. The
+refund (sale: paid out; purchase: received back) is at most the value; any remainder goes to
+the customer's or supplier's ledger. A return recorded meanwhile makes this one stale.
+
+```ts
+export interface ReturnRequest extends SessionRequest {
+    readonly requestId: string;
+    readonly kind: "SALE" | "PURCHASE";
+    readonly originalId: string;
+    readonly priorId?: string;
+    readonly reason: string;
+    readonly items: readonly {
+        readonly originalItemId: string;
+        readonly quantity: number;
+    }[];
+    readonly refund?: {
+        readonly accountId: string;
+        readonly amountMinor: number;
+    };
+}
+```
+
 Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it.
 
 ```ts
@@ -1055,6 +1131,18 @@ export interface ShopService {
         readonly from: string;
         readonly until: string;
     }): Promise<Result<ReportResult>>;
+    returnSource(input: SessionRequest & {
+        readonly kind: "SALE" | "PURCHASE";
+        readonly originalId: string;
+    }): Promise<Result<ReturnSourceView>>;
+    previewReturn(input: SessionRequest & {
+        readonly kind: "SALE" | "PURCHASE";
+        readonly originalId: string;
+        readonly items: ReturnRequest["items"];
+    }): Promise<Result<ReturnPreview>>;
+    recordReturn(input: ReturnRequest): Promise<Result<{
+        readonly returnId: string;
+    }>>;
     listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{
         readonly id: string;
         readonly name: string;

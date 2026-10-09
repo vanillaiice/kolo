@@ -124,10 +124,16 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     // Reports: today's summary reflects the two sales (250 + 500) and the expense.
     await navigate("Reports"); await wait("document.querySelector('.stat-tile strong')?.textContent.replace(/[^0-9-]/g,'')==='750'", "sales report");
     assert.equal(await evaluate("Array.from(document.querySelectorAll('.stat-tile')).find(tile=>tile.textContent.startsWith('Expenses'))?.textContent.replace(/[^0-9-]/g,'')"), "200");
+    // Return: one bag of the credit sale comes back; its value is credited to the customer.
+    await navigate("Receipts"); await clickVisible(".receipt-choice"); await wait(`${visible(".receipt-paper")}[0]?.textContent.includes('Awa')`, "credit receipt");
+    await clickVisible(".receipt-paper button", "Return items"); await wait(`${visible(".return-form .cell-input")}.length===1`, "return form");
+    await fill(".return-form .cell-input", "1"); await wait(`${visible(".return-form .total-line")}[0]?.textContent.replace(/[^0-9]/g,'')==='500'`, "return preview");
+    await fill("#return-reason", "Damaged"); await submit("#return-reason");
+    await wait(`document.querySelector('.return-form')===null && ${visible(".receipt-paper")}[0]?.textContent.includes('Returned')`, "return recorded");
     if (process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"] !== undefined) await writeFile(process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"], (await window.webContents.capturePage()).toPNG());
     assert.equal(await evaluate("document.querySelector('.notice.error')===null"), true);
     await click(".topbar-actions .secondary"); await wait("document.querySelector('#local-secret')!==null");
-    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment, supplier purchase, cash count/correction, expense and reports passed\n");
+    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment, supplier purchase, cash count/correction, expense, reports and sale return passed\n");
   } else if (phase === "reopen") {
     await wait("document.querySelector('#local-secret')!==null");
     const state = await evaluate<string>("window.kolo.getWorkspace().then(result=>result.value.state)"); assert.equal(state, "locked");
@@ -136,7 +142,7 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await navigate("Receipts"); await wait("document.querySelector('.receipt-choice')!==null"); await click(".receipt-choice");
     await wait("document.querySelector('.receipt-paper')?.textContent.includes('Awa')");
     const stateAfter = await evaluate<{ stock: number; total: number }>(`(async()=>{const {sessionId}=(await window.kolo.getWorkspace()).value;const history=(await window.kolo.listReceipts({sessionId})).value;return {stock:(await window.kolo.listProducts({sessionId})).value.items[0].onHandThousandths,total:(await window.kolo.getReceipt({sessionId,saleId:history.items[0].id})).value.totalMinor};})()`);
-    assert.deepEqual(stateAfter, { stock: 8000, total: 500 });
+    assert.deepEqual(stateAfter, { stock: 9000, total: 500 });
     process.stdout.write("Actual Electron process restart, locked boot, credential unlock and persisted receipt/stock passed\n");
   } else throw new Error("unknown workflow smoke phase");
 }

@@ -7,6 +7,7 @@ import type { Permission } from "@kolo/core/identity/permissions";
 import type { ProductView, PurchaseRequest, Result, ShopService, SupplierDetails, SupplierView } from "../../shared/service.ts";
 import { ErrorText, Field, Pager, ReadState, Select, call, useAction, useRead, useText } from "./ui.tsx";
 import { Balance, Statement } from "./Customers.tsx";
+import { ReturnForm } from "./ReturnForm.tsx";
 
 type Props = { readonly service: ShopService; readonly sessionId: string; readonly revision: number; readonly permissions: readonly Permission[] };
 
@@ -22,14 +23,14 @@ export function Purchases({ service, sessionId, revision, permissions }: Props):
       <button key={id} role="tab" aria-selected={tab===id} className={tab===id?"selected":""} onClick={()=>setTab(id)}>{t(label)}</button>)}</div>
     <div hidden={tab!=="purchases"}>
       {recording&&<RecordPurchase service={service} sessionId={sessionId} revision={revision} permissions={permissions} onClose={()=>setRecording(false)}/>}
-      {canPurchases&&<PurchaseHistory service={service} sessionId={sessionId} revision={revision}/>}
+      {canPurchases&&<PurchaseHistory service={service} sessionId={sessionId} revision={revision} canReturn={permissions.includes("purchases.create")&&permissions.includes("purchases.pay")}/>}
     </div>
     {canSuppliers&&<div hidden={tab!=="suppliers"}><Suppliers service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
   </section>;
 }
-function PurchaseHistory({service,sessionId,revision}:{service:ShopService;sessionId:string;revision:number}):React.JSX.Element{
+function PurchaseHistory({service,sessionId,revision,canReturn}:{service:ShopService;sessionId:string;revision:number;canReturn:boolean}):React.JSX.Element{
   const {t,language}=useText();
-  const [cursor,setCursor]=useState<{ after: Cursor; revision: number }>(),[selected,setSelected]=useState<string>();
+  const [cursor,setCursor]=useState<{ after: Cursor; revision: number }>(),[selected,setSelected]=useState<string>(),[returning,setReturning]=useState<string>();
   const list=useRead(()=>service.listPurchases({sessionId,...(cursor?.revision===revision?{after:cursor.after}:{})}),[service,sessionId,cursor,revision]);
   const detail=useRead(()=>selected===undefined?Promise.resolve({ok:true as const,value:null}):service.getPurchase({sessionId,purchaseId:selected}),[service,sessionId,selected,revision]);
   const date=(value:string):string=>new Date(value).toLocaleString(language==="fr"?"fr-FR":"en-GB");
@@ -47,8 +48,10 @@ function PurchaseHistory({service,sessionId,revision}:{service:ShopService;sessi
         {detail.data.lines.map(line=><div className="receipt-line" key={line.id}><strong>{line.name}</strong><span>{formatQuantity(line.quantity,language)} × {formatMoney(line.unitCostMinor,language)}</span></div>)}
         <div className="receipt-total"><span>{t("total")}</span><strong>{formatMoney(detail.data.totalMinor,language)}</strong></div>
         {detail.data.paidMinor>0&&<div className="receipt-line"><span>{t("paid")}</span><strong>{formatMoney(detail.data.paidMinor,language)}</strong></div>}
-        {detail.data.outstandingMinor>0&&<div className="receipt-line receipt-owing"><span>{t("owedToSupplier")}</span><strong>{formatMoney(detail.data.outstandingMinor,language)}</strong></div>}</>}
+        {detail.data.outstandingMinor>0&&<div className="receipt-line receipt-owing"><span>{t("owedToSupplier")}</span><strong>{formatMoney(detail.data.outstandingMinor,language)}</strong></div>}
+        {canReturn&&returning!==detail.data.id&&<button className="secondary full-width" onClick={()=>setReturning(detail.data!.id)}>{t("returnGoods")}</button>}</>}
     </ReadState></div>}
+    {returning!==undefined&&returning===selected&&<ReturnForm key={returning} service={service} sessionId={sessionId} revision={revision} kind="PURCHASE" originalId={returning} onDone={()=>setReturning(undefined)}/>}
   </div>;
 }
 type DraftLine={readonly product:ProductView;readonly quantityText:string;readonly costText:string};

@@ -60,7 +60,7 @@ function Shop({service,view,sessionId,revision,refresh,onRecoveryKey}:{service:S
       {canPurchases&&<div hidden={section!=="purchases"}><Purchases service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {canFinance&&<div hidden={section!=="finance"}><Finance service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {section==="reports"&&<Reports service={service} sessionId={sessionId} revision={revision} permissions={permissions}/>}
-      {section==="receipts"&&<Receipts key={receiptId??"history"} service={service} sessionId={sessionId} revision={revision} initialId={receiptId} onNewSale={()=>setSelected(canTill?"till":"products")}/>}
+      {section==="receipts"&&<Receipts key={receiptId??"history"} service={service} sessionId={sessionId} revision={revision} initialId={receiptId} canReturn={permissions.includes("sales.refund")} onNewSale={()=>setSelected(canTill?"till":"products")}/>}
       {section===undefined&&<p className="notice error">{t("noAccess")}</p>}
     </main>
   </>;

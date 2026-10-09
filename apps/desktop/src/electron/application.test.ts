@@ -521,3 +521,37 @@ it("reports read exact period figures under report authority and refuse malforme
     for(const kind of ["sales","valuation","customerDebt"] as const)failure(await f.application.report({...period,sessionId:cashier,kind}),"permission_denied");
   }finally{await f.dispose();}
 });
+it("sale and purchase returns compensate stock, money and ledgers, retry by content and refuse stale predecessors",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:10000})));
+    const cash=value(await f.application.listPaymentAccounts({sessionId})).items[0]!.id,customer=value(await f.application.createCustomer({sessionId,requestId:randomUUID(),name:"Awa"}));
+    const sale=value(await f.application.checkout({sessionId,requestId:randomUUID(),customerId:customer.id,lines:[{productId:item.id,quantity:4000,unitPriceMinor:500}],payments:[{accountId:cash,amountMinor:1500}]}));
+    value(await f.application.moveMoney({sessionId,requestId:randomUUID(),accountId:cash,direction:"in",amountMinor:1000,reason:"Float"}));
+    const source=value(await f.application.returnSource({sessionId,kind:"SALE",originalId:sale.saleId}));
+    assert.deepEqual([source.hasCounterparty,source.items.length,source.items[0]!.originalQuantity,source.priorId],[true,1,4000,undefined]);
+    const items=[{originalItemId:source.items[0]!.id,quantity:2000}];
+    assert.equal(value(await f.application.previewReturn({sessionId,kind:"SALE",originalId:sale.saleId,items})).totalMinor,1000);
+    const request={sessionId,requestId:randomUUID(),kind:"SALE" as const,originalId:sale.saleId,reason:"Damaged",items,refund:{accountId:cash,amountMinor:600}};
+    const first=value(await f.application.recordReturn(request));assert.equal(value(await f.application.recordReturn(request)).returnId,first.returnId);
+    for(const changed of [{reason:"Other"},{refund:{accountId:cash,amountMinor:500}},{items:[{...items[0]!,quantity:1000}]}])failure(await f.application.recordReturn({...request,...changed}),"request_conflict");
+    assert.equal(value(await f.application.listProducts({sessionId})).items[0]!.onHandThousandths,8000);
+    assert.equal(value(await f.application.getCustomer({sessionId,customerId:customer.id})).outstandingMinor,100);
+    assert.equal(value(await f.application.listAccounts({sessionId})).items[0]!.onHandMinor,1900);
+    assert.equal(value(await f.application.getReceipt({sessionId,saleId:sale.saleId})).returnedMinor,1000);
+    failure(await f.application.recordReturn({...request,requestId:randomUUID()}),"stale_return");
+    const next=value(await f.application.returnSource({sessionId,kind:"SALE",originalId:sale.saleId}));assert.equal(next.priorId,first.returnId);assert.equal(next.items[0]!.returnedQuantity,2000);
+    for(const bad of [{items:[{...items[0]!,quantity:3000}]},{refund:{accountId:cash,amountMinor:1001}},{items:[]},{reason:""},{kind:"GIFT"}])
+      failure(await f.application.recordReturn({...request,requestId:randomUUID(),priorId:next.priorId,...bad}),"invalid_input");
+    value(await f.application.recordReturn({...request,requestId:randomUUID(),priorId:next.priorId,refund:undefined}));
+    assert.equal(value(await f.application.getCustomer({sessionId,customerId:customer.id})).outstandingMinor,-900);
+    const supplierCash=value(await f.application.recordPurchase({sessionId,requestId:randomUUID(),lines:[{productId:item.id,quantity:2000,unitCostMinor:300}],payment:{accountId:cash,amountMinor:600}}));
+    const bought=value(await f.application.returnSource({sessionId,kind:"PURCHASE",originalId:supplierCash.purchaseId}));
+    failure(await f.application.recordReturn({sessionId,requestId:randomUUID(),kind:"PURCHASE",originalId:supplierCash.purchaseId,reason:"Expired",items:[{originalItemId:bought.items[0]!.id,quantity:1000}]}),"invalid_input");
+    value(await f.application.recordReturn({sessionId,requestId:randomUUID(),kind:"PURCHASE",originalId:supplierCash.purchaseId,reason:"Expired",items:[{originalItemId:bought.items[0]!.id,quantity:1000}],refund:{accountId:cash,amountMinor:300}}));
+    assert.equal(value(await f.application.listProducts({sessionId})).items[0]!.onHandThousandths,11000);
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const staff=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"765432"}),cashier=value(await f.application.unlock({userId:staff,secret:"765432"})).sessionId!;
+    failure(await f.application.returnSource({sessionId:cashier,kind:"SALE",originalId:sale.saleId}),"permission_denied");
+    failure(await f.application.returnSource({sessionId:cashier,kind:"SALE",originalId:randomUUID()}),"permission_denied");
+  }finally{await f.dispose();}
+});

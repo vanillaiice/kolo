@@ -23,7 +23,7 @@ for details, payments and statements. The React DOM screens depend on a replacea
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Returns, staff
+Staff
 screens, backup/exchange screens, printers and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
 business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
 
@@ -175,6 +175,18 @@ supplier debts under `reports.suppliers`. Results are serializable and row lists
 capped at 500 (stock alerts at 100) with a `truncated` flag; totals stay exact. The
 Reports section shows stat tiles and tables only. Commands live in `electron/reports.ts`.
 `KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT` optionally saves the fixture summary screen.
+
+## Returns contract
+
+Sale returns need `sales.refund`; purchase returns need `purchases.create` and
+`purchases.pay`. The UI reads returnable lines and remaining quantities, previews the exact
+value with core `previewReturn`, then records against the predecessor (`priorId`) it was
+shown. A return recorded meanwhile is refused as `stale_return` with a reload, never
+double-returned. The refund (one account) is at most the value; the remainder is credited
+to the customer or deducted from the supplier debt, and without a counterparty the refund
+must cover the whole value. The request ID names the return; a retry matches kind,
+original, reason, item set and refund set. Core `ExchangeError` codes are translated to
+desktop failures. Receipts show returned value. Commands live in `electron/returns.ts`.
 
 ## Remaining F5 packages
 

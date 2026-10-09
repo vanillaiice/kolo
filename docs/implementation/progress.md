@@ -685,3 +685,28 @@ reads the existing core report functions under their permissions.
 
 Returns, staff and backup/exchange screens; receipt printing; hardware,
 accessibility/performance and Windows packaging acceptance.
+
+## 2026-10-09 — Desktop sale and purchase returns (F5)
+
+Implemented a shared return form opened from a saved receipt ("Return items") or a
+purchase ("Return to supplier"): returnable lines with remaining quantities, "Return
+everything", exact preview, refund amount and account, counterparty credit for the
+remainder, a required reason, stale-return reload and frozen drafts after uncertain
+failures. Receipts show the returned value. Three validated IPC commands
+(`returnSource`, `previewReturn`, `recordReturn`) in `electron/returns.ts`; new failure
+code `stale_return`.
+
+### Verification
+
+- A real-SQLite host case covers partial sale return with part refund and customer credit,
+  stock/cash/ledger/receipt effects, content retries and conflicts, stale predecessor,
+  over-return and over-refund, empty and malformed requests, a second return without refund,
+  purchase return requiring full refund without a supplier, and cashier refusal.
+- The actual Electron workflow returns one unit of the credit sale from its receipt and
+  verifies the returned stock after restart.
+- `npm run check` and `npm run smoke:desktop:workflow` passed.
+
+### Remaining
+
+Staff and backup/exchange screens; receipt printing; hardware, accessibility/performance
+and Windows packaging acceptance.
