@@ -15,15 +15,18 @@ type DraftPayment={readonly key:string;readonly accountId:string;readonly amount
 export function Till({service,sessionId,revision,permissions,onReceipt}:{readonly service:ShopService;readonly sessionId:string;readonly revision:number;readonly permissions:readonly Permission[];readonly onReceipt:(id:string)=>void}):React.JSX.Element{
   const {t,language}=useText(),action=useAction();
   const [term,setTerm]=useState(""),[barcode,setBarcode]=useState(""),[cursor,setCursor]=useState<{after:Cursor;revision:number}>();
-  const [cart,setCart]=useState<readonly DraftLine[]>([]),[rows,setRows]=useState<readonly DraftPayment[]>([{key:"first",accountId:"",amountText:null}]),[customer,setCustomer]=useState<CustomerView>(),[received,setReceived]=useState(""),[uncertain,setUncertain]=useState(false);
+  const [cart,setCart]=useState<readonly DraftLine[]>([]),[rows,setRows]=useState<readonly DraftPayment[]>([{key:"first",accountId:"",amountText:null}]),[customer,setCustomer]=useState<CustomerView>(),[received,setReceived]=useState(""),[discount,setDiscount]=useState(""),[uncertain,setUncertain]=useState(false);
   const pending=useRef<CheckoutRequest | undefined>(undefined), scanner=useRef<HTMLInputElement>(null), focusScanner=useRef(true);
   const products=useRead(()=>service.listProducts({sessionId,term,...(cursor?.revision===revision?{after:cursor.after}: {})}),[service,sessionId,term,cursor,revision]);
   const accounts=useRead(()=>service.listPaymentAccounts({sessionId,limit:100}),[service,sessionId,revision]);
-  const frozen=action.busy||uncertain,canCredit=permissions.includes("customers.credit"),canCustomers=permissions.includes("customers.view");
+  const frozen=action.busy||uncertain,canCredit=permissions.includes("customers.credit"),canCustomers=permissions.includes("customers.view"),canDiscount=permissions.includes("sales.discount");
   useEffect(()=>{if(focusScanner.current&&!frozen){scanner.current?.focus();focusScanner.current=false;}},[frozen,cart]);
-  let total=0,valid=true;
-  try{if(cart.length)total=subtotalOf(cart.map(line=>({unitPriceMinor:line.product.sellingPriceMinor,quantity:quantityEntry(line.quantityText,line.product.divisible)})));}
+  let total=0,subtotal=0,discountMinor=0,valid=true;
+  try{if(cart.length)subtotal=subtotalOf(cart.map(line=>({unitPriceMinor:line.product.sellingPriceMinor,quantity:quantityEntry(line.quantityText,line.product.divisible)})));}
   catch{valid=false;}
+  try{discountMinor=discount.trim()===""?0:moneyEntry(discount);}catch{valid=false;}
+  if(discountMinor>subtotal)valid=false;
+  total=subtotal-discountMinor;
   // Settlement uses the shared exact arithmetic for the total; the host recomputes everything.
   const accountOf=(id:string)=>accounts.data?.items.find(account=>account.id===id)??(id===""?accounts.data?.items[0]:undefined);
   let amounts:number[]=[];
@@ -58,12 +61,12 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
   const checkout=async():Promise<void>=>{
     await action.run(async()=>{
       try{pending.current??={sessionId,requestId:crypto.randomUUID(),...(customer===undefined?{}:{customerId:customer.id}),
-        payments:rows.map((row,index)=>({accountId:accountOf(row.accountId)!.id,amountMinor:amounts[index]!})).filter(payment=>payment.amountMinor>0),
+        ...(discountMinor>0?{discountMinor}:{}),payments:rows.map((row,index)=>({accountId:accountOf(row.accountId)!.id,amountMinor:amounts[index]!})).filter(payment=>payment.amountMinor>0),
         lines:cart.map(line=>({productId:line.product.id,quantity:quantityEntry(line.quantityText,line.product.divisible),unitPriceMinor:line.product.sellingPriceMinor}))};}
       catch{return {ok:false,error:{code:"invalid_input"}};}
       const result=await call(()=>service.checkout(pending.current!));
       setUncertain(!result.ok&&result.error.code==="unavailable");
-      if(result.ok){pending.current=undefined;setCart([]);setBarcode("");setRows([{key:"first",accountId:"",amountText:null}]);setCustomer(undefined);setReceived("");onReceipt(result.value.saleId);}return result;
+      if(result.ok){pending.current=undefined;setCart([]);setBarcode("");setRows([{key:"first",accountId:"",amountText:null}]);setCustomer(undefined);setReceived("");setDiscount("");onReceipt(result.value.saleId);}return result;
     });
   };
   return <section className="workspace-content till-content">
@@ -85,7 +88,8 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
           <div className="line-details"><Field id={`quantity-${line.product.id}`} label={t("quantity")} value={line.quantityText} numeric disabled={frozen} onChange={value=>edit(cart.map(item=>item.product.id===line.product.id?{...item,quantityText:value}:item))}/><strong className="money">{amount}</strong></div>
         </div>;
       })}</div>}
-      <div className="cart-settlement"><div className="total-line"><span>{t("total")}</span><strong>{valid?formatMoney(total,language):"—"}</strong></div>
+      <div className="cart-settlement">{canDiscount&&cart.length>0&&<><div className="settlement-line"><span>{t("subtotal")}</span><strong>{formatMoney(subtotal,language)}</strong></div>
+        <Field id="sale-discount" label={t("discount")} value={discount} numeric required={false} disabled={frozen} onChange={value=>{pending.current=undefined;setDiscount(value);action.setError(undefined);}}/></>}<div className="total-line"><span>{t("total")}</span><strong>{valid?formatMoney(total,language):"—"}</strong></div>
         {canCustomers&&<CustomerChoice service={service} sessionId={sessionId} revision={revision} value={customer} disabled={frozen} onChange={value=>{pending.current=undefined;setCustomer(value);action.setError(undefined);}}/>}
         <ReadState loading={accounts.loading} error={accounts.error} empty={accounts.data?.items.length===0} emptyText={t("noAccounts")} retry={accounts.retry}>
           <fieldset className="payment-rows" disabled={frozen}><legend>{t("payments")}</legend>{rows.map((row,index)=><div className="payment-row" key={row.key}>

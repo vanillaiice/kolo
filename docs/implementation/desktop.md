@@ -23,7 +23,7 @@ for details, payments and statements. The React DOM screens depend on a replacea
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Discounts, suppliers and purchases, finance, reports, returns, staff
+Suppliers and purchases, finance, reports, returns, staff
 screens, backup/exchange screens, printers and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
 business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
 
@@ -88,7 +88,9 @@ customer are refused; cash received and change due are computed in the till only
 not stored. A retry matches on actor, lines, payment set (order-insensitive) and customer.
 The legacy single `accountId` request still records the exact total in one cash account.
 A zero-priced sale records no payment. Payment-account queries return names and kinds,
-never balances. Sale discounts remain subsequent F5 work.
+never balances. A whole-sale discount (`discountMinor`) needs `sales.discount`, is taken
+before settlement, may not exceed the subtotal and is part of retry identity; receipts
+show it. Per-line discounts and price overrides are not offered on desktop.
 
 Customers are created with a stable request ID and edited/archived from their displayed
 version, as products are. Archived customers cannot buy or pay. A payment's request ID is
@@ -134,7 +136,7 @@ shelf and moved nothing. History is newest-first and bounded under `inventory.vi
 
 ## Remaining F5 packages
 
-- Operational breadth: discounts, suppliers/purchases/payments, accounts/
+- Operational breadth: suppliers/purchases/payments, accounts/
   transfers/reconciliation, expenses/reversals, reports and sale/purchase returns.
 - Local administration and recovery: staff/grants, backup/restore, pairing/file
   exchange and actionable import/conflict diagnostics through native dialogs.

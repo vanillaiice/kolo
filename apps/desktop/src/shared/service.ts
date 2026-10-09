@@ -76,6 +76,8 @@ export interface CheckoutRequest extends SessionRequest {
   readonly requestId: string; readonly accountId?: string;
   readonly payments?: readonly { readonly accountId: string; readonly amountMinor: number }[];
   readonly customerId?: string;
+  /** Whole-sale discount in francs, taken after the lines; needs sales.discount. */
+  readonly discountMinor?: number;
   readonly lines: readonly { readonly productId: string; readonly quantity: number; readonly unitPriceMinor: number }[];
 }
 /** Account names and kinds for taking money, never balances. */

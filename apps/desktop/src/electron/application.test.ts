@@ -365,3 +365,20 @@ it("customer details, archive and payments are versioned, retry-safe, scoped and
     assert.equal(value(await f.application.listCustomers({sessionId:cashier,includeInactive:true})).items.length,1);
   }finally{await f.dispose();}
 });
+it("sale discounts need discount authority, reduce the total before settlement and are part of retry identity",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:10000})));
+    const cash=value(await f.application.listPaymentAccounts({sessionId})).items[0]!.id;
+    const request={sessionId,requestId:randomUUID(),discountMinor:150,lines:[{productId:item.id,quantity:2000,unitPriceMinor:500}],payments:[{accountId:cash,amountMinor:850}]};
+    const sale=value(await f.application.checkout(request));assert.equal(value(await f.application.checkout(request)).saleId,sale.saleId);
+    failure(await f.application.checkout({...request,discountMinor:100,payments:[{accountId:cash,amountMinor:900}]}),"request_conflict");
+    const receipt=value(await f.application.getReceipt({sessionId,saleId:sale.saleId}));assert.deepEqual([receipt.discountMinor,receipt.totalMinor,receipt.paidMinor],[150,850,850]);
+    for(const bad of [{discountMinor:1001,payments:[]},{discountMinor:-1},{discountMinor:1.5},{discountMinor:"150"}])failure(await f.application.checkout({...request,requestId:randomUUID(),...bad}),"invalid_input");
+    failure(await f.application.checkout({sessionId,requestId:randomUUID(),accountId:cash,discountMinor:100,lines:request.lines}),"invalid_input");
+    failure(await f.application.checkout({...request,requestId:randomUUID(),payments:[{accountId:cash,amountMinor:1000}]}),"invalid_input");
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const staff=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"765432"}),cashier=value(await f.application.unlock({userId:staff,secret:"765432"})).sessionId!;
+    failure(await f.application.checkout({...request,sessionId:cashier,requestId:randomUUID()}),"permission_denied");
+    assert.equal(f.database.get("SELECT count(*) AS n FROM sales")!["n"],1);
+  }finally{await f.dispose();}
+});

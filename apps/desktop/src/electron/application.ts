@@ -325,14 +325,14 @@ export class DesktopApplication implements ShopService {
    */
   checkout(input: unknown): ReturnType<ShopService["checkout"]> {
     return this.#run(() => {
-      const data = object(input, ["sessionId", "requestId", "accountId", "payments", "customerId", "lines"]), context = this.#actor(data, ["sales.create", "products.view"]);
-      const id = uuid(data["requestId"]), customerId = optional(data["customerId"], uuid);
+      const data = object(input, ["sessionId", "requestId", "accountId", "payments", "customerId", "discountMinor", "lines"]), context = this.#actor(data, ["sales.create", "products.view"]);
+      const id = uuid(data["requestId"]), customerId = optional(data["customerId"], uuid), discountMinor = whole(data["discountMinor"] ?? 0);
       if (!Array.isArray(data["lines"]) || data["lines"].length < 1 || data["lines"].length > 200) throw new WorkspaceError("invalid_input");
       const lines = data["lines"].map(value => { const item = object(value, ["productId", "quantity", "unitPriceMinor"]);
         return { productId: uuid(item["productId"]), quantity: whole(item["quantity"], 1), unitPriceMinor: whole(item["unitPriceMinor"]) }; });
       if (new Set(lines.map(line => line.productId)).size !== lines.length) throw new WorkspaceError("invalid_input");
       const total = subtotalOf(lines), legacy = data["payments"] === undefined;
-      if (legacy === (data["accountId"] === undefined)) throw new WorkspaceError("invalid_input");
+      if (legacy === (data["accountId"] === undefined) || legacy && discountMinor > 0) throw new WorkspaceError("invalid_input");
       let payments: { accountId: string; amountMinor: number }[];
       if (legacy) payments = total > 0 ? [{ accountId: uuid(data["accountId"]), amountMinor: total }] : [];
       else {
@@ -340,7 +340,7 @@ export class DesktopApplication implements ShopService {
         payments = data["payments"].map(value => { const item = object(value, ["accountId", "amountMinor"]); return { accountId: uuid(item["accountId"]), amountMinor: whole(item["amountMinor"], 1) }; });
         if (new Set(payments.map(payment => payment.accountId)).size !== payments.length) throw new WorkspaceError("invalid_input");
       }
-      const settled = saleTotals({ lines, payments, customerId });
+      const settled = saleTotals({ lines, payments, customerId, discountMinor });
       return this.ports.database.transaction(tx => {
         const saved = tx.get(`SELECT business_id,user_id,device_id,discount_minor,customer_id FROM sales WHERE id=?`, [id]);
         if (saved !== undefined) {
@@ -350,7 +350,7 @@ export class DesktopApplication implements ShopService {
           const originalLines = tx.all(`SELECT product_id,quantity,unit_price_minor,discount_minor FROM sale_items WHERE business_id=? AND sale_id=?`, [context.businessId,id]);
           const originalPayments = tx.all(`SELECT account_id,amount_minor FROM sale_payments WHERE business_id=? AND sale_id=?`, [context.businessId,id]);
           const sorted = (items: readonly Record<string, unknown>[]): string => JSON.stringify(items.map(item => JSON.stringify(item)).sort());
-          if (saved["discount_minor"] !== 0 || saved["customer_id"] !== (customerId ?? null) || originalLines.some(line=>line["discount_minor"]!==0) ||
+          if (saved["discount_minor"] !== discountMinor || saved["customer_id"] !== (customerId ?? null) || originalLines.some(line=>line["discount_minor"]!==0) ||
             sorted(originalLines.map(line=>({productId:line["product_id"],quantity:line["quantity"],unitPriceMinor:line["unit_price_minor"]}))) !== sorted(lines) ||
             sorted(originalPayments.map(payment=>({accountId:payment["account_id"],amountMinor:payment["amount_minor"]}))) !== sorted(payments)) throw new CommandError("request_conflict");
           return { saleId: id };
@@ -368,7 +368,7 @@ export class DesktopApplication implements ShopService {
           return { ...line, id: this.ports.newId(), movementId: this.ports.newId(), name: product.name,
             unitCostMinor: product.purchasePriceMinor, taxRateBasisPoints: product.taxRateBasisPoints };
         });
-        completeSale(context, { id, number: `V-${id}`, occurredAt: at, branchId: unlockedActor(context).branchId, customerId,
+        completeSale(context, { id, number: `V-${id}`, occurredAt: at, branchId: unlockedActor(context).branchId, customerId, discountMinor,
           eventId: this.ports.newId(), lines: recordedLines, payments: payments.map(payment => ({ id: this.ports.newId(), ...payment })),
           ...(settled.outstandingMinor > 0 ? { creditTransactionId: this.ports.newId() } : {}) });
         return { saleId: id };

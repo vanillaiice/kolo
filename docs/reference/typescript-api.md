@@ -415,6 +415,7 @@ export interface CheckoutRequest extends SessionRequest {
         readonly amountMinor: number;
     }[];
     readonly customerId?: string;
+    readonly discountMinor?: number;
     readonly lines: readonly {
         readonly productId: string;
         readonly quantity: number;

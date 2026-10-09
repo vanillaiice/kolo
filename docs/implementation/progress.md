@@ -588,5 +588,13 @@ Implemented:
 
 ### Remaining
 
-Discounts, suppliers/purchases, finance, reports, returns, staff and backup/exchange
-screens; printers/scanners, accessibility/performance measurement and Windows packaging.
+Suppliers/purchases, finance, reports, returns, staff and backup/exchange screens;
+printers/scanners, accessibility/performance measurement and Windows packaging.
+
+### Follow-up: sale discounts
+
+The till offers a whole-sale discount to actors with `sales.discount`, showing subtotal,
+discount and total; receipts show the discount. The host validates it against the
+subtotal before settlement and includes it in retry identity; legacy single-account
+requests cannot carry one. A host case covers authority, bounds, malformed values,
+overpayment after discount and conflicting retries.

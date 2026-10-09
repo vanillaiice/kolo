@@ -62,7 +62,7 @@ const strings = {
   overpaid: ["Les paiements dépassent le total. Utilisez « Espèces reçues » pour la monnaie.", "Payments exceed the total. Use “Cash received” for change."],
   received: ["Espèces reçues (facultatif)", "Cash received (optional)"], change: ["Monnaie à rendre", "Change due"],
   receivedShort: ["Les espèces reçues sont inférieures au montant payé en espèces.", "Cash received is less than the cash amount."],
-  outstanding: ["Reste dû", "Left owing"],
+  outstanding: ["Reste dû", "Left owing"], discount: ["Remise · FCFA", "Discount · FCFA"], discountLabel: ["Remise", "Discount"], subtotal: ["Sous-total", "Subtotal"],
   cart: ["Vente en cours", "Current sale"], emptyCart: ["Votre panier est vide", "Your cart is empty"], emptyCartHelp: ["Les articles ajoutés apparaîtront ici.", "Products you add will appear here."],
   quantity: ["Quantité", "Quantity"], remove: ["Retirer", "Remove"], total: ["Total", "Total"], cashAccount: ["Compte espèces", "Cash account"],
   cashHelp: ["Enregistre le montant exact de la vente sur ce compte espèces.", "Records the exact sale amount in this cash account."],
