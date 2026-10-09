@@ -3,7 +3,9 @@ import type { DesktopApplication } from "./application.ts";
 import type { Result } from "../shared/service.js";
 
 /** A host-owned dispatcher map; none of its channel names are supplied by the renderer API. */
-export function desktopHandlers(application: DesktopApplication, status: () => DesktopStatus, trusted: (event: unknown) => boolean): Readonly<Record<string, (event: unknown, ...args: unknown[]) => unknown>> {
+export function desktopHandlers(current: DesktopApplication | (() => DesktopApplication), status: () => DesktopStatus, trusted: (event: unknown) => boolean): Readonly<Record<string, (event: unknown, ...args: unknown[]) => unknown>> {
+  // Restore and pairing replace the application with one serving the activated database.
+  const application = new Proxy({} as DesktopApplication, { get: (_target, key) => { const target = typeof current === "function" ? current() : current; const value: unknown = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value; } });
   const handlers: Record<string, (event: unknown, ...args: unknown[]) => unknown> = {};
   const fail = (code: "permission_denied" | "invalid_input"): Result<never> => ({ ok: false, error: { code } });
   const query = (channel: string, operation: () => unknown): void => {
@@ -70,6 +72,24 @@ export function desktopHandlers(application: DesktopApplication, status: () => D
   command("kolo:staff-permission", input => application.setStaffPermission(input));
   command("kolo:staff-active", input => application.setStaffActive(input));
   command("kolo:reset-staff-secret", input => application.resetStaffSecret(input));
+  query("kolo:discard-file", () => application.discardFile());
+  command("kolo:save-backup", input => application.saveBackup(input));
+  command("kolo:open-backup", input => application.openBackup(input));
+  command("kolo:restore-backup", input => application.restoreBackup(input));
+  command("kolo:save-invite", input => application.saveInvite(input));
+  command("kolo:open-pairing-request", input => application.openPairingRequest(input));
+  command("kolo:approve-pairing-request", input => application.approvePairingRequest(input));
+  query("kolo:open-invite", () => application.openInvite());
+  command("kolo:accept-invite", input => application.acceptInvite(input));
+  command("kolo:complete-pairing", input => application.completePairing(input));
+  query("kolo:cancel-pairing", () => application.cancelPairing());
+  command("kolo:exchange-state", input => application.exchangeState(input));
+  command("kolo:save-exchange", input => application.saveExchange(input));
+  command("kolo:open-exchange", input => application.openExchange(input));
+  command("kolo:import-exchange", input => application.importExchange(input));
+  command("kolo:save-import-receipt", input => application.saveImportReceipt(input));
+  command("kolo:open-import-receipt", input => application.openImportReceipt(input));
+  command("kolo:retry-exchange", input => application.retryExchange(input));
   command("kolo:cash-accounts", input => application.listCashAccounts(input));
   command("kolo:checkout", input => application.checkout(input));
   command("kolo:receipt", input => application.getReceipt(input));

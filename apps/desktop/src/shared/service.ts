@@ -5,7 +5,10 @@ import type { Receipt, Page, PageQuery } from "@kolo/core/application/queries";
 export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" |
   "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" |
   "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" |
-  "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return";
+  "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" |
+  /** File transfer failures; file contents and paths never cross the bridge. */
+  "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" |
+  "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file";
 /** Serializable results make transport and operation failures explicit. */
 export type Result<T> = { readonly ok: true; readonly value: T } |
   { readonly ok: false; readonly error: { readonly code: FailureCode; readonly retryAt?: string } };
@@ -177,6 +180,22 @@ export interface StaffView {
   readonly id: string; readonly name: string; readonly role: "OWNER" | "MANAGER" | "CASHIER" | "INVENTORY" | "ACCOUNTANT"; readonly active: boolean;
   readonly isSelf: boolean; readonly permissions: readonly Permission[];
 }
+/** A checked backup file waiting for an explicit restore confirmation. */
+export interface BackupFileView { readonly businessName: string; readonly ownerName: string; readonly createdAt: string; readonly appliedEvents: number; }
+/** A checked pairing invite: compare the fingerprint with the owner's screen before accepting. */
+export interface InviteView { readonly businessName: string; readonly ownerName: string; readonly fingerprint: string; readonly authorityAllowed: boolean; }
+/** A checked pairing request: compare the code with the new till's screen before approving. */
+export interface PairingRequestView { readonly deviceLabel: string; readonly businessName: string; readonly verificationCode: string; readonly authorityAllowed: boolean; }
+/** Paired destinations, received batches and actionable diagnostics. */
+export interface ExchangeView {
+  readonly destinations: readonly { readonly id: string; readonly label: string; readonly pending: number }[];
+  readonly batches: readonly { readonly batchId: string; readonly senderDeviceId: string; readonly createdAt: string }[];
+  readonly diagnostics: readonly { readonly eventId: string; readonly code: string; readonly description: string; readonly action: string }[];
+}
+/** Assessment of a checked exchange file before import. */
+export interface BundleView { readonly total: number; readonly ready: number; readonly duplicate: number; readonly deferred: number; readonly review: number; }
+/** Whether a native save dialog wrote the prepared file (false when the user cancelled). */
+export interface SavedFile { readonly saved: boolean; }
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
 export interface ShopService {
   /** Public boot status; no credentials or key references are returned. */
@@ -290,6 +309,45 @@ export interface ShopService {
   setStaffActive(input: SessionRequest & { readonly userId: string; readonly active: boolean }): Promise<Result<StaffView>>;
   /** Owner-only: replaces another member's code. */
   resetStaffSecret(input: SessionRequest & { readonly userId: string; readonly secret: string }): Promise<Result<StaffView>>;
+  /** Owner: encrypts a backup with a file password and saves it through the native dialog. */
+  saveBackup(input: SessionRequest & { readonly password: string }): Promise<Result<SavedFile>>;
+  /** Picks and checks a backup file; nothing is replaced until restoreBackup. */
+  openBackup(input: { readonly password: string }): Promise<Result<BackupFileView>>;
+  /**
+   * Restores the checked backup after the shop name is typed back. An empty installation needs a new
+   * owner code; a configured one needs the owner's session. The new shop opens locked.
+   */
+  restoreBackup(input: { readonly sessionId?: string; readonly confirmedName: string; readonly deviceLabel: string; readonly secret: string }): Promise<Result<{ readonly activated: boolean }>>;
+  /** Forgets any checked file and its staged snapshot. */
+  discardFile(): Promise<Result<null>>;
+  /** Owner: saves a pairing invite for another till and returns the fingerprint to compare. */
+  saveInvite(input: SessionRequest & { readonly authorityAllowed: boolean }): Promise<Result<SavedFile & { readonly fingerprint: string }>>;
+  /** Owner: picks and checks a pairing request from a new till. */
+  openPairingRequest(input: SessionRequest): Promise<Result<PairingRequestView>>;
+  /** Owner: approves the checked request after the code is compared; saves the enrollment file. */
+  approvePairingRequest(input: SessionRequest & { readonly confirmedCode: string; readonly password: string }): Promise<Result<SavedFile>>;
+  /** Picks and checks a pairing invite from the owner's till. */
+  openInvite(): Promise<Result<InviteView>>;
+  /** Accepts the checked invite after the fingerprint is compared; saves the request file and returns the code to compare. */
+  acceptInvite(input: { readonly sessionId?: string; readonly confirmedFingerprint: string; readonly deviceLabel: string; readonly secret: string }): Promise<Result<SavedFile & { readonly verificationCode: string }>>;
+  /** Picks the owner's enrollment file and completes pairing; a new shop opens locked. */
+  completePairing(input: { readonly sessionId?: string; readonly password: string; readonly confirmedCode: string }): Promise<Result<{ readonly activated: boolean }>>;
+  /** Cancels an unfinished pairing on this till. */
+  cancelPairing(): Promise<Result<null>>;
+  /** Owner: paired destinations, received batches and diagnostics. */
+  exchangeState(input: SessionRequest & { readonly language?: "fr" | "en" }): Promise<Result<ExchangeView>>;
+  /** Owner: saves pending events for one destination; `saved:false` with `empty:true` when nothing is pending. */
+  saveExchange(input: SessionRequest & { readonly destinationId: string; readonly password: string }): Promise<Result<SavedFile & { readonly empty: boolean }>>;
+  /** Owner: picks and checks an exchange file from a paired till. */
+  openExchange(input: SessionRequest & { readonly password: string }): Promise<Result<BundleView>>;
+  /** Owner: imports the checked exchange file. */
+  importExchange(input: SessionRequest): Promise<Result<{ readonly processed: number }>>;
+  /** Owner: saves an import receipt for a received batch. */
+  saveImportReceipt(input: SessionRequest & { readonly batchId: string; readonly password: string }): Promise<Result<SavedFile>>;
+  /** Owner: picks a receipt from a destination and records what it acknowledged. */
+  openImportReceipt(input: SessionRequest & { readonly destinationId: string; readonly password: string }): Promise<Result<{ readonly recorded: number }>>;
+  /** Owner: retries deferred received events. */
+  retryExchange(input: SessionRequest): Promise<Result<{ readonly applied: number }>>;
   /** Bounded account names for cash checkout, without disclosing financial balances. */
   listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly name: string }>>>;
   /** Atomic cash sale; identical retries return the original saved sale ID. */

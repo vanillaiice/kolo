@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import type { BrowserWindow } from "electron";
+import type { TransferDocument } from "@kolo/core/backup/types";
+import type { TransferDialogs } from "./transfer.ts";
 
+/** Fixture dialogs: saved transfer documents stay in memory and "open" returns the latest one. */
+export function smokeDialogs(): TransferDialogs {
+  const saved: TransferDocument[] = [];
+  return { open: async () => saved.at(-1)?.text, save: async document => { saved.push(document); return true; } };
+}
 /** Disposable actual Electron DOM/IPC/native-vault workflow; invoked only by the explicit smoke flag. */
 export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void> {
   const evaluate = <T>(source: string): Promise<T> => window.webContents.executeJavaScript(source) as Promise<T>;
@@ -141,8 +148,15 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await wait(`${visible(".permission-group .check")}.find(label=>label.textContent==='Sell on credit')?.querySelector('input').checked===true`, "credit granted");
     if (process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"] !== undefined) await writeFile(process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"], (await window.webContents.capturePage()).toPNG());
     assert.equal(await evaluate("document.querySelector('.notice.error')===null"), true);
-    await click(".topbar-actions .secondary"); await wait("document.querySelector('#local-secret')!==null");
-    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment, supplier purchase, cash count/correction, expense, reports, sale return and staff passed\n");
+    // Backup, then restore it over this shop: the activated database is served by a new
+    // application, the restored shop opens locked, and the restart phase must find it.
+    await navigate("Backup & devices");
+    for (const [selector, value] of [["#backup-password", "correct horse battery"], ["#backup-confirm", "correct horse battery"]]) await fill(selector!, value!);
+    await submit("#backup-password"); await wait(`${visible(".notice.success")}.some(element=>element.textContent==='File saved.')`, "backup saved");
+    await fill("#restore-password", "correct horse battery"); await submit("#restore-password"); await wait(`${visible(".file-summary")}[0]?.textContent.includes('Desktop validation')`, "backup checked");
+    for (const [selector, value] of [["#restore-name", "Desktop validation"], ["#restore-secret", "654321"], ["#restore-confirm", "654321"]]) await fill(selector!, value!);
+    await submit("#restore-name"); await wait("document.querySelector('#local-secret')!==null", "restored shop locked");
+    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment, supplier purchase, cash count/correction, expense, reports, sale return, staff and backup/restore passed\n");
   } else if (phase === "reopen") {
     await wait("document.querySelector('#local-secret')!==null");
     const state = await evaluate<string>("window.kolo.getWorkspace().then(result=>result.value.state)"); assert.equal(state, "locked");

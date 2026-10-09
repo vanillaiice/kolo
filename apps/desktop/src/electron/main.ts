@@ -5,7 +5,9 @@ import { randomUUIDv7 } from "node:crypto";
 import { desktopStatus } from "./database.js";
 import { DesktopApplication } from "./application.js";
 import { desktopHandlers } from "./handlers.js";
-import { localCredentialsOnDesktop, desktopExchangeCrypto } from "./local-credentials.js";
+import { localCredentialsOnDesktop, desktopExchangeCrypto, desktopTransferCrypto } from "./local-credentials.js";
+import { pickDesktopTransferFile, saveDesktopTransferFile } from "./transfer-files.js";
+import type { TransferDialogs } from "./transfer.js";
 import { nodeWorkspaceFiles } from "@kolo/core/data/database/node-sqlite";
 import { migrate } from "@kolo/core/data/database/migrations";
 import type { Database } from "@kolo/core/data/database/driver";
@@ -43,9 +45,24 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   void app.whenReady().then(async () => {
     try {
       fileSlots = nodeWorkspaceFiles(app.getPath("userData")); database = fileSlots.openActive(); migrate(database);
-      application = new DesktopApplication({ database, credentials: localCredentialsOnDesktop(join(app.getPath("userData"), "credentials"), safeStorage),
-        newId: randomUUIDv7, now: () => new Date().toISOString() }, desktopExchangeCrypto);
-      await application.initialize();
+      const slots = fileSlots, credentials = localCredentialsOnDesktop(join(app.getPath("userData"), "credentials"), safeStorage);
+      const dialogs: TransferDialogs = workflowSmoke ? (await import("./workflow-smoke.js")).smokeDialogs() : {
+        open: () => pickDesktopTransferFile(dialog), save: document => saveDesktopTransferFile(document, dialog) };
+      // Restore and pairing activate a new database: a new application serves it, and the old one
+      // is disposed after its in-flight command (the activation itself) has answered.
+      const serve = async (next: Database): Promise<DesktopApplication> => {
+        const created = new DesktopApplication({ database: next, credentials, newId: randomUUIDv7, now: () => new Date().toISOString() }, desktopExchangeCrypto,
+          { files: slots, dialogs, crypto: desktopTransferCrypto, onActivated: async activated => {
+            migrate(activated); const previous = application, previousDatabase = database;
+            application = await serve(activated); database = activated;
+            void previous?.dispose().finally(() => previousDatabase?.close());
+            if (window !== undefined && !window.isDestroyed()) window.webContents.send("kolo:changed");
+          } });
+        await created.initialize();
+        created.onChanged(() => { if (created === application && window !== undefined && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("kolo:changed"); });
+        return created;
+      };
+      application = await serve(database);
       const rendererPath = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
       const rendererUrl = pathToFileURL(rendererPath).href;
       const trusted = (candidate: unknown): boolean => {
@@ -53,11 +70,10 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
         return window !== undefined && !window.isDestroyed() && event.sender === window.webContents &&
           event.senderFrame === window.webContents.mainFrame && event.senderFrame?.url === rendererUrl;
       };
-      for (const [channel, handler] of Object.entries(desktopHandlers(application, () => desktopStatus(database!), trusted))) ipcMain.handle(channel, handler);
+      for (const [channel, handler] of Object.entries(desktopHandlers(() => application!, () => desktopStatus(database!), trusted))) ipcMain.handle(channel, handler);
       window = new BrowserWindow({ width: 1280, height: 850, minWidth: 880, minHeight: 620, backgroundColor: "#f6f5ef",
         webPreferences: { preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: false } });
       const lock = (): void => { void application?.lock(); };
-      application.onChanged(() => { if (window !== undefined && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("kolo:changed"); });
       window.on("minimize", lock);
       powerMonitor.on("suspend", lock); powerMonitor.on("lock-screen", lock);
       window.webContents.on("render-process-gone", lock);

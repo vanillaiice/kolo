@@ -733,3 +733,36 @@ smoke mode only, prints the failure message.
 
 Backup/restore and pairing/file-exchange screens; receipt printing; hardware,
 accessibility/performance and Windows packaging acceptance.
+
+## 2026-10-09 — Desktop backup, pairing and file exchange (F5)
+
+Implemented:
+
+- "Backup & devices" section for the owner: encrypted backup save, restore over this shop
+  after typing the shop name, pairing invite with fingerprint, request check and approval
+  with the compared code, per-destination exchange files, exchange import with assessment,
+  import receipts both ways, deferred retry and localized diagnostics.
+- Setup screen links to restore a backup or join a shop from another till (invite check,
+  fingerprint confirmation, activation file and code, cancel).
+- Eighteen validated IPC commands in `electron/transfer.ts`; native dialogs stay in the main
+  process and only previews cross the bridge. Activation swaps the served application to the
+  new database slot; handlers resolve the current application lazily.
+
+### Verification
+
+- Real-SQLite/OS-vault-adapter host cases on actual workspace slots: backup with short and
+  correct passwords, cancelled dialog, missing staged file, wrong password, wrong shop name,
+  restore into an empty installation and unlock with the new code showing the original
+  stock and receipt; two desktops pairing by fingerprint and code (wrong code refused),
+  completing into the owner's shop, selling on the second till, exporting, previewing and
+  importing on the first (stock follows), and import receipts clearing pending delivery.
+- The actual Electron workflow saves a backup and restores it over the running shop through
+  the DOM; the restored shop opens locked and the restart phase unlocks the restored slot
+  with the same facts. Screenshots of this screen were not usable in the headless capture
+  (stale frames after the vault prompt); its behaviour is verified through DOM checks.
+- `npm run check` and repeated `npm run smoke:desktop:workflow` runs passed.
+
+### Remaining
+
+Receipt printing; hardware, accessibility/performance and Windows packaging acceptance;
+Android/Windows cross-device exchange acceptance.

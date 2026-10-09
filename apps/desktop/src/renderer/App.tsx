@@ -9,6 +9,7 @@ import { Purchases } from "./components/Purchases.tsx";
 import { Finance } from "./components/Finance.tsx";
 import { Reports } from "./components/Reports.tsx";
 import { Staff } from "./components/Staff.tsx";
+import { Devices, StartFromFile } from "./components/Transfer.tsx";
 import { call, ErrorText, Field, TextContext, useAction, useText, type Message } from "./components/ui.tsx";
 import { text, type Language } from "./text.ts";
 
@@ -16,7 +17,7 @@ import { text, type Language } from "./text.ts";
 export function App({service}:{readonly service:ShopService}):React.JSX.Element{
   const [language,setLanguage]=useState<Language>(()=>{try{return localStorage.getItem("kolo.language")==="en"?"en":"fr";}catch{return "fr";}});
   const [view,setView]=useState<WorkspaceView>(),[error,setError]=useState<Message>(),[revision,setRevision]=useState(0);
-  const [recovery,setRecovery]=useState<{key:string;sessionId:string}>();
+  const [recovery,setRecovery]=useState<{key:string;sessionId:string}>(),[startMode,setStartMode]=useState<"restore"|"join">();
   const refreshSequence=useRef(0),mounted=useRef(false);
   const refresh=useCallback(()=>{
     const sequence=++refreshSequence.current;
@@ -34,7 +35,8 @@ export function App({service}:{readonly service:ShopService}):React.JSX.Element{
       <div className="language-switch" role="group" aria-label={language==="fr"?"Langue":"Language"}><button aria-pressed={language==="fr"} onClick={()=>setLanguage("fr")}>FR</button><button aria-pressed={language==="en"} onClick={()=>setLanguage("en")}>EN</button></div>
       {view===undefined?<main className="auth-card"><p className="brand">KOLO</p><h1>{t("opening")}</h1><ErrorText message={error}/>{error&&<button className="secondary" onClick={refresh}>{t("retry")}</button>}</main>:
         view.state!=="unlocked"||view.sessionId===null||view.actor===null?<main className="auth-layout"><div className="auth-brand"><span className="brand">KOLO<span className="brand-mark" aria-hidden="true">.</span></span><p><span className="status-dot"/>{t("offline")}</p></div>
-          <Workspace service={service} view={view} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})}/></main>:
+          {startMode!==undefined&&view.state==="empty"?<StartFromFile service={service} mode={startMode} onDone={()=>{setStartMode(undefined);refresh();}} onBack={()=>setStartMode(undefined)}/>
+            :<Workspace service={service} view={view} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})} onStartFromFile={setStartMode}/>}</main>:
           <Shop key={view.sessionId} service={service} view={view} sessionId={view.sessionId} revision={revision} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})}/>
       }
       {view!==undefined&&error&&<div className="connection-error"><ErrorText message={error}/><button className="secondary" onClick={refresh}>{t("retry")}</button></div>}
@@ -44,12 +46,12 @@ export function App({service}:{readonly service:ShopService}):React.JSX.Element{
 }
 function Shop({service,view,sessionId,revision,refresh,onRecoveryKey}:{service:ShopService;view:WorkspaceView;sessionId:string;revision:number;refresh:()=>void;onRecoveryKey:(key:string,sessionId:string)=>void}):React.JSX.Element{
   const {t}=useText(),action=useAction();
-  const permissions=view.actor!.permissions,canTill=permissions.includes("sales.create")&&permissions.includes("products.view"),canProducts=permissions.includes("products.view"),canReceipts=permissions.includes("sales.view")||permissions.includes("sales.view_own"),canCustomers=permissions.includes("customers.view"),canPurchases=permissions.includes("purchases.view")||permissions.includes("suppliers.view"),canFinance=permissions.includes("finance.accounts.view")&&permissions.includes("cash.view")||permissions.includes("expenses.view"),canReports=permissions.some(permission=>permission.startsWith("reports.")),canStaff=permissions.includes("users.view");
-  const [selected,setSelected]=useState<"till"|"products"|"customers"|"purchases"|"finance"|"reports"|"staff"|"receipts">(canTill?"till":canProducts?"products":"receipts"),[receiptId,setReceiptId]=useState<string>(),[keyForm,setKeyForm]=useState(false),[secret,setSecret]=useState("");
-  const section=selected==="till"&&canTill||selected==="products"&&canProducts||selected==="customers"&&canCustomers||selected==="purchases"&&canPurchases||selected==="finance"&&canFinance||selected==="reports"&&canReports||selected==="staff"&&canStaff||selected==="receipts"&&canReceipts?selected:canTill?"till":canProducts?"products":canReceipts?"receipts":undefined;
+  const permissions=view.actor!.permissions,canTill=permissions.includes("sales.create")&&permissions.includes("products.view"),canProducts=permissions.includes("products.view"),canReceipts=permissions.includes("sales.view")||permissions.includes("sales.view_own"),canCustomers=permissions.includes("customers.view"),canPurchases=permissions.includes("purchases.view")||permissions.includes("suppliers.view"),canFinance=permissions.includes("finance.accounts.view")&&permissions.includes("cash.view")||permissions.includes("expenses.view"),canReports=permissions.some(permission=>permission.startsWith("reports.")),canStaff=permissions.includes("users.view"),canDevices=view.actor!.isOwner&&permissions.includes("business.settings");
+  const [selected,setSelected]=useState<"till"|"products"|"customers"|"purchases"|"finance"|"reports"|"staff"|"devices"|"receipts">(canTill?"till":canProducts?"products":"receipts"),[receiptId,setReceiptId]=useState<string>(),[keyForm,setKeyForm]=useState(false),[secret,setSecret]=useState("");
+  const section=selected==="till"&&canTill||selected==="products"&&canProducts||selected==="customers"&&canCustomers||selected==="purchases"&&canPurchases||selected==="finance"&&canFinance||selected==="reports"&&canReports||selected==="staff"&&canStaff||selected==="devices"&&canDevices||selected==="receipts"&&canReceipts?selected:canTill?"till":canProducts?"products":canReceipts?"receipts":undefined;
   return <>
     <aside className="sidebar"><div className="brand">KOLO<span className="brand-mark" aria-hidden="true">.</span></div><div className="shop-label"><span className="eyebrow">{t("local")}</span><strong>{view.shopName}</strong></div>
-      <nav aria-label="KOLO">{([{id:"till",allowed:canTill,mark:"▦"},{id:"products",allowed:canProducts,mark:"▤"},{id:"customers",allowed:canCustomers,mark:"◍"},{id:"purchases",allowed:canPurchases,mark:"⬓"},{id:"finance",allowed:canFinance,mark:"◈"},{id:"reports",allowed:canReports,mark:"▥"},{id:"staff",allowed:canStaff,mark:"◎"},{id:"receipts",allowed:canReceipts,mark:"▧"}] as const).filter(item=>item.allowed).map(item=><button className={`nav-item ${section===item.id?"selected":""}`} aria-current={section===item.id?"page":undefined} key={item.id} onClick={()=>{setSelected(item.id);if(item.id==="receipts")setReceiptId(undefined);}}><span aria-hidden="true">{item.mark}</span>{t(item.id)}</button>)}</nav>
+      <nav aria-label="KOLO">{([{id:"till",allowed:canTill,mark:"▦"},{id:"products",allowed:canProducts,mark:"▤"},{id:"customers",allowed:canCustomers,mark:"◍"},{id:"purchases",allowed:canPurchases,mark:"⬓"},{id:"finance",allowed:canFinance,mark:"◈"},{id:"reports",allowed:canReports,mark:"▥"},{id:"staff",allowed:canStaff,mark:"◎"},{id:"devices",allowed:canDevices,mark:"⇄"},{id:"receipts",allowed:canReceipts,mark:"▧"}] as const).filter(item=>item.allowed).map(item=><button className={`nav-item ${section===item.id?"selected":""}`} aria-current={section===item.id?"page":undefined} key={item.id} onClick={()=>{setSelected(item.id);if(item.id==="receipts")setReceiptId(undefined);}}><span aria-hidden="true">{item.mark}</span>{t(item.id)}</button>)}</nav>
       <div className="sidebar-footer"><span className="status-dot"/>{t("offline")}</div>
     </aside>
     <main className="main-content"><header className="topbar"><span>{view.shopName}</span><div className="topbar-actions"><span className="user-name">{view.actor?.name}</span>{view.actor?.isOwner&&<button className="text-button" onClick={()=>setKeyForm(!keyForm)}>{t("viewKey")}</button>}<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.lock()).then(()=>refresh());}}>{t("lock")}</button></div></header>
@@ -62,6 +64,7 @@ function Shop({service,view,sessionId,revision,refresh,onRecoveryKey}:{service:S
       {canFinance&&<div hidden={section!=="finance"}><Finance service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {section==="reports"&&<Reports service={service} sessionId={sessionId} revision={revision} permissions={permissions}/>}
       {section==="staff"&&<Staff service={service} sessionId={sessionId} revision={revision} isOwner={view.actor?.isOwner===true}/>}
+      {canDevices&&<div hidden={section!=="devices"}><Devices service={service} sessionId={sessionId} revision={revision}/></div>}
       {section==="receipts"&&<Receipts key={receiptId??"history"} service={service} sessionId={sessionId} revision={revision} initialId={receiptId} canReturn={permissions.includes("sales.refund")} onNewSale={()=>setSelected(canTill?"till":"products")}/>}
       {section===undefined&&<p className="notice error">{t("noAccess")}</p>}
     </main>

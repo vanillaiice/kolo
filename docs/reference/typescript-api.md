@@ -8,7 +8,9 @@ Desktop authority and operations. The opaque core context never leaves this host
 
 ```ts
 class DesktopApplication implements ShopService {
-  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto);
+  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & {
+    readonly onActivated: (database: Database) => Promise<void>;
+});
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   initialize(): Promise<void>;
   /** Invalidates authority immediately, then waits for native work before the caller closes SQLite. */
@@ -109,6 +111,25 @@ class DesktopApplication implements ShopService {
   setStaffPermission(input: unknown): Promise<Result<StaffView>>;
   setStaffActive(input: unknown): Promise<Result<StaffView>>;
   resetStaffSecret(input: unknown): Promise<Result<StaffView>>;
+  /** Backup, pairing and exchange through native dialogs; see transfer.ts. File work is single-flight. */
+  discardFile(): Promise<Result<null>>;
+  saveBackup(input?: unknown): Promise<Result<SavedFile>>;
+  openBackup(input?: unknown): Promise<Result<BackupFileView>>;
+  restoreBackup(input?: unknown): Promise<Result<{ readonly activated: boolean; }>>;
+  saveInvite(input?: unknown): Promise<Result<SavedFile & { readonly fingerprint: string; }>>;
+  openPairingRequest(input?: unknown): Promise<Result<PairingRequestView>>;
+  approvePairingRequest(input?: unknown): Promise<Result<SavedFile>>;
+  openInvite(input?: unknown): Promise<Result<InviteView>>;
+  acceptInvite(input?: unknown): Promise<Result<SavedFile & { readonly verificationCode: string; }>>;
+  completePairing(input?: unknown): Promise<Result<{ readonly activated: boolean; }>>;
+  cancelPairing(input?: unknown): Promise<Result<null>>;
+  exchangeState(input?: unknown): Promise<Result<ExchangeView>>;
+  saveExchange(input?: unknown): Promise<Result<SavedFile & { readonly empty: boolean; }>>;
+  openExchange(input?: unknown): Promise<Result<BundleView>>;
+  importExchange(input?: unknown): Promise<Result<{ readonly processed: number; }>>;
+  saveImportReceipt(input?: unknown): Promise<Result<SavedFile>>;
+  openImportReceipt(input?: unknown): Promise<Result<{ readonly recorded: number; }>>;
+  retryExchange(input?: unknown): Promise<Result<{ readonly applied: number; }>>;
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): Promise<Result<Receipt>>;
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
@@ -197,7 +218,7 @@ reverseExpense(host: Host, input: unknown): ExpenseView;
 A host-owned dispatcher map; none of its channel names are supplied by the renderer API.
 
 ```ts
-desktopHandlers(application: DesktopApplication, status: () => DesktopStatus, trusted: (event: unknown) => boolean): Readonly<Record<string, (event: unknown, ...args: unknown[]) => unknown>>;
+desktopHandlers(current: DesktopApplication | (() => DesktopApplication), status: () => DesktopStatus, trusted: (event: unknown) => boolean): Readonly<Record<string, (event: unknown, ...args: unknown[]) => unknown>>;
 ```
 
 ## [apps/desktop/src/electron/host.ts](../../apps/desktop/src/electron/host.ts)
@@ -433,6 +454,137 @@ Main-process save dialog; writes only a newly created selected file, never overw
 saveDesktopTransferFile(document: TransferDocument, native: Pick<Dialog, "showSaveDialog">): Promise<boolean>;
 ```
 
+## [apps/desktop/src/electron/transfer.ts](../../apps/desktop/src/electron/transfer.ts)
+
+Native file access stays in the main process; the renderer never supplies paths or contents.
+
+```ts
+export interface TransferDialogs {
+    open(): Promise<string | undefined>;
+    save(document: TransferDocument): Promise<boolean>;
+}
+```
+
+What the desktop host provides for backup, pairing and exchange.
+
+```ts
+export interface TransferPorts {
+    readonly files: SnapshotPort;
+    readonly dialogs: TransferDialogs;
+    readonly crypto: TransferCrypto;
+}
+```
+
+One checked file per installation; checking another or locking forgets it.
+
+```ts
+export type StagedFile = {
+    readonly kind: "backup";
+    readonly preview: BackupPreview;
+} | {
+    readonly kind: "invite";
+    readonly text: string;
+} | {
+    readonly kind: "request";
+    readonly text: string;
+} | {
+    readonly kind: "bundle";
+    readonly preview: BundlePreview;
+};
+```
+
+Host access for transfer commands, including the swap to an activated database.
+
+```ts
+export interface TransferHost extends Host {
+    readonly transfer: TransferPorts;
+    optionalActor(data: Record<string, unknown>): OperationContext | undefined;
+    staged(): StagedFile | undefined;
+    stage(file: StagedFile | undefined): Promise<void>;
+    activate(database: Database): Promise<void>;
+}
+```
+
+Core transfer and exchange failures become stable bridge codes.
+
+```ts
+translated<T>(work: () => Promise<T>): Promise<T>;
+```
+
+```ts
+saveBackup(host: TransferHost, input: unknown): Promise<SavedFile>;
+```
+
+```ts
+openBackup(host: TransferHost, input: unknown): Promise<BackupFileView>;
+```
+
+```ts
+restoreBackup(host: TransferHost, input: unknown): Promise<{ readonly activated: boolean; }>;
+```
+
+```ts
+saveInvite(host: TransferHost, input: unknown): Promise<SavedFile & { readonly fingerprint: string; }>;
+```
+
+```ts
+openPairingRequest(host: TransferHost, input: unknown): Promise<PairingRequestView>;
+```
+
+```ts
+approvePairingRequest(host: TransferHost, input: unknown): Promise<SavedFile>;
+```
+
+```ts
+openInvite(host: TransferHost, input: unknown): Promise<InviteView>;
+```
+
+```ts
+acceptInvite(host: TransferHost, input: unknown): Promise<SavedFile & { readonly verificationCode: string; }>;
+```
+
+```ts
+completePairing(host: TransferHost, input: unknown): Promise<{ readonly activated: boolean; }>;
+```
+
+```ts
+cancelPairing(host: TransferHost, input: unknown): Promise<null>;
+```
+
+```ts
+exchangeState(host: TransferHost, input: unknown): Promise<ExchangeView>;
+```
+
+```ts
+saveExchange(host: TransferHost, input: unknown): Promise<SavedFile & { readonly empty: boolean; }>;
+```
+
+```ts
+openExchange(host: TransferHost, input: unknown): Promise<BundleView>;
+```
+
+```ts
+importExchange(host: TransferHost, input: unknown): Promise<{ readonly processed: number; }>;
+```
+
+```ts
+saveImportReceipt(host: TransferHost, input: unknown): Promise<SavedFile>;
+```
+
+```ts
+openImportReceipt(host: TransferHost, input: unknown): Promise<{ readonly recorded: number; }>;
+```
+
+```ts
+retryExchange(host: TransferHost, input: unknown): Promise<{ readonly applied: number; }>;
+```
+
+Discards a staged backup snapshot; other staged kinds hold only text.
+
+```ts
+release(file: StagedFile | undefined): Promise<void>;
+```
+
 ## [apps/desktop/src/electron/validation.ts](../../apps/desktop/src/electron/validation.ts)
 
 Strict IPC object parser: rejects unknown fields, arrays and exotic prototypes.
@@ -479,6 +631,12 @@ page(input: Record<string, unknown>): PageQuery;
 
 ## [apps/desktop/src/electron/workflow-smoke.ts](../../apps/desktop/src/electron/workflow-smoke.ts)
 
+Fixture dialogs: saved transfer documents stay in memory and "open" returns the latest one.
+
+```ts
+smokeDialogs(): TransferDialogs;
+```
+
 Disposable actual Electron DOM/IPC/native-vault workflow; invoked only by the explicit smoke flag.
 
 ```ts
@@ -490,7 +648,7 @@ runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void>;
 Stable application failures; native exception text, credentials and paths never cross the bridge.
 
 ```ts
-export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return";
+export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file";
 ```
 
 Serializable results make transport and operation failures explicit.
@@ -1010,6 +1168,82 @@ export interface StaffView {
 }
 ```
 
+A checked backup file waiting for an explicit restore confirmation.
+
+```ts
+export interface BackupFileView {
+    readonly businessName: string;
+    readonly ownerName: string;
+    readonly createdAt: string;
+    readonly appliedEvents: number;
+}
+```
+
+A checked pairing invite: compare the fingerprint with the owner's screen before accepting.
+
+```ts
+export interface InviteView {
+    readonly businessName: string;
+    readonly ownerName: string;
+    readonly fingerprint: string;
+    readonly authorityAllowed: boolean;
+}
+```
+
+A checked pairing request: compare the code with the new till's screen before approving.
+
+```ts
+export interface PairingRequestView {
+    readonly deviceLabel: string;
+    readonly businessName: string;
+    readonly verificationCode: string;
+    readonly authorityAllowed: boolean;
+}
+```
+
+Paired destinations, received batches and actionable diagnostics.
+
+```ts
+export interface ExchangeView {
+    readonly destinations: readonly {
+        readonly id: string;
+        readonly label: string;
+        readonly pending: number;
+    }[];
+    readonly batches: readonly {
+        readonly batchId: string;
+        readonly senderDeviceId: string;
+        readonly createdAt: string;
+    }[];
+    readonly diagnostics: readonly {
+        readonly eventId: string;
+        readonly code: string;
+        readonly description: string;
+        readonly action: string;
+    }[];
+}
+```
+
+Assessment of a checked exchange file before import.
+
+```ts
+export interface BundleView {
+    readonly total: number;
+    readonly ready: number;
+    readonly duplicate: number;
+    readonly deferred: number;
+    readonly review: number;
+}
+```
+
+Whether a native save dialog wrote the prepared file (false when the user cancelled).
+
+```ts
+export interface SavedFile {
+    readonly saved: boolean;
+}
+```
+
 Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it.
 
 ```ts
@@ -1214,6 +1448,76 @@ export interface ShopService {
         readonly userId: string;
         readonly secret: string;
     }): Promise<Result<StaffView>>;
+    saveBackup(input: SessionRequest & {
+        readonly password: string;
+    }): Promise<Result<SavedFile>>;
+    openBackup(input: {
+        readonly password: string;
+    }): Promise<Result<BackupFileView>>;
+    restoreBackup(input: {
+        readonly sessionId?: string;
+        readonly confirmedName: string;
+        readonly deviceLabel: string;
+        readonly secret: string;
+    }): Promise<Result<{
+        readonly activated: boolean;
+    }>>;
+    discardFile(): Promise<Result<null>>;
+    saveInvite(input: SessionRequest & {
+        readonly authorityAllowed: boolean;
+    }): Promise<Result<SavedFile & {
+        readonly fingerprint: string;
+    }>>;
+    openPairingRequest(input: SessionRequest): Promise<Result<PairingRequestView>>;
+    approvePairingRequest(input: SessionRequest & {
+        readonly confirmedCode: string;
+        readonly password: string;
+    }): Promise<Result<SavedFile>>;
+    openInvite(): Promise<Result<InviteView>>;
+    acceptInvite(input: {
+        readonly sessionId?: string;
+        readonly confirmedFingerprint: string;
+        readonly deviceLabel: string;
+        readonly secret: string;
+    }): Promise<Result<SavedFile & {
+        readonly verificationCode: string;
+    }>>;
+    completePairing(input: {
+        readonly sessionId?: string;
+        readonly password: string;
+        readonly confirmedCode: string;
+    }): Promise<Result<{
+        readonly activated: boolean;
+    }>>;
+    cancelPairing(): Promise<Result<null>>;
+    exchangeState(input: SessionRequest & {
+        readonly language?: "fr" | "en";
+    }): Promise<Result<ExchangeView>>;
+    saveExchange(input: SessionRequest & {
+        readonly destinationId: string;
+        readonly password: string;
+    }): Promise<Result<SavedFile & {
+        readonly empty: boolean;
+    }>>;
+    openExchange(input: SessionRequest & {
+        readonly password: string;
+    }): Promise<Result<BundleView>>;
+    importExchange(input: SessionRequest): Promise<Result<{
+        readonly processed: number;
+    }>>;
+    saveImportReceipt(input: SessionRequest & {
+        readonly batchId: string;
+        readonly password: string;
+    }): Promise<Result<SavedFile>>;
+    openImportReceipt(input: SessionRequest & {
+        readonly destinationId: string;
+        readonly password: string;
+    }): Promise<Result<{
+        readonly recorded: number;
+    }>>;
+    retryExchange(input: SessionRequest): Promise<Result<{
+        readonly applied: number;
+    }>>;
     listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{
         readonly id: string;
         readonly name: string;

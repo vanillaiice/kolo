@@ -23,8 +23,7 @@ for details, payments and statements. The React DOM screens depend on a replacea
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Backup/exchange
-screens, printers and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
+Receipt printing, hardware adapters and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
 business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
 
 ## First usable desktop milestone
@@ -200,12 +199,35 @@ current state change nothing; the owner cannot suspend themselves or replace the
 here (owner recovery stays on the recovery-key flow). Commands live in `electron/staff.ts`;
 permission labels are copied from the mobile keyed strings.
 
+## Backup, pairing and exchange contract
+
+Native open/save dialogs run in the main process (`transfer-files.ts`); paths and file
+contents never cross IPC. Opening a file checks it and keeps one host-side staged file
+(backup preview, invite, pairing request or exchange bundle); checking another, discarding,
+or locking (for session-bound kinds) forgets it, and staged backup snapshots are discarded.
+The renderer only sees previews: shop/owner/date/operation counts, fingerprints, pairing
+codes and bundle assessments. Saving reports `saved:false` when the user cancels.
+
+Owner commands (`business.settings`): encrypted backup; restore over this shop (typed shop
+name, new local code, owner session as recovery context); pairing invite with fingerprint;
+checking a new till's request and approving it with the compared code into an enrollment
+file; exchange files per destination, import with preview, import receipts both ways,
+retrying deferred events and localized diagnostics. Without a session an empty
+installation can restore a backup or join a shop (check invite, accept with the typed
+fingerprint and a new code, then complete with the activation file and code), or cancel an
+unfinished pairing. File work is single-flight with setup/unlock.
+
+Restore and pairing completion activate a new database slot. The main process migrates it,
+creates a new `DesktopApplication` serving it, routes IPC to it (handlers resolve the
+current application lazily), notifies the renderer, then disposes the old application and
+closes its database after the activating command answers. The previous workspace file is
+kept on disk. The new shop opens locked. Core `TransferError`/`ExchangeError` codes become
+bridge failure codes with localized messages. Commands live in `electron/transfer.ts`.
+
 ## Remaining F5 packages
 
 - Operational breadth: accounts/
   transfers/reconciliation, expenses/reversals, reports and sale/purchase returns.
-- Local administration and recovery: backup/restore, pairing/file
-  exchange and actionable import/conflict diagnostics through native dialogs.
 - Desktop acceptance: keyboard/focus/accessibility, selected printer/scanner adapters,
   crash/close recovery, measured startup/search/report/memory behavior on shop PCs,
   Windows installer and protected storage, signing/update/recovery decisions.

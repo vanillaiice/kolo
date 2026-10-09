@@ -3,8 +3,10 @@ import type { ShopService, WorkspaceView } from "../../shared/service.ts";
 import { ErrorText, Field, useAction, useText } from "./ui.tsx";
 
 /** Offline create/pending/unlock/recovery forms depend only on the replaceable UI service. */
-export function Workspace({ service, view, refresh, onRecoveryKey }: {
+export function Workspace({ service, view, refresh, onRecoveryKey, onStartFromFile }: {
   readonly service: ShopService; readonly view: WorkspaceView; readonly refresh: () => void; readonly onRecoveryKey: (key: string, sessionId: string) => void;
+  /** Empty installations can instead restore a backup or join a shop from another till. */
+  readonly onStartFromFile?: (mode: "restore" | "join") => void;
 }): React.JSX.Element {
   const { t } = useText(), action = useAction();
   const [shop, setShop] = useState(""), [owner, setOwner] = useState(""), [device, setDevice] = useState(() => t("defaultTill")), [cash, setCash] = useState(() => t("defaultCash"));
@@ -56,6 +58,8 @@ export function Workspace({ service, view, refresh, onRecoveryKey }: {
         <button type="submit" className="primary full" disabled={action.busy}>{action.busy ? t("recording") : recovering ? t("recoverSubmit") : setup ? t("createShop") : pending ? t("continue") : t("unlock")} <span aria-hidden="true">→</span></button>
       </fieldset>
     </form>
+    {setup && onStartFromFile !== undefined && <div className="start-links"><button disabled={action.busy} className="text-button" onClick={() => onStartFromFile("restore")}>{t("startFromBackup")}</button>
+      <button disabled={action.busy} className="text-button" onClick={() => onStartFromFile("join")}>{t("joinShop")}</button></div>}
     {!setup && !pending && <button disabled={action.busy} className="text-button" onClick={()=>{setRecovering(value=>!value);setSecret("");setConfirmation("");action.setError(undefined);}}>{recovering ? t("back") : t("recover")}</button>}
     <p className="local-line"><span className="status-dot" />{t("local")}</p>
   </section>;

@@ -22,6 +22,8 @@ import * as finance from "./finance.ts";
 import * as reports from "./reports.ts";
 import * as returns from "./returns.ts";
 import * as staff from "./staff.ts";
+import * as transfer from "./transfer.ts";
+import type { Database } from "@kolo/core/data/database/driver";
 
 const customerFields = ["name", "phone", "address", "notes", "creditLimitMinor"] as const;
 function customerDetails(data: Record<string, unknown>): CustomerDetails {
@@ -47,8 +49,11 @@ export class DesktopApplication implements ShopService {
   #sealing = false;
   private readonly ports: WorkspacePorts;
   readonly #host: Host;
+  readonly #transfer: (transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void> }) | undefined;
+  #staged: transfer.StagedFile | undefined;
   private readonly crypto: ExchangeCrypto | undefined;
-  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto) {
+  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void> }) {
+    this.#transfer = files;
     this.ports = ports; this.crypto = crypto; this.#host = { ports, actor: (data, required) => this.#actor(data, required) };
     lockWorkspace(ports.database);
     this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority"], () => this.#notify());
@@ -60,6 +65,7 @@ export class DesktopApplication implements ShopService {
   /** Invalidates authority immediately, then waits for native work before the caller closes SQLite. */
   async dispose(): Promise<void> {
     this.#closed = true; this.#invalidate(); this.#unsubscribe(); this.#listeners.clear();
+    await transfer.release(this.#staged); this.#staged = undefined;
     await Promise.allSettled([...this.#pending]);
   }
   /** Retries signing asynchronously; financial success never depends on signing or delivery. */
@@ -484,6 +490,25 @@ export class DesktopApplication implements ShopService {
   setStaffPermission(input: unknown): ReturnType<ShopService["setStaffPermission"]> { return this.#run(() => staff.setStaffPermission(this.#host, input)); }
   setStaffActive(input: unknown): ReturnType<ShopService["setStaffActive"]> { return this.#run(() => staff.setStaffActive(this.#host, input)); }
   resetStaffSecret(input: unknown): ReturnType<ShopService["resetStaffSecret"]> { return this.#run(() => this.#identity(() => staff.resetStaffSecret(this.#host, input))); }
+  /** Backup, pairing and exchange through native dialogs; see transfer.ts. File work is single-flight. */
+  discardFile(): ReturnType<ShopService["discardFile"]> { return this.#run(async () => { await transfer.release(this.#staged); this.#staged = undefined; return null; }); }
+  saveBackup(input?: unknown): ReturnType<ShopService["saveBackup"]> { return this.#file(host => transfer.saveBackup(host, input)); }
+  openBackup(input?: unknown): ReturnType<ShopService["openBackup"]> { return this.#file(host => transfer.openBackup(host, input)); }
+  restoreBackup(input?: unknown): ReturnType<ShopService["restoreBackup"]> { return this.#file(host => transfer.restoreBackup(host, input)); }
+  saveInvite(input?: unknown): ReturnType<ShopService["saveInvite"]> { return this.#file(host => transfer.saveInvite(host, input)); }
+  openPairingRequest(input?: unknown): ReturnType<ShopService["openPairingRequest"]> { return this.#file(host => transfer.openPairingRequest(host, input)); }
+  approvePairingRequest(input?: unknown): ReturnType<ShopService["approvePairingRequest"]> { return this.#file(host => transfer.approvePairingRequest(host, input)); }
+  openInvite(input?: unknown): ReturnType<ShopService["openInvite"]> { return this.#file(host => transfer.openInvite(host, input)); }
+  acceptInvite(input?: unknown): ReturnType<ShopService["acceptInvite"]> { return this.#file(host => transfer.acceptInvite(host, input)); }
+  completePairing(input?: unknown): ReturnType<ShopService["completePairing"]> { return this.#file(host => transfer.completePairing(host, input)); }
+  cancelPairing(input?: unknown): ReturnType<ShopService["cancelPairing"]> { return this.#file(host => transfer.cancelPairing(host, input)); }
+  exchangeState(input?: unknown): ReturnType<ShopService["exchangeState"]> { return this.#file(host => transfer.exchangeState(host, input), false); }
+  saveExchange(input?: unknown): ReturnType<ShopService["saveExchange"]> { return this.#file(host => transfer.saveExchange(host, input)); }
+  openExchange(input?: unknown): ReturnType<ShopService["openExchange"]> { return this.#file(host => transfer.openExchange(host, input)); }
+  importExchange(input?: unknown): ReturnType<ShopService["importExchange"]> { return this.#file(host => transfer.importExchange(host, input)); }
+  saveImportReceipt(input?: unknown): ReturnType<ShopService["saveImportReceipt"]> { return this.#file(host => transfer.saveImportReceipt(host, input)); }
+  openImportReceipt(input?: unknown): ReturnType<ShopService["openImportReceipt"]> { return this.#file(host => transfer.openImportReceipt(host, input)); }
+  retryExchange(input?: unknown): ReturnType<ShopService["retryExchange"]> { return this.#file(host => transfer.retryExchange(host, input)); }
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): ReturnType<ShopService["getReceipt"]> {
     return this.#run(() => { const data = object(input, ["sessionId", "saleId"]); return receipt(this.#actor(data), uuid(data["saleId"])); });
@@ -491,6 +516,20 @@ export class DesktopApplication implements ShopService {
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
   listReceipts(input: unknown): ReturnType<ShopService["listReceipts"]> {
     return this.#run(() => { const data = object(input, ["sessionId", "term", "after", "limit"]); return receipts(this.#actor(data), page(data)); });
+  }
+  /** Runs a transfer command against the file host; credential/file work excludes setup, unlock and other file work. */
+  #file<T>(work: (host: transfer.TransferHost) => Promise<T>, exclusive = true): Promise<Result<T>> {
+    return this.#run(() => {
+      const ports = this.#transfer;
+      if (ports === undefined) throw new CommandError("unavailable");
+      const host: transfer.TransferHost = { ...this.#host, transfer: ports,
+        optionalActor: data => data["sessionId"] === undefined ? undefined : this.#actor(data, ["business.settings"]),
+        staged: () => this.#staged,
+        stage: async file => { if (this.#staged !== file) await transfer.release(this.#staged); this.#staged = file; },
+        activate: async database => { this.#invalidate(); await ports.onActivated(database); } };
+      const run = (): Promise<T> => transfer.translated(() => work(host));
+      return exclusive ? this.#identity(run) : run();
+    });
   }
   #storedCustomer(tx: Queryable, context: OperationContext, id: string): CustomerView {
     const customer = customerOf(tx, context.businessId, id);
@@ -536,6 +575,8 @@ export class DesktopApplication implements ShopService {
   #invalidate(advance = true): void {
     if (advance) this.#epoch++;
     lockWorkspace(this.ports.database); this.#context = undefined; this.#sessionId = undefined;
+    // A checked file is tied to the session that checked it; locking forgets it.
+    if (this.#staged !== undefined && this.#staged.kind !== "invite" && this.#staged.kind !== "backup") { this.#staged = undefined; }
   }
   #checkEpoch(epoch: number): void { if (this.#closed || epoch !== this.#epoch) { lockWorkspace(this.ports.database); throw new WorkspaceError("locked"); } }
   #notify(): void { for (const listener of this.#listeners) { try { listener(); } catch { /* Observer failure cannot undo a durable command. */ } } }
