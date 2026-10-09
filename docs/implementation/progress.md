@@ -505,3 +505,47 @@ Physical scanner/printer integration, accessibility/performance measurements and
 Windows protected storage/installer acceptance remain open. Mobile native gates stay
 deferred behind the desktop priority. A browser release still needs its own runtime
 storage/identity boundary or authenticated business API.
+
+
+## 2026-10-09 — Desktop catalogue and stock (F5)
+
+The F0–F5 work was verified (`npm run check`, `npm run bundle:mobile`, actual Electron
+workflow) and committed as `4da32b3`. Releases will follow the Rebar Studio style
+(conventional commits, gover version tags, tag-built draft releases); the release
+pipeline itself is deferred.
+
+Implemented:
+
+- Product detail view with stock, prices, unit, barcode and low-stock level; editing of
+  active products from their displayed version; archive and restore. Identical retries
+  write nothing; edits over a newer stored version are refused and offer a reload.
+- Categories: create (stable request ID), rename, archive/restore, archived listing, and
+  product category selection that keeps an archived current category visible.
+- Manual stock additions, damage/loss and shelf counts with reasons, stable request IDs
+  and frozen drafts after an uncertain transport failure; bounded stock history.
+- Core `countStock` accepts an optional request ID that names its movement and audit.
+  A retried count returns its original difference instead of recounting after later
+  sales. No migration or event payload change.
+- Nine new named, validated IPC commands (`getProduct`, `updateProduct`, `setProductActive`,
+  `listCategories`, `createCategory`, `updateCategory`, `moveStock`, `countStock`,
+  `stockHistory`) plus archived listing on `listProducts`. French/English text keyed.
+
+### Verification
+
+- New real-SQLite host cases cover version conflicts, idempotent retries, clock-behind
+  LWW, price authority for the inventory role, archived/foreign categories, archived
+  products leaving the till/scanner/stock workflows, cashier refusals, retry-safe moves
+  and counts across later sales, rollback failpoints, malformed input and history paging.
+  A core case covers request-named counts, including zero-difference counts.
+- The actual Electron workflow additionally adds stock, counts the shelf, checks history,
+  edits the product and creates a category, then verifies stock after restart. Product
+  detail and category screens were visually inspected.
+- `npm run check`: 665 tests passed (631 core, 8 contracts, 17 desktop, 7 mobile,
+  2 server); the real-PostgreSQL readiness case remains skipped without its database URL.
+  `npm run bundle:mobile` (992 modules) and `npm run smoke:desktop:workflow` passed.
+
+### Remaining
+
+Split/credit checkout, customers, suppliers/purchases, finance, reports, returns, staff
+and backup/exchange screens; printers/scanners, accessibility/performance measurement and
+Windows packaging remain as previously recorded.

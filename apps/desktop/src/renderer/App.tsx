@@ -51,7 +51,7 @@ function Shop({service,view,sessionId,revision,refresh,onRecoveryKey}:{service:S
       <ErrorText message={action.error}/>
       {keyForm&&<div className="panel recovery-form"><form onSubmit={event=>{event.preventDefault();void action.run(()=>service.recoveryKey({sessionId,secret})).then(value=>{setSecret("");if(value===null)action.setError({code:"keyUnavailable"});else if(value!==undefined){setKeyForm(false);onRecoveryKey(value,sessionId);}});}}><Field id="owner-proof" label={t("secret")} value={secret} onChange={setSecret} secret maxLength={256} disabled={action.busy}/><div className="actions"><button type="submit" className="primary" disabled={action.busy}>{t("showKey")}</button><button type="button" className="secondary" onClick={()=>{setKeyForm(false);setSecret("");}}>{t("cancel")}</button></div></form></div>}
       {canTill&&<div hidden={section!=="till"}><Till service={service} sessionId={sessionId} revision={revision} onReceipt={id=>{setReceiptId(id);if(canReceipts)setSelected("receipts");}}/></div>}
-      {canProducts&&<div hidden={section!=="products"}><Products service={service} sessionId={sessionId} revision={revision} canCreate={permissions.includes("products.create")} canAdjust={permissions.includes("inventory.adjust")}/></div>}
+      {canProducts&&<div hidden={section!=="products"}><Products service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {section==="receipts"&&<Receipts key={receiptId??"history"} service={service} sessionId={sessionId} revision={revision} initialId={receiptId} onNewSale={()=>setSelected(canTill?"till":"products")}/>}
       {section===undefined&&<p className="notice error">{t("noAccess")}</p>}
     </main>

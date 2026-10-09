@@ -118,6 +118,16 @@ it("stock count and cash correction validate whole units and roll back audit, ev
   assert.throws(() => commands.adjustStock(f.context, { id: randomUUIDv7(), productId: p, type: "ADJUSTMENT", quantity: 500, reason: "fraction", occurredAt: at }, randomUUIDv7()));
 });
 
+it("a count's request ID names its movement and audit, including a count that matched the shelf", async () => {
+  const f = await fixture(), p = f.product("Oil", { divisible: true }), moved = randomUUIDv7(), matched = randomUUIDv7();
+  assert.equal(commands.countStock(f.context, { productId: p, countedThousandths: 1500, reason: "Shelf", requestId: moved }), 1500);
+  assert.deepEqual({ ...f.db.get(`SELECT type,quantity FROM inventory_movements WHERE id=?`, [moved]) }, { type: "STOCK_COUNT", quantity: 1500 });
+  assert.equal(commands.countStock(f.context, { productId: p, countedThousandths: 1500, reason: "Shelf", requestId: matched }), 0);
+  assert.equal(f.db.get(`SELECT count(*) AS n FROM inventory_movements WHERE id=?`, [matched])!["n"], 0);
+  for (const id of [moved, matched]) assert.equal(f.db.get(`SELECT count(*) AS n FROM local_audit WHERE action='STOCK_COUNTED' AND json_extract(payload,'$.requestId')=?`, [id])!["n"], 1);
+  assert.throws(() => commands.countStock(f.context, { productId: p, countedThousandths: 0, reason: "Shelf", requestId: moved }));
+  assert.equal(queries.productStock(f.context, p).onHandThousandths, 1500);
+});
 it("schema 18 upgrades forward preserving catalogue metadata, events and append-only history", async () => {
   const db = openDatabase(); databases.push(db); db.run(`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL,applied_at TEXT NOT NULL) STRICT`);
   for (const migration of MIGRATIONS.filter(item => item.version <= 18)) db.transaction(tx => { for (const sql of migration.statements) tx.run(sql); tx.run(`INSERT INTO schema_migrations VALUES (?,?,?)`, [migration.version, migration.name, at]); });

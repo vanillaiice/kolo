@@ -16,12 +16,13 @@ boot and OS-vault backup/restore; installed Windows acceptance remains open.
 The first desktop workflow is implemented: standalone setup/pending recovery, local
 unlock/lock/owner recovery, product creation with optional opening stock, paginated
 catalogue and stock, keyboard barcode entry, fractional cash checkout and saved receipt
-history. The React DOM screens depend on a replaceable `ShopService`; only the entry
+history. The catalogue work package adds product detail editing, archive/restore,
+categories, manual stock additions, damage, shelf counts and stock history. The React DOM screens depend on a replaceable `ShopService`; only the entry
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Management breadth, staff screens, backup/exchange screens, printers and installers
-remain to be implemented. A browser app, browser storage/credentials and authenticated
+Split/credit checkout, customers, suppliers and purchases, finance, reports, returns, staff
+screens, backup/exchange screens, printers and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
 business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
 
 ## First usable desktop milestone
@@ -97,9 +98,31 @@ locked and verifies unlock/receipt/stock. `KOLO_DESKTOP_SMOKE_SCREENSHOT` option
 a fixture-only till screenshot. OS vault refusal remains a failure, never plaintext
 fallback. The runner does not touch an existing business installation.
 
+## Catalogue and stock contract
+
+Product and category edits name the stored `version` they were made from. A request
+whose content already matches the stored record succeeds without writing again (this is
+how a retry after success is recognised); otherwise a different stored version is
+refused with `request_conflict`, which the UI shows as "changed in the meantime, reload".
+The host advances the version past the stored one, so a local edit wins locally under
+last-write-wins even when this clock is behind the edit it replaces.
+
+Edits cover name, unit, barcode, prices, category and low-stock level of an active
+product. Whole/fractional quantity is fixed after creation. Archived products cannot be
+edited, sold, scanned or stocked until restored; archiving needs both edit and archive
+authority, and price changes still need `products.price` inside core.
+
+Manual stock uses `inventory.adjust` for additions (`ADJUSTMENT`) and damage/loss
+(`DAMAGE`), each with a reason; the request ID becomes the movement ID, so a matching
+retry records nothing and a changed one is refused. Supplier deliveries remain the
+purchase workflow. Counts use `inventory.count`; the core `countStock` request ID names
+the movement and the local audit, so a retried count returns its original difference
+and never recounts against sales recorded after it, including counts that matched the
+shelf and moved nothing. History is newest-first and bounded under `inventory.view`.
+
 ## Remaining F5 packages
 
-- Operational breadth: category/product editing, stock receiving/counts, split/credit
+- Operational breadth: split/credit
   checkout, customers/collections/statements, suppliers/purchases/payments, accounts/
   transfers/reconciliation, expenses/reversals, reports and sale/purchase returns.
 - Local administration and recovery: staff/grants, backup/restore, pairing/file

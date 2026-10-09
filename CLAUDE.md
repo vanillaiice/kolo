@@ -14,8 +14,8 @@ previous server and pre-existing work. Historical root guidance is preserved in
 
 Mobile has offline setup/unlock/recovery/staff and F4 operational screens/partial returns; demo is opt-in.
 F1 native acceptance remains pending; see the progress log and native validation guide. Desktop has a migrated
-local setup/unlock/recovery, product/opening-stock and cash till/receipt screens behind
-a validated command bridge. Broader management/transfer UI and Windows acceptance remain. Nest has health/readiness/capabilities,
+local setup/unlock/recovery, product/category editing, stock movements/counts and cash
+till/receipt screens behind a validated command bridge. Broader management/transfer UI and Windows acceptance remain. Nest has health/readiness/capabilities,
 not synchronization. F2 provides shared exact rules, strict signed payloads, replay and destination receipts;
 F3 adds owner-confirmed pairing, encrypted backups/files and mobile transfer screens.
 Android/Windows transfer acceptance remains open; broader desktop workflows remain F5. Active mobile

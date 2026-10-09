@@ -2,17 +2,18 @@ import { createWorkspace, currentInstallation, recoverWorkspaceSetup, resumeWork
 import { ownerRecoveryCode, recoverOwnerAccess, resumeOwnerRecovery } from "@kolo/core/identity/recovery";
 import { WorkspaceError, type OperationContext, type WorkspacePorts } from "@kolo/core/identity/types";
 import type { Permission } from "@kolo/core/identity/permissions";
-import { capabilities, products, scannedProduct, productStock, paymentAccounts, receipt, receipts } from "@kolo/core/application/queries";
-import { saveProduct, adjustStock, completeSale } from "@kolo/core/application/operations";
+import { capabilities, products, scannedProduct, productStock, paymentAccounts, receipt, receipts, categories, stockHistory } from "@kolo/core/application/queries";
+import { saveProduct, adjustStock, completeSale, countStock, saveCategory } from "@kolo/core/application/operations";
 import { productOf, type Product } from "@kolo/core/data/products/products";
+import { categoryOf, type Category } from "@kolo/core/data/products/categories";
 import { accountOf } from "@kolo/core/data/finance/accounts";
 import { subtotalOf } from "@kolo/core/rules/pricing";
 import { RuleError } from "@kolo/core/rules/amounts";
 import { subscribeChanges } from "@kolo/core/data/database/changes";
 import { sealPendingEvents } from "@kolo/core/application/exchange";
 import type { ExchangeCrypto } from "@kolo/core/exchange/types";
-import type { CheckoutRequest, FailureCode, ProductView, Result, ShopService, WorkspaceView } from "../shared/service.js";
-import { object, text, uuid, whole, boolean, page } from "./validation.ts";
+import type { CategoryView, CheckoutRequest, FailureCode, ProductView, Result, ShopService, WorkspaceView } from "../shared/service.js";
+import { object, text, uuid, whole, boolean, page, optional } from "./validation.ts";
 
 class CommandError extends Error {
   readonly code: FailureCode;
@@ -110,8 +111,17 @@ export class DesktopApplication implements ShopService {
   /** Bounded catalogue with optional stock according to current view capabilities. */
   listProducts(input: unknown): ReturnType<ShopService["listProducts"]> {
     return this.#run(() => {
-      const data = object(input, ["sessionId", "term", "after", "limit"]), context = this.#actor(data);
+      const data = object(input, ["sessionId", "term", "after", "limit", "includeInactive"]), context = this.#actor(data);
       const result = products(context, page(data)); return { ...result, items: result.items.map(item => this.#product(context, item)) };
+    });
+  }
+  /** One scoped product under products.view, archived or not. */
+  getProduct(input: unknown): ReturnType<ShopService["getProduct"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "productId"]), context = this.#actor(data, ["products.view"]);
+      const product = productOf(this.ports.database, context.businessId, uuid(data["productId"]));
+      if (product === undefined) throw new WorkspaceError("scope_mismatch");
+      return this.#product(context, product);
     });
   }
   /** Exact active/unambiguous barcode lookup; no prefix/name substitution. */
@@ -149,6 +159,134 @@ export class DesktopApplication implements ShopService {
           reason: "Initial stock", occurredAt: at, branchId: unlockedActor(context).branchId }, this.ports.newId());
         return this.#product(context, productOf(tx, context.businessId, id)!);
       });
+    });
+  }
+  /**
+   * Edits an active product's details from the displayed version. Unchanged requests (including
+   * a retry after success) return the stored product; a newer stored version is never overwritten.
+   */
+  updateProduct(input: unknown): ReturnType<ShopService["updateProduct"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "productId", "version", "name", "unit", "barcode", "sellingPriceMinor", "purchasePriceMinor", "categoryId", "minimumStockThousandths"]);
+      const context = this.#actor(data, ["products.edit"]), id = uuid(data["productId"]), version = text(data["version"], 64);
+      const details = { name: text(data["name"]), unit: text(data["unit"]), barcode: optional(data["barcode"], value => text(value, 256)),
+        sellingPriceMinor: whole(data["sellingPriceMinor"]), purchasePriceMinor: optional(data["purchasePriceMinor"], value => whole(value)),
+        categoryId: optional(data["categoryId"], uuid), minimumStock: whole(data["minimumStockThousandths"]) };
+      return this.ports.database.transaction(tx => {
+        const stored = productOf(tx, context.businessId, id);
+        if (stored?.active !== true) throw new WorkspaceError("scope_mismatch");
+        if (!stored.divisible && details.minimumStock % 1000 !== 0) throw new WorkspaceError("invalid_input");
+        if ((Object.keys(details) as (keyof typeof details)[]).every(key => stored[key] === details[key])) return this.#product(context, stored);
+        if (stored.updatedAt !== version) throw new CommandError("request_conflict");
+        if (!saveProduct(context, { ...stored, ...details, updatedAt: this.#nextVersion(stored.updatedAt) })) throw new CommandError("request_conflict");
+        return this.#product(context, productOf(tx, context.businessId, id)!);
+      });
+    });
+  }
+  /** Archives or restores a product; repeating the same target state is a no-op. */
+  setProductActive(input: unknown): ReturnType<ShopService["setProductActive"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "productId", "version", "active"]), context = this.#actor(data, ["products.edit", "products.archive"]);
+      const id = uuid(data["productId"]), version = text(data["version"], 64), active = boolean(data["active"]);
+      return this.ports.database.transaction(tx => {
+        const stored = productOf(tx, context.businessId, id);
+        if (stored === undefined) throw new WorkspaceError("scope_mismatch");
+        if (stored.active === active) return this.#product(context, stored);
+        if (stored.updatedAt !== version) throw new CommandError("request_conflict");
+        if (!saveProduct(context, { ...stored, active, updatedAt: this.#nextVersion(stored.updatedAt) })) throw new CommandError("request_conflict");
+        return this.#product(context, productOf(tx, context.businessId, id)!);
+      });
+    });
+  }
+  /** Bounded categories under products.view, optionally with archived ones. */
+  listCategories(input: unknown): ReturnType<ShopService["listCategories"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "term", "after", "limit", "includeInactive"]), context = this.#actor(data);
+      const result = categories(context, page(data)); return { ...result, items: result.items.map(item => this.#category(item)) };
+    });
+  }
+  /** Creates a category named by its request ID; only this actor's identical creation counts as a retry. */
+  createCategory(input: unknown): ReturnType<ShopService["createCategory"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "requestId", "name"]), context = this.#actor(data, ["products.create"]);
+      const id = uuid(data["requestId"]), name = text(data["name"]), at = this.ports.now();
+      return this.ports.database.transaction(tx => {
+        if (tx.get(`SELECT 1 FROM categories WHERE id=?`, [id]) !== undefined) {
+          const original = categoryOf(tx, context.businessId, id);
+          const actor = tx.get(`SELECT user_id FROM local_audit WHERE business_id=? AND device_id=? AND action='CATEGORY_SAVED' AND entity_id=? ORDER BY occurred_at LIMIT 1`, [context.businessId, context.deviceId, id]);
+          if (original === undefined || actor?.["user_id"] !== context.userId || original.createdAt !== original.updatedAt || original.name !== name) throw new CommandError("request_conflict");
+          return this.#category(original);
+        }
+        saveCategory(context, { id, name, active: true, createdAt: at, updatedAt: at });
+        return this.#category(categoryOf(tx, context.businessId, id)!);
+      });
+    });
+  }
+  /** Renames, archives or restores a category from its displayed version. */
+  updateCategory(input: unknown): ReturnType<ShopService["updateCategory"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "categoryId", "version", "name", "active"]), context = this.#actor(data, ["products.edit"]);
+      const id = uuid(data["categoryId"]), version = text(data["version"], 64), name = text(data["name"]), active = boolean(data["active"]);
+      return this.ports.database.transaction(tx => {
+        const stored = categoryOf(tx, context.businessId, id);
+        if (stored === undefined) throw new WorkspaceError("scope_mismatch");
+        if (stored.active !== active) this.#actor(data, ["products.archive"]);
+        if (stored.name === name && stored.active === active) return this.#category(stored);
+        if (stored.updatedAt !== version) throw new CommandError("request_conflict");
+        if (!saveCategory(context, { id, name, active, createdAt: stored.createdAt, updatedAt: this.#nextVersion(stored.updatedAt) })) throw new CommandError("request_conflict");
+        return this.#category(categoryOf(tx, context.businessId, id)!);
+      });
+    });
+  }
+  /** Adds stock or records damage on an active product; the request ID is the movement ID. */
+  moveStock(input: unknown): ReturnType<ShopService["moveStock"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "requestId", "productId", "kind", "quantityThousandths", "reason"]), context = this.#actor(data, ["inventory.adjust"]);
+      if (data["kind"] !== "add" && data["kind"] !== "damage") throw new WorkspaceError("invalid_input");
+      const id = uuid(data["requestId"]), productId = uuid(data["productId"]), type = data["kind"] === "add" ? "ADJUSTMENT" : "DAMAGE";
+      const amount = whole(data["quantityThousandths"], 1), quantity = type === "DAMAGE" ? -amount : amount, reason = text(data["reason"]);
+      return this.ports.database.transaction(tx => {
+        const saved = tx.get(`SELECT * FROM inventory_movements WHERE id=?`, [id]);
+        if (saved !== undefined) {
+          if (saved["business_id"] !== context.businessId || saved["user_id"] !== context.userId || saved["device_id"] !== context.deviceId || saved["product_id"] !== productId ||
+            saved["type"] !== type || saved["quantity"] !== quantity || saved["reason"] !== reason) throw new CommandError("request_conflict");
+        } else adjustStock(context, { id, productId, type, quantity, reason, occurredAt: this.ports.now(), branchId: unlockedActor(context).branchId }, this.ports.newId());
+        const product = productOf(tx, context.businessId, productId);
+        if (product === undefined) throw new WorkspaceError("scope_mismatch");
+        return this.#product(context, product);
+      });
+    });
+  }
+  /** Records a shelf count; a retry returns the original difference instead of recounting. */
+  countStock(input: unknown): ReturnType<ShopService["countStock"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "requestId", "productId", "countedThousandths", "reason"]), context = this.#actor(data, ["inventory.count"]);
+      const id = uuid(data["requestId"]), productId = uuid(data["productId"]), counted = whole(data["countedThousandths"]), reason = text(data["reason"]);
+      return this.ports.database.transaction(tx => {
+        const prior = tx.get(`SELECT user_id,device_id,entity_id,payload FROM local_audit WHERE business_id=? AND action='STOCK_COUNTED' AND json_extract(payload,'$.requestId')=?`, [context.businessId, id]);
+        let delta: number;
+        if (prior !== undefined) {
+          const facts = JSON.parse(String(prior["payload"])) as { countedThousandths: number; delta: number; reason: string };
+          if (prior["user_id"] !== context.userId || prior["device_id"] !== context.deviceId || prior["entity_id"] !== productId ||
+            facts.countedThousandths !== counted || facts.reason !== reason) throw new CommandError("request_conflict");
+          delta = facts.delta;
+        } else {
+          if (tx.get(`SELECT 1 FROM inventory_movements WHERE id=?`, [id]) !== undefined) throw new CommandError("request_conflict");
+          delta = countStock(context, { productId, countedThousandths: counted, reason, branchId: unlockedActor(context).branchId, requestId: id });
+        }
+        const product = productOf(tx, context.businessId, productId);
+        if (product === undefined) throw new WorkspaceError("scope_mismatch");
+        return { deltaThousandths: delta, product: this.#product(context, product) };
+      });
+    });
+  }
+  /** Newest-first bounded stock movements of one product. */
+  stockHistory(input: unknown): ReturnType<ShopService["stockHistory"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "productId", "after", "limit"]), context = this.#actor(data);
+      const result = stockHistory(context, uuid(data["productId"]), page(data));
+      return { ...result, items: result.items.map(row => ({ id: String(row["id"]), occurredAt: String(row["occurred_at"]), type: String(row["type"]),
+        quantityThousandths: Number(row["quantity"]), ...(typeof row["reason"] === "string" && row["reason"] !== "" ? { reason: row["reason"] } : {}) })) };
     });
   }
   /** Bounded cash-account names only; balances are never exposed to payment-only readers. */
@@ -208,8 +346,16 @@ export class DesktopApplication implements ShopService {
   listReceipts(input: unknown): ReturnType<ShopService["listReceipts"]> {
     return this.#run(() => { const data = object(input, ["sessionId", "term", "after", "limit"]); return receipts(this.#actor(data), page(data)); });
   }
+  #category(category: Category): CategoryView {
+    return { id: category.id, name: category.name, active: category.active, version: category.updatedAt };
+  }
+  /** Local edits of the displayed version win locally even when this clock is behind the stored edit. */
+  #nextVersion(stored: string): string {
+    const now = this.ports.now(); return now > stored ? now : new Date(Date.parse(stored) + 1).toISOString();
+  }
   #product(context: OperationContext, product: Product): ProductView {
     return { id: product.id, name: product.name, unit: product.unit, divisible: product.divisible, sellingPriceMinor: product.sellingPriceMinor,
+      minimumStockThousandths: product.minimumStock, active: product.active, version: product.updatedAt, ...(product.categoryId === undefined ? {} : { categoryId: product.categoryId }),
       ...(product.barcode === undefined ? {} : { barcode: product.barcode }), ...(product.purchasePriceMinor === undefined ? {} : { purchasePriceMinor: product.purchasePriceMinor }),
       ...(capabilities(context).includes("inventory.view") ? { onHandThousandths: productStock(context, product.id).onHandThousandths } : {}) };
   }

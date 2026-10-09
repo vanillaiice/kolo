@@ -9,9 +9,10 @@ export function useText(): { t: (key: TextKey) => string; language: Language } {
 }
 export type Message = { readonly code: TextKey; readonly retryAt?: string };
 /** Stable failures are localized at render time; raw native errors are never shown. */
-export function ErrorText({ message, inputMessage }: { readonly message: Message | undefined; readonly inputMessage?: TextKey }): React.JSX.Element | null {
+export function ErrorText({ message, inputMessage, conflictMessage }: { readonly message: Message | undefined; readonly inputMessage?: TextKey; readonly conflictMessage?: TextKey }): React.JSX.Element | null {
   const { t, language } = useText();
-  return message === undefined ? null : <p role="alert" className="notice error">{t(message.code === "invalid_input" && inputMessage !== undefined ? inputMessage : message.code)}{message.retryAt === undefined ? "" : ` ${new Date(message.retryAt).toLocaleTimeString(language === "fr" ? "fr-FR" : "en-GB")}`}</p>;
+  const key = message?.code === "invalid_input" ? inputMessage : message?.code === "request_conflict" ? conflictMessage : undefined;
+  return message === undefined ? null : <p role="alert" className="notice error">{t(key ?? message.code)}{message.retryAt === undefined ? "" : ` ${new Date(message.retryAt).toLocaleTimeString(language === "fr" ? "fr-FR" : "en-GB")}`}</p>;
 }
 /** Named operation calls may also fail at the transport boundary. */
 export async function call<T>(work: () => Promise<Result<T>>): Promise<Result<T>> {
@@ -50,6 +51,14 @@ export function Field({ label, value, onChange, secret = false, numeric = false,
   return <label className="field" htmlFor={id}><span>{label}</span><input id={id} name={id} value={value} onChange={event => onChange(event.target.value)}
     type={secret ? "password" : "text"} inputMode={numeric ? "decimal" : "text"} autoComplete="off"
     required={required} disabled={disabled} maxLength={maxLength} /></label>;
+}
+/** Labelled native select; options are supplied already localized. */
+export function Select({ label, value, onChange, id, options, disabled = false }: {
+  readonly label: string; readonly value: string; readonly onChange: (value: string) => void; readonly id: string;
+  readonly options: readonly { readonly value: string; readonly label: string; readonly disabled?: boolean }[]; readonly disabled?: boolean;
+}): React.JSX.Element {
+  return <label className="field" htmlFor={id}><span>{label}</span><select id={id} name={id} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}>
+    {options.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select></label>;
 }
 /** Paged views keep only the current bounded result. */
 export function Pager({ hasFirst, hasNext, onFirst, onNext }: { readonly hasFirst: boolean; readonly hasNext: boolean; readonly onFirst: () => void; readonly onNext: () => void }): React.JSX.Element {

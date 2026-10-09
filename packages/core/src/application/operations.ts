@@ -253,8 +253,10 @@ function checkBranch(tx: Queryable, context: OperationContext, branchId: string 
  * Counts actual stock in thousandths under inventory.count. Computes a compensating
  * delta against current stock inside the write transaction; a matching count records
  * audit only. Negative observed quantities and fractional indivisible units are refused.
+ * An optional caller request ID becomes the movement ID and is kept in the local audit,
+ * so adapters can recognise a retried count instead of recounting against later sales.
  */
-export function countStock(context: OperationContext, input: { readonly productId: string; readonly countedThousandths: number; readonly reason: string; readonly branchId?: string | undefined }): number {
+export function countStock(context: OperationContext, input: { readonly productId: string; readonly countedThousandths: number; readonly reason: string; readonly branchId?: string | undefined; readonly requestId?: string | undefined }): number {
   return authorizedOperation(context, ["inventory.count"], (database, tx, ports, revision) => {
     const product = related(tx, context, "products", input.productId);
     checkBranch(tx, context, input.branchId);
@@ -264,10 +266,11 @@ export function countStock(context: OperationContext, input: { readonly productI
     const delta = sumAmounts([input.countedThousandths, -current]);
     if (delta !== 0) {
       const at = ports.now(), eventId = nextId(ports);
-      recordMovement(database, { id: nextId(ports), ...context, branchId: input.branchId, productId: input.productId,
+      recordMovement(database, { id: input.requestId ?? nextId(ports), ...context, branchId: input.branchId, productId: input.productId,
         type: "STOCK_COUNT", quantity: delta, reason: input.reason.trim(), occurredAt: at, recordedAt: at }, { eventId, type: "STOCK_MOVED" });
     }
-    appendLocalAudit(tx, context, ports, revision, "STOCK_COUNTED", input.productId, { countedThousandths: input.countedThousandths, expectedThousandths: current, delta, reason: input.reason.trim() });
+    appendLocalAudit(tx, context, ports, revision, "STOCK_COUNTED", input.productId, { countedThousandths: input.countedThousandths, expectedThousandths: current, delta, reason: input.reason.trim(),
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }) });
     return delta;
   });
 }

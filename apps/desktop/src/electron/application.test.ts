@@ -183,3 +183,93 @@ it("dispatcher allowlist rejects untrusted frames and argument smuggling before 
     assert.throws(()=>handlers["kolo:installation-status"]!({},),/invalid status caller/);
   }finally{await f.dispose();}
 });
+it("product edits name their version: identical retries are no-ops, stale edits are refused, and price/category rules hold",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:0})));
+    const group=value(await f.application.createCategory({sessionId,requestId:randomUUID(),name:"Grain"}));
+    const edit={sessionId,productId:item.id,version:item.version,name:"Rice 25kg",unit:"bag",barcode:"987654321",sellingPriceMinor:650,categoryId:group.id,minimumStockThousandths:2000};
+    const events=():unknown=>f.database.get("SELECT count(*) AS n FROM event_journal")!["n"];
+    const edited=value(await f.application.updateProduct(edit));
+    assert.deepEqual([edited.name,edited.barcode,edited.sellingPriceMinor,edited.purchasePriceMinor,edited.categoryId,edited.minimumStockThousandths],["Rice 25kg","987654321",650,undefined,group.id,2000]);
+    // The fixture clock is fixed: the edit still advances the version so local LWW applies it.
+    assert.ok(edited.version>item.version);
+    const before=events();assert.equal(value(await f.application.updateProduct(edit)).version,edited.version);assert.equal(events(),before);
+    failure(await f.application.updateProduct({...edit,name:"Overwrite"}),"request_conflict");
+    assert.equal(value(await f.application.updateProduct({...edit,version:edited.version,barcode:undefined})).barcode,undefined);
+    const current=value(await f.application.listProducts({sessionId})).items[0]!;
+    failure(await f.application.updateProduct({...edit,version:current.version,minimumStockThousandths:1500}),"invalid_input");
+    failure(await f.application.updateProduct({...edit,version:current.version,categoryId:randomUUID()}),"scope_mismatch");
+    const archived=value(await f.application.updateCategory({sessionId,categoryId:group.id,version:group.version,name:"Grain",active:false}));assert.equal(archived.active,false);
+    const other=value(await f.application.createProduct(product(sessionId,{name:"Beans",barcode:"55",openingThousandths:0})));
+    failure(await f.application.updateProduct({sessionId,productId:other.id,version:other.version,name:"Beans",unit:"bag",sellingPriceMinor:500,categoryId:group.id,minimumStockThousandths:0}),"scope_mismatch");
+    for(const extra of [{divisible:true},{active:false},{businessId:randomUUID()}])failure(await f.application.updateProduct({...edit,version:current.version,...extra}),"invalid_input");
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const keeper=await createLocalMember(context,{name:"Stock",role:"INVENTORY",secret:"765432"}),stock=value(await f.application.unlock({userId:keeper,secret:"765432"})).sessionId!;
+    const latest=value(await f.application.listProducts({sessionId:stock,term:"Rice"})).items[0]!;
+    failure(await f.application.updateProduct({...edit,sessionId:stock,version:latest.version,sellingPriceMinor:700,barcode:undefined}),"permission_denied");
+    assert.equal(value(await f.application.updateProduct({...edit,sessionId:stock,version:latest.version,name:"Rice sack",barcode:undefined,categoryId:undefined})).name,"Rice sack");
+  }finally{await f.dispose();}
+});
+it("archived products leave the till and stock workflows until restored; category retries and authority are checked",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId)));
+    const archived=value(await f.application.setProductActive({sessionId,productId:item.id,version:item.version,active:false}));
+    assert.equal(value(await f.application.setProductActive({sessionId,productId:item.id,version:item.version,active:false})).version,archived.version);
+    assert.equal(value(await f.application.listProducts({sessionId})).items.length,0);
+    assert.equal(value(await f.application.listProducts({sessionId,includeInactive:true})).items[0]!.active,false);
+    assert.equal(value(await f.application.scanProduct({sessionId,barcode:"123456789"})),null);
+    const account=value(await f.application.listCashAccounts({sessionId})).items[0]!;
+    failure(await f.application.checkout({sessionId,requestId:randomUUID(),accountId:account.id,lines:[{productId:item.id,quantity:1000,unitPriceMinor:500}]}),"scope_mismatch");
+    failure(await f.application.moveStock({sessionId,requestId:randomUUID(),productId:item.id,kind:"add",quantityThousandths:1000,reason:"Delivery"}),"scope_mismatch");
+    failure(await f.application.updateProduct({sessionId,productId:item.id,version:archived.version,name:"X",unit:"bag",sellingPriceMinor:500,minimumStockThousandths:0}),"scope_mismatch");
+    failure(await f.application.setProductActive({sessionId,productId:item.id,version:item.version,active:true}),"request_conflict");
+    assert.equal(value(await f.application.setProductActive({sessionId,productId:item.id,version:archived.version,active:true})).active,true);
+    const request={sessionId,requestId:randomUUID(),name:"Drinks"},created=value(await f.application.createCategory(request));
+    assert.equal(value(await f.application.createCategory(request)).id,created.id);failure(await f.application.createCategory({...request,name:"Food"}),"request_conflict");
+    const renamed=value(await f.application.updateCategory({sessionId,categoryId:created.id,version:created.version,name:"Cold drinks",active:true}));
+    failure(await f.application.createCategory(request),"request_conflict");
+    failure(await f.application.updateCategory({sessionId,categoryId:created.id,version:created.version,name:"Hot drinks",active:true}),"request_conflict");
+    assert.deepEqual(value(await f.application.listCategories({sessionId})).items.map(item=>item.name),["Cold drinks"]);
+    value(await f.application.updateCategory({sessionId,categoryId:created.id,version:renamed.version,name:"Cold drinks",active:false}));
+    assert.equal(value(await f.application.listCategories({sessionId})).items.length,0);assert.equal(value(await f.application.listCategories({sessionId,includeInactive:true})).items.length,1);
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const staff=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"765432"}),cashier=value(await f.application.unlock({userId:staff,secret:"765432"})).sessionId!;
+    failure(await f.application.createCategory({sessionId:cashier,requestId:randomUUID(),name:"Snacks"}),"permission_denied");
+    failure(await f.application.setProductActive({sessionId:cashier,productId:item.id,version:archived.version,active:false}),"permission_denied");
+    failure(await f.application.moveStock({sessionId:cashier,requestId:randomUUID(),productId:item.id,kind:"add",quantityThousandths:1000,reason:"Delivery"}),"permission_denied");
+    failure(await f.application.countStock({sessionId:cashier,requestId:randomUUID(),productId:item.id,countedThousandths:1000,reason:"Shelf"}),"permission_denied");
+    assert.equal(value(await f.application.stockHistory({sessionId:cashier,productId:item.id})).items.length,1);
+  }finally{await f.dispose();}
+});
+it("stock moves and counts are retry-safe, never recount after later sales, and roll back on failure",async()=>{
+  const f=fixture();try{
+    const {sessionId}=await owner(f),item=value(await f.application.createProduct(product(sessionId!,{divisible:false})));
+    const add={sessionId:sessionId!,requestId:randomUUID(),productId:item.id,kind:"add" as const,quantityThousandths:5000,reason:"Delivery"};
+    assert.equal(value(await f.application.moveStock(add)).onHandThousandths,8000);assert.equal(value(await f.application.moveStock(add)).onHandThousandths,8000);
+    failure(await f.application.moveStock({...add,quantityThousandths:6000}),"request_conflict");failure(await f.application.moveStock({...add,kind:"damage"}),"request_conflict");
+    failure(await f.application.moveStock({...add,requestId:randomUUID(),quantityThousandths:500}),"invalid_input");
+    for(const bad of [{quantityThousandths:0},{quantityThousandths:-1000},{kind:"opening"},{reason:" "},{reason:undefined}])failure(await f.application.moveStock({...add,requestId:randomUUID(),...bad}),"invalid_input");
+    assert.equal(value(await f.application.moveStock({...add,requestId:randomUUID(),kind:"damage",quantityThousandths:10000,reason:"Flood"})).onHandThousandths,-2000);
+    const count={sessionId:sessionId!,requestId:randomUUID(),productId:item.id,countedThousandths:4000,reason:"Shelf"};
+    assert.deepEqual(value(await f.application.countStock(count)).deltaThousandths,6000);
+    const account=value(await f.application.listCashAccounts({sessionId})).items[0]!;
+    value(await f.application.checkout({sessionId,requestId:randomUUID(),accountId:account.id,lines:[{productId:item.id,quantity:1000,unitPriceMinor:500}]}));
+    const retried=value(await f.application.countStock(count));assert.equal(retried.deltaThousandths,6000);assert.equal(retried.product.onHandThousandths,3000);
+    failure(await f.application.countStock({...count,countedThousandths:5000}),"request_conflict");failure(await f.application.countStock({...count,requestId:add.requestId}),"request_conflict");
+    const matched={...count,requestId:randomUUID(),countedThousandths:3000};
+    assert.equal(value(await f.application.countStock(matched)).deltaThousandths,0);
+    value(await f.application.checkout({sessionId,requestId:randomUUID(),accountId:account.id,lines:[{productId:item.id,quantity:1000,unitPriceMinor:500}]}));
+    assert.equal(value(await f.application.countStock(matched)).product.onHandThousandths,2000);
+    f.database.run(`CREATE TRIGGER fail_count BEFORE INSERT ON local_audit WHEN NEW.action='STOCK_COUNTED' BEGIN SELECT RAISE(ABORT,'failpoint'); END`);
+    const failed={...count,requestId:randomUUID(),countedThousandths:10000};failure(await f.application.countStock(failed),"storage_failed");
+    assert.equal(value(await f.application.listProducts({sessionId})).items[0]!.onHandThousandths,2000);
+    f.database.run("DROP TRIGGER fail_count");assert.equal(value(await f.application.countStock(failed)).deltaThousandths,8000);
+    const first=value(await f.application.stockHistory({sessionId:sessionId!,productId:item.id,limit:3}));
+    assert.equal(first.items.length,3);assert.ok(first.next!==undefined);
+    const rest=value(await f.application.stockHistory({sessionId:sessionId!,productId:item.id,after:first.next!,limit:100}));
+    const all=[...first.items,...rest.items];
+    assert.equal(all.length,new Set(all.map(item=>item.id)).size);assert.equal(all.reduce((sum,item)=>sum+item.quantityThousandths,0),10000);
+    assert.deepEqual(all.filter(item=>item.type==="DAMAGE").map(item=>[item.quantityThousandths,item.reason]),[[-10000,"Flood"]]);
+    failure(await f.application.stockHistory({sessionId:sessionId!,productId:randomUUID()}),"scope_mismatch");
+  }finally{await f.dispose();}
+});

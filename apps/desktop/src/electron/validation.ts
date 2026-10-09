@@ -28,9 +28,14 @@ export function boolean(value: unknown): boolean {
   if (typeof value !== "boolean") throw new WorkspaceError("invalid_input");
   return value;
 }
+/** Absent optional fields stay absent; present ones must pass their own parser. */
+export function optional<T>(value: unknown, parse: (value: unknown) => T): T | undefined {
+  return value === undefined ? undefined : parse(value);
+}
 /** Bounded pagination/search, with no renderer-selected tenant or SQL. */
 export function page(input: Record<string, unknown>): PageQuery {
-  const result: { term?: string; after?: { name: string; id: string }; limit?: number } = {};
+  const result: { term?: string; after?: { name: string; id: string }; limit?: number; includeInactive?: boolean } = {};
+  if (input["includeInactive"] !== undefined) result.includeInactive = boolean(input["includeInactive"]);
   if (input["term"] !== undefined) {
     if (typeof input["term"] !== "string" || input["term"].length > 120) throw new WorkspaceError("invalid_input");
     result.term = input["term"];

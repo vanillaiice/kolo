@@ -33,10 +33,29 @@ class DesktopApplication implements ShopService {
   recoveryKey(input: unknown): Promise<Result<string>>;
   /** Bounded catalogue with optional stock according to current view capabilities. */
   listProducts(input: unknown): Promise<Result<Page<ProductView>>>;
+  /** One scoped product under products.view, archived or not. */
+  getProduct(input: unknown): Promise<Result<ProductView>>;
   /** Exact active/unambiguous barcode lookup; no prefix/name substitution. */
   scanProduct(input: unknown): Promise<Result<ProductView>>;
   /** Creates product and optional opening stock in one transaction; safe matching retries reuse the product ID. */
   createProduct(input: unknown): Promise<Result<ProductView>>;
+  /** Edits an active product's details from the displayed version. Unchanged requests (including
+   * a retry after success) return the stored product; a newer stored version is never overwritten. */
+  updateProduct(input: unknown): Promise<Result<ProductView>>;
+  /** Archives or restores a product; repeating the same target state is a no-op. */
+  setProductActive(input: unknown): Promise<Result<ProductView>>;
+  /** Bounded categories under products.view, optionally with archived ones. */
+  listCategories(input: unknown): Promise<Result<Page<CategoryView>>>;
+  /** Creates a category named by its request ID; only this actor's identical creation counts as a retry. */
+  createCategory(input: unknown): Promise<Result<CategoryView>>;
+  /** Renames, archives or restores a category from its displayed version. */
+  updateCategory(input: unknown): Promise<Result<CategoryView>>;
+  /** Adds stock or records damage on an active product; the request ID is the movement ID. */
+  moveStock(input: unknown): Promise<Result<ProductView>>;
+  /** Records a shelf count; a retry returns the original difference instead of recounting. */
+  countStock(input: unknown): Promise<Result<{ readonly deltaThousandths: number; readonly product: ProductView; }>>;
+  /** Newest-first bounded stock movements of one product. */
+  stockHistory(input: unknown): Promise<Result<Page<StockMovementView>>>;
   /** Bounded cash-account names only; balances are never exposed to payment-only readers. */
   listCashAccounts(input: unknown): Promise<Result<Page<{ readonly id: string; readonly name: string; }>>>;
   /** Host-bound atomic cash sale; scoped matching retries return the original ID and differing content is refused. */
@@ -179,6 +198,12 @@ Explicit boolean input, never truthiness.
 boolean(value: unknown): boolean;
 ```
 
+Absent optional fields stay absent; present ones must pass their own parser.
+
+```ts
+optional<T>(value: unknown, parse: (value: unknown) => T): T;
+```
+
 Bounded pagination/search, with no renderer-selected tenant or SQL.
 
 ```ts
@@ -247,7 +272,42 @@ export interface ProductView {
     readonly sellingPriceMinor: number;
     readonly purchasePriceMinor?: number;
     readonly onHandThousandths?: number;
+    readonly categoryId?: string;
+    readonly minimumStockThousandths: number;
+    readonly active: boolean;
+    readonly version: string;
 }
+```
+
+Catalogue grouping. Archived categories remain attached to existing products.
+
+```ts
+export interface CategoryView {
+    readonly id: string;
+    readonly name: string;
+    readonly active: boolean;
+    readonly version: string;
+}
+```
+
+One immutable stock movement; corrections appear as later compensating rows.
+
+```ts
+export interface StockMovementView {
+    readonly id: string;
+    readonly occurredAt: string;
+    readonly type: string;
+    readonly quantityThousandths: number;
+    readonly reason?: string;
+}
+```
+
+Catalogue pages may include archived rows for restoring them.
+
+```ts
+export type CatalogueQuery = SessionRequest & PageQuery & {
+    readonly includeInactive?: boolean;
+};
 ```
 
 Every protected call binds to the currently displayed actor session, including queued calls.
@@ -282,6 +342,47 @@ export interface ProductRequest extends SessionRequest {
     readonly sellingPriceMinor: number;
     readonly purchasePriceMinor?: number;
     readonly openingThousandths: number;
+}
+```
+
+Detail edit made from a displayed version. An identical retry returns the stored product;
+any other change since that version is refused rather than overwritten. Whole/fractional
+quantities and archive state are not edited here.
+
+```ts
+export interface ProductUpdateRequest extends SessionRequest {
+    readonly productId: string;
+    readonly version: string;
+    readonly name: string;
+    readonly unit: string;
+    readonly barcode?: string;
+    readonly sellingPriceMinor: number;
+    readonly purchasePriceMinor?: number;
+    readonly categoryId?: string;
+    readonly minimumStockThousandths: number;
+}
+```
+
+Manual stock received outside a supplier purchase, or stock lost to damage. The request ID names the movement.
+
+```ts
+export interface StockMoveRequest extends SessionRequest {
+    readonly requestId: string;
+    readonly productId: string;
+    readonly kind: "add" | "damage";
+    readonly quantityThousandths: number;
+    readonly reason: string;
+}
+```
+
+Observed shelf quantity; the host records the difference from current stock at the moment it commits.
+
+```ts
+export interface StockCountRequest extends SessionRequest {
+    readonly requestId: string;
+    readonly productId: string;
+    readonly countedThousandths: number;
+    readonly reason: string;
 }
 ```
 
@@ -320,11 +421,41 @@ export interface ShopService {
     recoveryKey(input: SessionRequest & {
         readonly secret: string;
     }): Promise<Result<string | null>>;
-    listProducts(input: SessionRequest & PageQuery): Promise<Result<Page<ProductView>>>;
+    listProducts(input: CatalogueQuery): Promise<Result<Page<ProductView>>>;
+    getProduct(input: SessionRequest & {
+        readonly productId: string;
+    }): Promise<Result<ProductView>>;
     scanProduct(input: SessionRequest & {
         readonly barcode: string;
     }): Promise<Result<ProductView | null>>;
     createProduct(input: ProductRequest): Promise<Result<ProductView>>;
+    updateProduct(input: ProductUpdateRequest): Promise<Result<ProductView>>;
+    setProductActive(input: SessionRequest & {
+        readonly productId: string;
+        readonly version: string;
+        readonly active: boolean;
+    }): Promise<Result<ProductView>>;
+    listCategories(input: CatalogueQuery): Promise<Result<Page<CategoryView>>>;
+    createCategory(input: SessionRequest & {
+        readonly requestId: string;
+        readonly name: string;
+    }): Promise<Result<CategoryView>>;
+    updateCategory(input: SessionRequest & {
+        readonly categoryId: string;
+        readonly version: string;
+        readonly name: string;
+        readonly active: boolean;
+    }): Promise<Result<CategoryView>>;
+    moveStock(input: StockMoveRequest): Promise<Result<ProductView>>;
+    countStock(input: StockCountRequest): Promise<Result<{
+        readonly deltaThousandths: number;
+        readonly product: ProductView;
+    }>>;
+    stockHistory(input: SessionRequest & {
+        readonly productId: string;
+        readonly after?: PageQuery["after"];
+        readonly limit?: number;
+    }): Promise<Result<Page<StockMovementView>>>;
     listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{
         readonly id: string;
         readonly name: string;
@@ -1003,6 +1134,8 @@ saveAccount(context: OperationContext, input: CommandInput<SaveAccount>): boolea
 Counts actual stock in thousandths under inventory.count. Computes a compensating
 delta against current stock inside the write transaction; a matching count records
 audit only. Negative observed quantities and fractional indivisible units are refused.
+An optional caller request ID becomes the movement ID and is kept in the local audit,
+so adapters can recognise a retried count instead of recounting against later sales.
 
 ```ts
 countStock(context: OperationContext, input: {
@@ -1010,6 +1143,7 @@ countStock(context: OperationContext, input: {
     readonly countedThousandths: number;
     readonly reason: string;
     readonly branchId?: string | undefined;
+    readonly requestId?: string | undefined;
 }): number;
 ```
 

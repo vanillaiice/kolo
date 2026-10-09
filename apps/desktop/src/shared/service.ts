@@ -21,8 +21,20 @@ export interface WorkspaceView {
 export interface ProductView {
   readonly id: string; readonly name: string; readonly unit: string; readonly divisible: boolean;
   readonly barcode?: string; readonly sellingPriceMinor: number; readonly purchasePriceMinor?: number;
-  readonly onHandThousandths?: number;
+  readonly onHandThousandths?: number; readonly categoryId?: string; readonly minimumStockThousandths: number;
+  /** Archived products stay in history and can be restored; they cannot be sold or stocked. */
+  readonly active: boolean;
+  /** Opaque stored version; an edit names the version it was made from. */
+  readonly version: string;
 }
+/** Catalogue grouping. Archived categories remain attached to existing products. */
+export interface CategoryView { readonly id: string; readonly name: string; readonly active: boolean; readonly version: string; }
+/** One immutable stock movement; corrections appear as later compensating rows. */
+export interface StockMovementView {
+  readonly id: string; readonly occurredAt: string; readonly type: string; readonly quantityThousandths: number; readonly reason?: string;
+}
+/** Catalogue pages may include archived rows for restoring them. */
+export type CatalogueQuery = SessionRequest & PageQuery & { readonly includeInactive?: boolean };
 /** Every protected call binds to the currently displayed actor session, including queued calls. */
 export interface SessionRequest { readonly sessionId: string; }
 /** Fresh shop setup. The host supplies identity, platform, currency and initial account policy. */
@@ -35,6 +47,25 @@ export interface ProductRequest extends SessionRequest {
   readonly requestId: string; readonly name: string; readonly unit: string; readonly divisible: boolean;
   readonly barcode?: string; readonly sellingPriceMinor: number; readonly purchasePriceMinor?: number;
   readonly openingThousandths: number;
+}
+/**
+ * Detail edit made from a displayed version. An identical retry returns the stored product;
+ * any other change since that version is refused rather than overwritten. Whole/fractional
+ * quantities and archive state are not edited here.
+ */
+export interface ProductUpdateRequest extends SessionRequest {
+  readonly productId: string; readonly version: string; readonly name: string; readonly unit: string;
+  readonly barcode?: string; readonly sellingPriceMinor: number; readonly purchasePriceMinor?: number;
+  readonly categoryId?: string; readonly minimumStockThousandths: number;
+}
+/** Manual stock received outside a supplier purchase, or stock lost to damage. The request ID names the movement. */
+export interface StockMoveRequest extends SessionRequest {
+  readonly requestId: string; readonly productId: string; readonly kind: "add" | "damage";
+  readonly quantityThousandths: number; readonly reason: string;
+}
+/** Observed shelf quantity; the host records the difference from current stock at the moment it commits. */
+export interface StockCountRequest extends SessionRequest {
+  readonly requestId: string; readonly productId: string; readonly countedThousandths: number; readonly reason: string;
 }
 /** Cash checkout carries only selected facts; the host derives actor, shop, time, stock and event IDs. */
 export interface CheckoutRequest extends SessionRequest {
@@ -58,11 +89,29 @@ export interface ShopService {
   /** Requires both current owner authority and a fresh credential proof. */
   recoveryKey(input: SessionRequest & { readonly secret: string }): Promise<Result<string | null>>;
   /** Bounded literal catalogue search with optional stock according to current permissions. */
-  listProducts(input: SessionRequest & PageQuery): Promise<Result<Page<ProductView>>>;
+  listProducts(input: CatalogueQuery): Promise<Result<Page<ProductView>>>;
+  /** One product, including archived ones, so open detail views follow later changes. */
+  getProduct(input: SessionRequest & { readonly productId: string }): Promise<Result<ProductView>>;
   /** Exact barcode lookup; absent/archived/ambiguous codes return no match. */
   scanProduct(input: SessionRequest & { readonly barcode: string }): Promise<Result<ProductView | null>>;
   /** Atomic product plus optional opening stock; same-ID differing requests are refused. */
   createProduct(input: ProductRequest): Promise<Result<ProductView>>;
+  /** Edits details of an active product under edit (and, for prices, price) authority. */
+  updateProduct(input: ProductUpdateRequest): Promise<Result<ProductView>>;
+  /** Archives or restores a product from its displayed version under archive authority. */
+  setProductActive(input: SessionRequest & { readonly productId: string; readonly version: string; readonly active: boolean }): Promise<Result<ProductView>>;
+  /** Bounded categories, optionally including archived ones. */
+  listCategories(input: CatalogueQuery): Promise<Result<Page<CategoryView>>>;
+  /** Creates a category whose ID is the stable request ID; matching retries return it. */
+  createCategory(input: SessionRequest & { readonly requestId: string; readonly name: string }): Promise<Result<CategoryView>>;
+  /** Renames, archives or restores a category from its displayed version. */
+  updateCategory(input: SessionRequest & { readonly categoryId: string; readonly version: string; readonly name: string; readonly active: boolean }): Promise<Result<CategoryView>>;
+  /** Adds or removes stock for one active product; matching retries record nothing more. */
+  moveStock(input: StockMoveRequest): Promise<Result<ProductView>>;
+  /** Records a shelf count; a retried count never recounts against later sales. */
+  countStock(input: StockCountRequest): Promise<Result<{ readonly deltaThousandths: number; readonly product: ProductView }>>;
+  /** Newest-first bounded stock movements of one product under inventory-view authority. */
+  stockHistory(input: SessionRequest & { readonly productId: string; readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<Page<StockMovementView>>>;
   /** Bounded account names for cash checkout, without disclosing financial balances. */
   listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly name: string }>>>;
   /** Atomic cash sale; identical retries return the original saved sale ID. */
