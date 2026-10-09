@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { AuthPage } from "./AuthPage.tsx";
+import { useEffect, useState } from "react";
 import type { BackupFileView, BundleView, InviteView, PairingRequestView, ShopService } from "../../shared/service.ts";
 import type { TextKey } from "../text.ts";
 import { ErrorText, Field, ReadState, useAction, useRead, useText } from "./ui.tsx";
@@ -14,35 +15,53 @@ function PasswordFields({id,value,confirm,onValue,onConfirm}:{id:string;value:st
     {onConfirm!==undefined&&<Field id={`${id}-confirm`} label={t("confirmFilePassword")} value={confirm??""} onChange={onConfirm} secret maxLength={256}/>}</div><p className="hint">{t("filePasswordHelp")}</p></>;
 }
 
-/** Restore or join from the setup screen of an empty installation; no session exists yet. */
-export function StartFromFile({service,mode,onDone,onBack}:{readonly service:ShopService;readonly mode:"restore"|"join";readonly onDone:()=>void;readonly onBack:()=>void}):React.JSX.Element{
-  const {t}=useText();
-  return <section className="auth-card start-file"><p className="eyebrow">KOLO</p><h1>{t(mode==="restore"?"startFromBackup":"joinShop")}</h1>
-    {mode==="restore"?<Restore service={service} onDone={onDone}/>:<Join service={service} onDone={onDone}/>}
-    <button className="text-button" onClick={()=>{void service.discardFile();onBack();}}>{t("back")}</button></section>;
+/**
+ * Import screen, before anyone signs in: one file dialog, then the steps for what was chosen. A backup
+ * restores this computer's shop (replacing the current one, kept as a safety copy, when `replacing`
+ * names it). An invite joins another till's shop and needs a computer without a shop.
+ */
+export function ImportFile({service,replacing,onDone,onBack}:{readonly service:ShopService;readonly replacing?:string;readonly onDone:()=>void;readonly onBack:()=>void}):React.JSX.Element{
+  const {t}=useText(),action=useAction();
+  const [kind,setKind]=useState<"backup"|"invite">(),[operationBusy,setOperationBusy]=useState(false);
+  const busy=operationBusy||action.busy;
+  const choose=():void=>{void action.run(()=>service.chooseImportFile()).then(value=>{if(value!==undefined)setKind(value.kind);});};
+  const back=():void=>{void action.run(()=>service.discardFile()).then(result=>{if(result!==undefined)onBack();});};
+  const chooseAgain=<button type="button" className="text-button" disabled={busy} onClick={()=>{setKind(undefined);action.setError(undefined);choose();}}>{t("chooseOtherFile")}</button>;
+  return <AuthPage title={t(replacing===undefined?"importFile":"importBackup")} description={t(replacing===undefined?"importHelp":"importReplaceHelp")} context={replacing??t("onThisComputer")} busy={busy} onBack={back}
+    aside={kind==="invite"?<><p className="eyebrow">{t("beforeYouStart")}</p><h2>{t("joinGuideTitle")}</h2><p>{t("joinGuideHelp")}</p></>
+      :<><p className="eyebrow">{t("beforeYouStart")}</p><h2>{t("importGuideTitle")}</h2><p>{t(replacing===undefined?"importGuideHelp":"importReplaceGuideHelp")}</p><p>{t("restoreGuideLogin")}</p></>}>
+    {kind===undefined?<div className="transfer-step"><h2>{t("chooseFileStep")}</h2><button id="choose-import-file" className="primary" disabled={busy} onClick={choose}>{t("chooseFile")}</button></div>
+      :kind==="backup"?<><Restore service={service} chosen {...(replacing===undefined?{}:{replacing})} onDone={onDone} onBusy={setOperationBusy}/>{chooseAgain}</>
+      :replacing!==undefined?<div className="transfer-step"><p className="notice error" role="alert">{t("inviteNeedsEmpty")}</p>{chooseAgain}</div>
+      :<><Join service={service} autoOpen onDone={onDone} onBusy={setOperationBusy}/>{chooseAgain}</>}
+    <ErrorText message={action.error}/>
+  </AuthPage>;
 }
 /** Checks a backup, then restores it after the shop name is typed back. With a session, it replaces this shop. */
-function Restore({service,sessionId,onDone}:{service:ShopService;sessionId?:string;onDone:()=>void}):React.JSX.Element{
+function Restore({service,sessionId,chosen=false,replacing,onDone,onBusy}:{service:ShopService;sessionId?:string;chosen?:boolean;replacing?:string;onDone:()=>void;onBusy?:(busy:boolean)=>void}):React.JSX.Element{
   const {t,language}=useText(),action=useAction();
+  useEffect(()=>{onBusy?.(action.busy);},[action.busy,onBusy]);
   const [password,setPassword]=useState(""),[preview,setPreview]=useState<BackupFileView>(),[name,setName]=useState(""),[device,setDevice]=useState(()=>t("defaultTill")),[secret,setSecret]=useState(""),[confirm,setConfirm]=useState("");
   const check=async():Promise<void>=>{setPreview(undefined);const value=await action.run(()=>service.openBackup({password}));setPassword("");if(value!==undefined)setPreview(value);};
   const restore=async():Promise<void>=>{
     if(secret!==confirm){action.setError({code:"codesMismatch"});return;}
-    const value=await action.run(()=>service.restoreBackup({...(sessionId===undefined?{}:{sessionId}),confirmedName:name,deviceLabel:device,secret}));
+    const value=await action.run(()=>service.restoreBackup({...(sessionId===undefined?{}:{sessionId}),...(replacing===undefined?{}:{replace:true}),confirmedName:name,deviceLabel:device,secret}));
     setSecret("");setConfirm("");if(value!==undefined)onDone();
   };
-  return <div className="transfer-step">{sessionId!==undefined&&<p className="hint">{t("restoreReplaceHelp")}</p>}
+  return <div className="transfer-step">{sessionId===undefined&&<h2>{t(preview===undefined?(chosen?"backupPasswordStep":"backupCheckStep"):(chosen?"backupConfirmChosenStep":"backupConfirmStep"))}</h2>}{sessionId!==undefined&&<p className="hint">{t("restoreReplaceHelp")}</p>}
     {preview===undefined?<form onSubmit={event=>{event.preventDefault();void check();}}><fieldset disabled={action.busy}><PasswordFields id="restore" value={password} onValue={setPassword}/></fieldset>
-      <button className="secondary" type="submit" disabled={action.busy}>{t("chooseBackup")}</button></form>
+      <button className={chosen?"primary":"secondary"} type="submit" disabled={action.busy}>{t(chosen?"openBackupNow":"chooseBackup")}</button></form>
     :<form onSubmit={event=>{event.preventDefault();void restore();}}><div className="file-summary"><strong>{t("backupFrom")} {preview.businessName}</strong><span>{preview.ownerName} · {new Date(preview.createdAt).toLocaleString(language==="fr"?"fr-FR":"en-GB")} · {preview.appliedEvents} {t("savedOperations")}</span></div>
       <fieldset disabled={action.busy}><Field id="restore-name" label={t("typeShopName")} value={name} onChange={setName}/><Field id="restore-device" label={t("deviceName")} value={device} onChange={setDevice}/>
+        {replacing!==undefined&&<p className="notice error" role="note">{t("replaceWarning")} <strong>{replacing}</strong>. {t("replaceKept")}</p>}
         <div className="two-fields"><Field id="restore-secret" label={t("codeAfterRestore")} value={secret} onChange={setSecret} secret maxLength={256}/><Field id="restore-confirm" label={t("confirmSecret")} value={confirm} onChange={setConfirm} secret maxLength={256}/></div><p className="hint">{t("secretHelp")}</p></fieldset>
       <button className="primary" type="submit" disabled={action.busy||name!==preview.businessName}>{action.busy?t("recording"):t("restoreNow")}</button></form>}
     <ErrorText message={action.error} inputMessage="identityInput"/></div>;
 }
 /** New till: check the invite, accept with the compared fingerprint, then complete with the activation file. */
-function Join({service,onDone}:{service:ShopService;onDone:()=>void}):React.JSX.Element{
+function Join({service,autoOpen=false,onDone,onBusy}:{service:ShopService;autoOpen?:boolean;onDone:()=>void;onBusy?:(busy:boolean)=>void}):React.JSX.Element{
   const {t}=useText(),action=useAction();
+  useEffect(()=>{onBusy?.(action.busy);},[action.busy,onBusy]);
   const [invite,setInvite]=useState<InviteView>(),[fingerprint,setFingerprint]=useState(""),[device,setDevice]=useState(()=>t("defaultTill")),[secret,setSecret]=useState(""),[confirm,setConfirm]=useState("");
   const [code,setCode]=useState<string>(),[password,setPassword]=useState(""),[typedCode,setTypedCode]=useState("");
   const accept=async():Promise<void>=>{
@@ -51,7 +70,9 @@ function Join({service,onDone}:{service:ShopService;onDone:()=>void}):React.JSX.
     setSecret("");setConfirm("");if(value!==undefined){setCode(value.verificationCode);setTypedCode(value.verificationCode);}
   };
   const complete=async():Promise<void>=>{const value=await action.run(()=>service.completePairing({password,confirmedCode:typedCode.trim()}));setPassword("");if(value!==undefined)onDone();};
-  return <div className="transfer-step">
+  const [opened,setOpened]=useState(false);
+  useEffect(()=>{if(!autoOpen||opened)return;setOpened(true);void action.run(()=>service.openInvite()).then(value=>{if(value!==undefined)setInvite(value);});},[autoOpen,opened,action,service]);
+  return <div className="transfer-step"><h2>{t(code!==undefined?"joinActivationStep":invite===undefined?"joinInviteStep":"joinRequestStep")}</h2>
     {code===undefined?invite===undefined?<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.openInvite()).then(value=>{if(value!==undefined)setInvite(value);});}}>{t("chooseInvite")}</button>
       :<form onSubmit={event=>{event.preventDefault();void accept();}}><div className="file-summary"><strong>{t("inviteFrom")} {invite.businessName}</strong><span>{invite.ownerName}</span></div>
         <fieldset disabled={action.busy}><Field id="join-fingerprint" label={t("typeFingerprint")} value={fingerprint} onChange={setFingerprint} maxLength={64}/><Field id="join-device" label={t("deviceName")} value={device} onChange={setDevice}/>

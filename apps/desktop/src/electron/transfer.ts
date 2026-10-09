@@ -6,6 +6,8 @@ import { retryDeferred } from "@kolo/core/application/event-application";
 import { TransferError, type SnapshotPort, type TransferCrypto, type TransferDocument } from "@kolo/core/backup/types";
 import { ExchangeError } from "@kolo/core/exchange/types";
 import { currentInstallation } from "@kolo/core/identity/workspace";
+import { validateLocalSecret } from "@kolo/core/identity/credentials";
+import { migrate } from "@kolo/core/data/database/migrations";
 import { WorkspaceError, type OperationContext } from "@kolo/core/identity/types";
 import type { Database } from "@kolo/core/data/database/driver";
 import type { BackupFileView, BundleView, ExchangeView, InviteView, PairingRequestView, SavedFile } from "../shared/service.js";
@@ -15,9 +17,12 @@ import { CommandError, type Host } from "./host.ts";
 /** Native file access stays in the main process; the renderer never supplies paths or contents. */
 export interface TransferDialogs { open(): Promise<string | undefined>; save(document: TransferDocument): Promise<boolean>; }
 /** What the desktop host provides for backup, pairing and exchange. */
-export interface TransferPorts { readonly files: SnapshotPort; readonly dialogs: TransferDialogs; readonly crypto: TransferCrypto; }
+export interface TransferPorts { readonly files: SnapshotPort & { activeId?(): string; saved?(): Promise<readonly {id:string;name:string}[]>; selectSaved?(id:string,target:Database):Promise<Database> }; readonly dialogs: TransferDialogs; readonly crypto: TransferCrypto; }
+/** What an imported file turned out to be. */
+export type ImportKind = "backup" | "invite";
 /** One checked file per installation; checking another or locking forgets it. */
 export type StagedFile = { readonly kind: "backup"; readonly preview: BackupPreview } | { readonly kind: "invite"; readonly text: string } |
+  { readonly kind: "picked"; readonly fileKind: ImportKind; readonly text: string } |
   { readonly kind: "request"; readonly text: string } | { readonly kind: "bundle"; readonly preview: BundlePreview };
 /** Host access for transfer commands, including the swap to an activated database. */
 export interface TransferHost extends Host {
@@ -41,6 +46,28 @@ export async function translated<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 function password(value: unknown): string { return text(value, 256, false); }
+/** Recognizes a backup or pairing invite by its structure; anything else is refused before any work. */
+function importKind(file: string): ImportKind {
+  let value: unknown;
+  try { value = JSON.parse(file); } catch { throw new CommandError("invalid_file"); }
+  const record = (item: unknown): Record<string, unknown> | undefined => item !== null && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : undefined;
+  const header = record(record(value)?.["header"]), invite = record(record(value)?.["invite"]);
+  if (header?.["format"] === "kolo.encrypted" && header["purpose"] === "backup") return "backup";
+  if (invite?.["format"] === "kolo.pairing-invite") return "invite";
+  throw new CommandError("invalid_file");
+}
+/** A file chosen on the import screen is used once by the matching open command; otherwise the dialog opens. */
+async function chosen(host: TransferHost, kind: ImportKind): Promise<string> {
+  const file = host.staged();
+  return file?.kind === "picked" && file.fileKind === kind ? file.text : pick(host);
+}
+/** Import screen: one file dialog for a backup or an invite; the caller continues with the matching steps. */
+export async function chooseImportFile(host: TransferHost, input: unknown): Promise<{ readonly kind: ImportKind }> {
+  object(input ?? {}, []);
+  const file = await pick(host), kind = importKind(file);
+  await host.stage({ kind: "picked", fileKind: kind, text: file });
+  return { kind };
+}
 async function pick(host: TransferHost): Promise<string> {
   const chosen = await host.transfer.dialogs.open();
   if (chosen === undefined) throw new CommandError("cancelled");
@@ -61,20 +88,46 @@ export async function saveBackup(host: TransferHost, input: unknown): Promise<Sa
   return save(host, await createBackup(context, password(data["password"]), host.transfer.files, host.transfer.crypto));
 }
 export async function openBackup(host: TransferHost, input: unknown): Promise<BackupFileView> {
-  const data = object(input, ["password"]), secret = password(data["password"]), file = await pick(host);
+  const data = object(input, ["password"]), secret = password(data["password"]), file = await chosen(host, "backup");
   await host.stage(undefined);
   const preview = await previewBackup(file, secret, host.transfer.files, host.transfer.crypto);
   await host.stage({ kind: "backup", preview });
   return { businessName: preview.businessName, ownerName: preview.ownerName, createdAt: preview.createdAt, appliedEvents: preview.appliedEvents };
 }
+/**
+ * Restores the checked backup. Signed in, the owner replaces the open shop. Signed out, an empty
+ * computer restores directly; a computer with a shop needs `replace: true`, and its shop moves aside
+ * as a safety copy (as starting a new shop always did) before the backup is restored into a fresh
+ * slot. If that restore fails, the previous shop is selected again.
+ */
 export async function restoreBackup(host: TransferHost, input: unknown): Promise<{ readonly activated: boolean }> {
-  const data = object(input, ["sessionId", "confirmedName", "deviceLabel", "secret"]), recovery = host.optionalActor(data);
+  const data = object(input, ["sessionId", "confirmedName", "deviceLabel", "secret", "replace"]), recovery = host.optionalActor(data);
+  const replace = data["replace"] === undefined ? false : boolean(data["replace"]);
   const { preview } = staged(host, "backup");
   if (text(data["confirmedName"]) !== preview.businessName) throw new CommandError("confirmation_required");
-  const result = await restoreWorkspace(preview, { confirmedBusinessId: preview.businessId, deviceLabel: deviceLabel(data["deviceLabel"]), platform: "DESKTOP",
-    secret: text(data["secret"], 256, false), ...(recovery === undefined ? {} : { recoveryContext: recovery }) }, host.ports);
-  await host.stage(undefined); await host.activate(result.database);
-  return { activated: true };
+  const request = { confirmedBusinessId: preview.businessId, deviceLabel: deviceLabel(data["deviceLabel"]), platform: "DESKTOP" as const,
+    secret: text(data["secret"], 256, false), ...(recovery === undefined ? {} : { recoveryContext: recovery }) };
+  validateLocalSecret(request.secret);
+  if (recovery !== undefined || currentInstallation(host.ports.database).state === "empty") {
+    const result = await restoreWorkspace(preview, request, host.ports);
+    await host.stage(undefined); await host.activate(result.database);
+    return { activated: true };
+  }
+  if (!replace) throw new CommandError("not_empty");
+  const files = host.transfer.files;
+  if (files.activeId === undefined || files.selectSaved === undefined) throw new CommandError("unavailable");
+  const previous = files.activeId(), candidate = await files.empty();
+  let empty: Database;
+  try { migrate(candidate.database); empty = await candidate.activate(host.ports.database); } finally { await candidate.discard(); }
+  try {
+    const result = await restoreWorkspace(preview, request, { ...host.ports, database: empty });
+    empty.close(); await host.stage(undefined); await host.activate(result.database);
+    return { activated: true };
+  } catch (error) {
+    // The open shop never stopped being served; point the active slot back at it.
+    try { (await files.selectSaved(previous, empty)).close(); } finally { empty.close(); }
+    throw error;
+  }
 }
 export async function saveInvite(host: TransferHost, input: unknown): Promise<SavedFile & { readonly fingerprint: string }> {
   const data = object(input, ["sessionId", "authorityAllowed"]), context = host.actor(data, ["business.settings"]);
@@ -96,7 +149,7 @@ export async function approvePairingRequest(host: TransferHost, input: unknown):
 }
 export async function openInvite(host: TransferHost, input: unknown): Promise<InviteView> {
   object(input ?? {}, []);
-  const file = await pick(host), view = await previewPairingInvite(file, host.transfer.crypto);
+  const file = await chosen(host, "invite"), view = await previewPairingInvite(file, host.transfer.crypto);
   await host.stage({ kind: "invite", text: file });
   return view;
 }

@@ -7,7 +7,7 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID, randomUUIDv7
 import { nodeWorkspaceFiles } from "@kolo/core/data/database/node-sqlite";
 import { migrate } from "@kolo/core/data/database/migrations";
 import type { Database } from "@kolo/core/data/database/driver";
-import type { TransferDocument } from "@kolo/core/backup/types";
+import { TransferError, type TransferDocument } from "@kolo/core/backup/types";
 import { DesktopApplication } from "./application.ts";
 import { localCredentialsOnDesktop, desktopExchangeCrypto, desktopTransferCrypto, type NativeSafeStorage } from "./local-credentials.ts";
 import type { Result } from "../shared/service.ts";
@@ -27,14 +27,27 @@ async function installation(clock: () => string) {
   const inbox: { next?: string; saved: TransferDocument[]; cancel: boolean } = { saved: [], cancel: false };
   const dialogs = { open: async () => inbox.cancel ? undefined : inbox.next, save: async (document: TransferDocument) => { inbox.saved.push(document); return true; } };
   const holder: { application?: DesktopApplication; database?: Database } = {};
+  const faults = { activation: false, restore: false };
+  const files = { ...slots, open: async (bytes: Uint8Array) => {
+    // A restore failure after the safety switch: the staged backup refuses to activate.
+    const candidate = await slots.open(bytes);
+    return { ...candidate, activate: async (target: Database) => { if (faults.restore) throw new TransferError("activation_failed"); return candidate.activate(target); } };
+  }, empty: async () => {
+    const candidate = await slots.empty();
+    return { ...candidate, activate: async (target: Database) => {
+      if (faults.activation) throw new TransferError("activation_failed");
+      return candidate.activate(target);
+    } };
+  } };
   const serve = async (database: Database): Promise<DesktopApplication> => {
     opened.push(database);
-    const application = new DesktopApplication({ database, credentials, newId: randomUUIDv7, now: clock }, desktopExchangeCrypto, { files: slots, dialogs, crypto: desktopTransferCrypto,
+    const application = new DesktopApplication({ database, credentials, newId: randomUUIDv7, now: clock }, desktopExchangeCrypto, { files, dialogs, crypto: desktopTransferCrypto,
       onActivated: async next => { migrate(next); const previous = holder.application; holder.application = await serve(next); holder.database = next; void previous?.dispose(); } });
     await application.initialize(); return application;
   };
   const database = slots.openActive(); migrate(database); holder.database = database; holder.application = await serve(database);
-  return { inbox, get app(): DesktopApplication { return holder.application!; }, get database(): Database { return holder.database!; },
+  return { inbox, faults, get app(): DesktopApplication { return holder.application!; }, get database(): Database { return holder.database!; },
+    async reopen() { await holder.application?.dispose(); holder.database?.close(); const next = slots.openActive(); holder.database = next; holder.application = await serve(next); },
     async dispose() { await holder.application?.dispose(); for (const item of opened) { try { item.close(); } catch { /* Already closed. */ } } slots.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 async function shop(f: Awaited<ReturnType<typeof installation>>, name: string): Promise<string> {
@@ -43,6 +56,60 @@ async function shop(f: Awaited<ReturnType<typeof installation>>, name: string): 
 }
 let tick = Date.parse("2026-10-06T12:00:00.000Z");
 const clock = (): string => new Date(tick += 1000).toISOString();
+
+it("a locked shop can start fresh without its old code, retaining old facts and persisting the new slot", async () => {
+  const f = await installation(clock);
+  try {
+    const sessionId = await shop(f, "Old shop"), original = f.database;
+    value(await f.app.createProduct({ sessionId, requestId: randomUUID(), name: "Old rice", unit: "bag", divisible: false, sellingPriceMinor: 500, openingThousandths: 4000 }));
+    failure(await f.app.startNewShop({ confirmedName: "Old shop" }), "permission_denied");
+    value(await f.app.lock());
+    failure(await f.app.startNewShop({ confirmedName: "Wrong shop" }), "confirmation_required");
+    failure(await f.app.startNewShop({ confirmedName: "Old shop", path: "/forged" }), "invalid_input");
+    assert.deepEqual(value(await f.app.startNewShop({ confirmedName: "Old shop" })), { activated: true });
+    assert.equal(value(await f.app.getWorkspace()).state, "empty");
+    assert.equal(f.database.get("SELECT id FROM products LIMIT 1"), undefined);
+    assert.equal(original.get("SELECT name FROM products LIMIT 1")!["name"], "Old rice");
+    await f.reopen(); assert.equal(value(await f.app.getWorkspace()).state, "empty");
+    const setup = value(await f.app.createShop({ businessName: "New shop", ownerName: "New owner", deviceLabel: "PC", cashAccountName: "Cash", secret: "112233" }));
+    const next = value(await f.app.unlock({ userId: setup.members[0]!.id, secret: "112233" }));
+    assert.equal(value(await f.app.listProducts({ sessionId: next.sessionId! })).items.length, 0);
+    failure(await f.app.listProducts({ sessionId }), "locked");
+    await f.reopen(); assert.deepEqual([value(await f.app.getWorkspace()).state, value(await f.app.getWorkspace()).shopName], ["locked", "New shop"]);
+  } finally { await f.dispose(); }
+});
+
+it("saved shops reopen with their original credentials and facts across restart", async () => {
+  const f = await installation(clock);
+  try {
+    const sessionId = await shop(f, "Original");
+    value(await f.app.createProduct({ sessionId, requestId: randomUUID(), name: "Retained rice", unit: "bag", divisible: false, sellingPriceMinor: 500, openingThousandths: 4000 }));
+    failure(await f.app.savedShops(), "permission_denied");
+    value(await f.app.lock()); value(await f.app.startNewShop({confirmedName:"Original"}));
+    const saved = value(await f.app.savedShops()); assert.deepEqual(saved, [{id:"kolo.db",name:"Original"}]);
+    failure(await f.app.openSavedShop({id:"../kolo.db"}), "activation_failed");
+    failure(await f.app.openSavedShop({id:saved[0]!.id,path:"/forged"}), "invalid_input");
+    assert.equal(value(await f.app.getWorkspace()).state,"empty");
+    value(await f.app.openSavedShop({id:saved[0]!.id}));
+    await f.reopen(); const view=value(await f.app.getWorkspace());
+    assert.equal(view.state,"locked"); assert.equal(view.shopName,"Original");
+    failure(await f.app.unlock({userId:view.members[0]!.id,secret:"112233"}),"invalid_credential");
+    const unlocked=value(await f.app.unlock({userId:view.members[0]!.id,secret:"654321"}));
+    assert.equal(value(await f.app.listProducts({sessionId:unlocked.sessionId!})).items[0]!.name,"Retained rice");
+    failure(await f.app.openSavedShop({id:"kolo.db"}),"permission_denied");
+  } finally { await f.dispose(); }
+});
+
+it("failed fresh-shop activation leaves the original shop selected and unlockable", async () => {
+  const f = await installation(clock);
+  try {
+    await shop(f, "Original"); value(await f.app.lock()); f.faults.activation = true;
+    failure(await f.app.startNewShop({ confirmedName: "Original" }), "activation_failed");
+    await f.reopen();
+    const view = value(await f.app.getWorkspace()); assert.equal(view.shopName, "Original");
+    assert.equal(value(await f.app.unlock({ userId: view.members[0]!.id, secret: "654321" })).state, "unlocked");
+  } finally { await f.dispose(); }
+});
 
 it("an encrypted backup restores into an empty installation only after the shop name is confirmed", async () => {
   const a = await installation(clock), b = await installation(clock);
@@ -67,6 +134,60 @@ it("an encrypted backup restores into an empty installation only after the shop 
     assert.equal(value(await b.app.listProducts({ sessionId: session })).items[0]!.onHandThousandths, 3000);
     assert.equal(value(await b.app.listReceipts({ sessionId: session })).items.length, 1);
     const context = value(await a.app.getWorkspace()); assert.equal(context.state, "unlocked");
+  } finally { await a.dispose(); await b.dispose(); }
+});
+
+it("the import screen recognizes backups and invites with one dialog, and refuses other files", async () => {
+  const a = await installation(clock), b = await installation(clock);
+  try {
+    const sessionId = await shop(a, "Boutique Awa");
+    value(await a.app.saveBackup({ sessionId, password: "correct horse battery" })); const backup = a.inbox.saved.at(-1)!.text;
+    value(await a.app.saveInvite({ sessionId, authorityAllowed: false })); const invite = a.inbox.saved.at(-1)!.text;
+    for (const text of ["not json", "[]", "{}", JSON.stringify({ header: { format: "kolo.encrypted", purpose: "exchange" } })]) { b.inbox.next = text; failure(await b.app.chooseImportFile(), "invalid_file"); }
+    b.inbox.cancel = true; failure(await b.app.chooseImportFile(), "cancelled"); b.inbox.cancel = false;
+    b.inbox.next = invite; assert.deepEqual(value(await b.app.chooseImportFile()), { kind: "invite" });
+    b.inbox.next = undefined; assert.equal(value(await b.app.openInvite()).businessName, "Boutique Awa");
+    b.inbox.next = backup; assert.deepEqual(value(await b.app.chooseImportFile()), { kind: "backup" });
+    // The chosen file is used without opening the dialog again.
+    b.inbox.next = undefined; assert.equal(value(await b.app.openBackup({ password: "correct horse battery" })).businessName, "Boutique Awa");
+  } finally { await a.dispose(); await b.dispose(); }
+});
+
+it("signed out, a backup replaces this computer's shop only when asked, keeping the old shop as a safety copy", async () => {
+  const a = await installation(clock), b = await installation(clock);
+  try {
+    const sessionId = await shop(a, "Boutique Awa");
+    value(await a.app.createProduct({ sessionId, requestId: randomUUID(), name: "Rice", unit: "bag", divisible: false, sellingPriceMinor: 500, openingThousandths: 4000 }));
+    value(await a.app.saveBackup({ sessionId, password: "correct horse battery" })); b.inbox.next = a.inbox.saved.at(-1)!.text;
+    await shop(b, "Old till shop"); value(await b.app.lock());
+    value(await b.app.chooseImportFile()); value(await b.app.openBackup({ password: "correct horse battery" }));
+    const request = { confirmedName: "Boutique Awa", deviceLabel: "PC 2", secret: "112233" };
+    failure(await b.app.restoreBackup(request), "not_empty");
+    failure(await b.app.restoreBackup({ ...request, replace: "yes" }), "invalid_input");
+    failure(await b.app.restoreBackup({ ...request, secret: "12", replace: true }), "invalid_input");
+    assert.equal(value(await b.app.getWorkspace()).shopName, "Old till shop", "nothing switched before a valid request");
+    assert.deepEqual(value(await b.app.restoreBackup({ ...request, replace: true })), { activated: true });
+    const restored = value(await b.app.getWorkspace()); assert.deepEqual([restored.state, restored.shopName], ["locked", "Boutique Awa"]);
+    const next = value(await b.app.unlock({ userId: restored.members[0]!.id, secret: "112233" })).sessionId!;
+    assert.equal(value(await b.app.listProducts({ sessionId: next })).items[0]!.name, "Rice");
+    value(await b.app.lock()); assert.deepEqual(value(await b.app.savedShops()).map(item => item.name), ["Old till shop"]);
+    await b.reopen(); assert.equal(value(await b.app.getWorkspace()).shopName, "Boutique Awa", "the replacement persists across restart");
+  } finally { await a.dispose(); await b.dispose(); }
+});
+
+it("a replacement that fails after the safety switch leaves the previous shop active and unlockable", async () => {
+  const a = await installation(clock), b = await installation(clock);
+  try {
+    const sessionId = await shop(a, "Boutique Awa");
+    value(await a.app.saveBackup({ sessionId, password: "correct horse battery" })); b.inbox.next = a.inbox.saved.at(-1)!.text;
+    await shop(b, "Old till shop"); value(await b.app.lock());
+    value(await b.app.chooseImportFile()); value(await b.app.openBackup({ password: "correct horse battery" }));
+    b.faults.restore = true;
+    failure(await b.app.restoreBackup({ confirmedName: "Boutique Awa", deviceLabel: "PC 2", secret: "112233", replace: true }), "activation_failed");
+    const view = value(await b.app.getWorkspace()); assert.equal(view.shopName, "Old till shop");
+    await b.reopen();
+    const reopened = value(await b.app.getWorkspace()); assert.equal(reopened.shopName, "Old till shop", "active slot points back at the old shop");
+    assert.equal(value(await b.app.unlock({ userId: reopened.members[0]!.id, secret: "654321" })).state, "unlocked");
   } finally { await a.dispose(); await b.dispose(); }
 });
 

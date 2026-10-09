@@ -48,9 +48,16 @@ export function Field({ label, value, onChange, secret = false, numeric = false,
   readonly label: string; readonly value: string; readonly onChange: (value: string) => void; readonly secret?: boolean;
   readonly numeric?: boolean; readonly required?: boolean; readonly id: string; readonly disabled?: boolean; readonly maxLength?: number;
 }): React.JSX.Element {
-  return <label className="field" htmlFor={id}><span>{label}</span><input id={id} name={id} value={value} onChange={event => onChange(event.target.value)}
-    type={secret ? "password" : "text"} inputMode={numeric ? "decimal" : "text"} autoComplete="off"
-    required={required} disabled={disabled} maxLength={maxLength} /></label>;
+  const { t } = useText(), [visible, setVisible] = useState(false);
+  const input = <input id={id} name={id} value={value} onChange={event => onChange(event.target.value)}
+    type={secret && !visible ? "password" : "text"} inputMode={numeric ? "decimal" : "text"} autoComplete="off" spellCheck={false}
+    required={required} disabled={disabled} maxLength={maxLength} />;
+  if (!secret) return <label className="field" htmlFor={id}><span>{label}</span>{input}</label>;
+  // Secrets can be revealed to check typing; the toggle sits beside the input, outside its label.
+  const toggle = t(visible ? "hideSecret" : "showSecret");
+  return <div className="field"><label htmlFor={id}>{label}</label><div className="secret-input">{input}
+    <button type="button" className="secret-toggle" aria-controls={id} aria-label={`${toggle} · ${label}`} disabled={disabled}
+      onClick={() => setVisible(current => !current)}>{toggle}</button></div></div>;
 }
 /** Labelled native select; options are supplied already localized. */
 export function Select({ label, value, onChange, id, options, disabled = false }: {

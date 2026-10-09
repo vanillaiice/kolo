@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID, randomUUIDv7 } from "node:crypto";
 import { openDesktopDatabase } from "./database.ts";
 import { DesktopApplication } from "./application.ts";
 import { desktopHandlers } from "./handlers.ts";
-import { localCredentialsOnDesktop, desktopExchangeCrypto, type NativeSafeStorage } from "./local-credentials.ts";
+import { localCredentialsOnDesktop, desktopExchangeCrypto, desktopSecretStore, type NativeSafeStorage } from "./local-credentials.ts";
+import { desktopSessionMemory } from "./session-memory.ts";
 import { balanceOfAccount } from "@kolo/core/data/finance/cash";
 import { createLocalMember } from "@kolo/core/identity/members";
 import { unlockWorkspace } from "@kolo/core/identity/workspace";
@@ -559,6 +560,7 @@ it("owner manages staff: unique names, effective grants and revokes, suspension 
   const f=fixture();try{
     const workspace=await owner(f),sessionId=workspace.sessionId!,ownerId=workspace.members[0]!.id;
     const created=value(await f.application.createStaff({sessionId,name:"Binta",role:"CASHIER",secret:"765432"}));
+    assert.equal(value(await f.application.getWorkspace()).members[0]!.id,ownerId,"owner remains the default login after adding alphabetically earlier staff");
     assert.deepEqual([created.role,created.active,created.isSelf,created.permissions.includes("sales.create"),created.permissions.includes("customers.credit")],["CASHIER",true,false,true,false]);
     failure(await f.application.createStaff({sessionId,name:"binta",role:"MANAGER",secret:"765432"}),"request_conflict");
     for(const bad of [{role:"OWNER"},{secret:"12"},{name:" "}])failure(await f.application.createStaff({sessionId,name:"Chantal",role:"CASHIER",secret:"876543",...bad}),"invalid_input");
@@ -580,4 +582,97 @@ it("owner manages staff: unique names, effective grants and revokes, suspension 
     assert.equal(value(await f.application.unlock({userId:created.id,secret:"112233"})).actor?.name,"Binta");
     failure(await f.application.unlock({userId:created.id,secret:"765432"}),"invalid_credential");
   }finally{await f.dispose();}
+});
+// Stay signed in: real SQLite, real vault files and the real session-memory module across restarts.
+function remembering() {
+  const directory=mkdtempSync(join(tmpdir(),"kolo-desktop-remember-")),os=native();
+  let database=openDesktopDatabase(join(directory,"shop.db")),application:DesktopApplication|undefined;
+  const memory=desktopSessionMemory(join(directory,"session"),os);
+  const start=async():Promise<DesktopApplication>=>{
+    await application?.dispose();database.close();database=openDesktopDatabase(join(directory,"shop.db"));
+    application=new DesktopApplication({database,credentials:localCredentialsOnDesktop(join(directory,"vault"),os),newId:randomUUIDv7,now:()=>"2026-10-06T12:00:00.000Z"},desktopExchangeCrypto,undefined,memory);
+    await application.initialize();return application;
+  };
+  return {directory,memory,start,get database(){return database;},async dispose(){await application?.dispose();database.close();rmSync(directory,{recursive:true,force:true});}};
+}
+it("a remembered user reopens after restart and stepping away, until Lock, recovery or turning it off",async()=>{
+  const r=remembering();
+  try{
+    let app=await r.start();
+    const setup=value(await app.createShop({businessName:"Shop",ownerName:"Owner",deviceLabel:"PC",cashAccountName:"Cash",secret:"654321"}));
+    const ownerId=setup.members[0]!.id,first=value(await app.unlock({userId:ownerId,secret:"654321"}));
+    assert.deepEqual(value(await app.sessionPreferences({sessionId:first.sessionId!})),{rememberSession:true});
+    app=await r.start();let view=value(await app.getWorkspace());
+    assert.equal(view.state,"unlocked");assert.equal(view.actor?.isOwner,true);assert.notEqual(view.sessionId,first.sessionId);
+    failure(await app.listProducts({sessionId:first.sessionId!}),"locked");
+    await app.autoLock("away");assert.equal(value(await app.getWorkspace()).state,"unlocked");
+    await app.autoLock("integrity");assert.equal(value(await app.getWorkspace()).state,"locked");
+    app=await r.start();assert.equal(value(await app.getWorkspace()).state,"unlocked");
+    value(await app.lock());app=await r.start();assert.equal(value(await app.getWorkspace()).state,"locked");
+    assert.equal(await r.memory.read(),undefined);
+    // Turned off: stepping away locks again and unlocking is not remembered.
+    view=value(await app.unlock({userId:ownerId,secret:"654321"}));
+    assert.deepEqual(value(await app.setRememberSession({sessionId:view.sessionId!,enabled:false})),{rememberSession:false});
+    assert.equal(await r.memory.read(),undefined);
+    await app.autoLock("away");assert.equal(value(await app.getWorkspace()).state,"locked");
+    view=value(await app.unlock({userId:ownerId,secret:"654321"}));
+    app=await r.start();assert.equal(value(await app.getWorkspace()).state,"locked");
+    // Turned back on while signed in remembers the current user immediately.
+    view=value(await app.unlock({userId:ownerId,secret:"654321"}));
+    value(await app.setRememberSession({sessionId:view.sessionId!,enabled:true}));
+    app=await r.start();view=value(await app.getWorkspace());assert.equal(view.state,"unlocked");
+    // Owner recovery replaces the credential, so the remembered user cannot reopen.
+    const key=value(await app.recoveryKey({sessionId:view.sessionId!,secret:"654321"}))!;
+    value(await app.recoverAccess({recoveryCode:key,newSecret:"112233"}));
+    app=await r.start();assert.equal(value(await app.getWorkspace()).state,"locked");
+  }finally{await r.dispose();}
+});
+it("a stale, forged or suspended remembered user grants nothing and is forgotten",async()=>{
+  const r=remembering();
+  try{
+    let app=await r.start();
+    const setup=value(await app.createShop({businessName:"Shop",ownerName:"Owner",deviceLabel:"PC",cashAccountName:"Cash",secret:"654321"}));
+    const ownerSession=value(await app.unlock({userId:setup.members[0]!.id,secret:"654321"})).sessionId!;
+    const cashier=value(await app.createStaff({sessionId:ownerSession,name:"Binta",role:"CASHIER",secret:"765432"}));
+    const remembered=(await r.memory.read())!;
+    for(const forged of [{...remembered,userId:cashier.id},{...remembered,credentialReference:"kolo.local.other"},{...remembered,businessId:randomUUIDv7()}]){
+      await r.memory.write(forged);app=await r.start();
+      assert.equal(value(await app.getWorkspace()).state,"locked");assert.equal(await r.memory.read(),undefined);
+    }
+    value(await app.unlock({userId:cashier.id,secret:"765432"}));
+    app=await r.start();assert.equal(value(await app.getWorkspace()).actor?.name,"Binta");
+    r.database.run("UPDATE local_memberships SET active=0 WHERE user_id=?",[cashier.id]);
+    app=await r.start();assert.equal(value(await app.getWorkspace()).state,"locked");assert.equal(await r.memory.read(),undefined);
+  }finally{await r.dispose();}
+});
+it("the stay-signed-in command needs the current session, a boolean and host storage",async()=>{
+  const r=remembering(),f=fixture();
+  try{
+    const app=await r.start();
+    const setup=value(await app.createShop({businessName:"Shop",ownerName:"Owner",deviceLabel:"PC",cashAccountName:"Cash",secret:"654321"}));
+    const sessionId=value(await app.unlock({userId:setup.members[0]!.id,secret:"654321"})).sessionId!;
+    failure(await app.setRememberSession({sessionId:randomUUIDv7(),enabled:false}),"locked");
+    failure(await app.setRememberSession({sessionId,enabled:"no"}),"invalid_input");
+    failure(await app.setRememberSession({sessionId,enabled:false,extra:1}),"invalid_input");
+    failure(await app.sessionPreferences({sessionId:randomUUIDv7()}),"locked");
+    assert.deepEqual(value(await app.sessionPreferences({sessionId})),{rememberSession:true});
+    const other=(await owner(f)).sessionId!;
+    failure(await f.application.setRememberSession({sessionId:other,enabled:true}),"unavailable");
+    assert.deepEqual(value(await f.application.sessionPreferences({sessionId:other})),{rememberSession:false});
+  }finally{await r.dispose();await f.dispose();}
+});
+it("session memory keeps the remembered user encrypted, defaults on and treats damaged records as absent",async()=>{
+  const directory=mkdtempSync(join(tmpdir(),"kolo-session-memory-"));
+  try{
+    const os=native(),memory=desktopSessionMemory(directory,os),vault=desktopSecretStore(directory,os),member={businessId:randomUUIDv7(),userId:randomUUIDv7(),credentialReference:"kolo.local.owner"};
+    assert.equal(await memory.enabled(),true);assert.equal(await memory.read(),undefined);
+    await memory.write(member);assert.deepEqual(await memory.read(),member);
+    assert.equal(readFileSync(join(directory,"kolo.session.remembered")).includes(Buffer.from(member.userId)),false);
+    await memory.setEnabled(false);assert.equal(await memory.enabled(),false);await memory.setEnabled(true);assert.equal(await memory.enabled(),true);
+    writeFileSync(join(directory,"remember-session.json"),"{");assert.equal(await memory.enabled(),false);
+    for(const damaged of [JSON.stringify({...member,userId:"../owner"}),JSON.stringify({...member,credentialReference:""}),JSON.stringify({...member,businessId:7}),"null","{"])
+      { await vault.write("kolo.session.remembered",damaged);assert.equal(await memory.read(),undefined); }
+    writeFileSync(join(directory,"kolo.session.remembered"),"not encrypted");assert.equal(await memory.read(),undefined);
+    await memory.write(undefined);await memory.write(undefined);assert.equal(await memory.read(),undefined);
+  }finally{rmSync(directory,{recursive:true,force:true});}
 });

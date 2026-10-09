@@ -1,17 +1,50 @@
+import { join } from "node:path";
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
-import type { BrowserWindow } from "electron";
+import { readBoundedTransferFile } from "./transfer-files.ts";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { nativeTheme, type BrowserWindow } from "electron";
 import type { TransferDocument } from "@kolo/core/backup/types";
 import type { TransferDialogs } from "./transfer.ts";
 
 /** Fixture dialogs: saved transfer documents stay in memory and "open" returns the latest one. */
 export function smokeDialogs(): TransferDialogs {
   const saved: TransferDocument[] = [];
-  return { open: async () => saved.at(-1)?.text, save: async document => { saved.push(document); return true; } };
+  // A caller-supplied file (KOLO_DESKTOP_SMOKE_OPEN_FILE) stands in for the open dialog's choice.
+  const supplied = process.env["KOLO_DESKTOP_SMOKE_OPEN_FILE"];
+  const directory = process.env["KOLO_DESKTOP_SMOKE_DIR"], persisted = directory === undefined ? undefined : join(directory, "last-backup.json");
+  return {
+    open: async () => supplied !== undefined ? readBoundedTransferFile(supplied) : saved.at(-1)?.text ?? (persisted !== undefined ? await readFile(persisted, "utf8").catch(() => undefined) : undefined),
+    save: async document => { saved.push(document); if (persisted !== undefined && document.filename.endsWith(".kolo-backup.json")) await writeFile(persisted, document.text); return true; },
+  };
 }
 /** Disposable actual Electron DOM/IPC/native-vault workflow; invoked only by the explicit smoke flag. */
 export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void> {
   const evaluate = <T>(source: string): Promise<T> => window.webContents.executeJavaScript(source) as Promise<T>;
+  const audit = async (screen: string): Promise<void> => {
+    const path = process.env["KOLO_DESKTOP_AXE_PATH"];
+    if (path === undefined) throw new Error("Accessibility audit requires the runner's axe-core path");
+    await evaluate(await readFile(path, "utf8"));
+    const previous = nativeTheme.themeSource;
+    try {
+      for (const theme of ["light", "dark"] as const) {
+        nativeTheme.themeSource = theme;
+        await wait(`window.matchMedia('(prefers-color-scheme: dark)').matches===${theme === "dark"}`);
+        await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        assert.equal(await evaluate("getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim()"), theme === "dark" ? "#1f2b25" : "#f4f7f3", "theme follows native appearance changes");
+        const violations = await evaluate(`axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']}}).then(result=>result.violations.map(item=>({id:item.id,nodes:item.nodes.map(node=>({target:node.target,summary:node.failureSummary}))})))`);
+        assert.deepEqual(violations, [], `Accessibility audit: ${screen} (${theme}): ${JSON.stringify(violations)}`);
+        await snapshot(`${screen.toLowerCase().replace(/[^a-z0-9]+/g,"-")}-${theme}`);
+      }
+    } finally { nativeTheme.themeSource = previous; }
+
+  };
+  const snapshot = async (name: string): Promise<void> => {
+    const directory = process.env["KOLO_DESKTOP_SCREENSHOT_DIR"];
+    if (directory === undefined) return;
+    await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    await mkdir(directory, {recursive:true});
+    await writeFile(join(directory, `${name}.png`), (await window.webContents.capturePage()).toPNG());
+  };
   const wait = async (condition: string, diagnostic = "screen transition"): Promise<void> => {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
@@ -19,7 +52,11 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     const alerts = await evaluate<string>("Array.from(document.querySelectorAll('[role=alert]')).filter(element=>element.offsetParent!==null).map(element=>element.textContent).join(' | ')");
-    process.stderr.write(`Desktop workflow timed out: ${diagnostic}${alerts === "" ? "" : ` (visible alerts: ${alerts})`}\n`);
+    const message = `Desktop workflow timed out: ${diagnostic}${alerts === "" ? "" : ` (visible alerts: ${alerts})`}\n`;
+    process.stderr.write(message);
+    // Windows GUI builds (and Wine) may not attach a console; keep the diagnostic in the disposable profile too.
+    const directory = process.env["KOLO_DESKTOP_SMOKE_DIR"];
+    if (directory !== undefined) await writeFile(join(directory, "workflow-smoke.log"), message, { flag: "a" });
     throw new Error("desktop DOM condition timed out");
   };
   const fill = async (selector: string, value: string): Promise<void> => {
@@ -38,19 +75,49 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
   };
   const navigate = async (name: string): Promise<void> => { await evaluate(`Array.from(document.querySelectorAll('.nav-item')).find(element=>element.textContent.includes(${JSON.stringify(name)})).click()`); };
   if (phase === "create") {
-    await wait("document.querySelector('#shop-name')!==null");
+    await wait("document.querySelector('[data-auth-action=create]')!==null");
+    await audit("French welcome choices"); await snapshot("welcome-fr");
+    // The bundled Inter face must load from the app itself, not depend on the computer's fonts.
+    assert.equal(await evaluate("document.fonts.ready.then(()=>[...document.fonts].some(face=>face.family.replace(/[\"']/g,'')==='Inter Variable'&&face.status==='loaded'))"), true, "bundled Inter font loads");
+    // Legal documents open from the entry footer, switch tabs and close without leaving the screen.
+    await clickVisible(".entry-legal .link-button", "Conditions d’utilisation"); await wait("document.querySelector('dialog.legal-dialog[open]')!==null", "terms open");
+    assert.equal(await evaluate("document.querySelector('#legal-title').textContent"), "Conditions d’utilisation");
+    await audit("French terms of use"); await snapshot("legal-terms-fr");
+    await clickVisible(".legal-dialog .tabs button", "Confidentialité"); await wait("document.querySelector('#legal-title').textContent==='Confidentialité'", "privacy tab");
+    await clickVisible(".legal-dialog .tabs button", "Logiciels open source"); await wait("document.querySelector('.legal-body tbody')?.textContent.includes('Electron')", "licenses tab");
+    await clickVisible(".legal-dialog .legal-header .secondary"); await wait("document.querySelector('dialog.legal-dialog')===null", "legal closed");
+    // The welcome screen offers exactly two starts: create a shop, or import a file.
+    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('.entry-choice')).map(element=>element.dataset.authAction)"), ["create", "import"]);
+    await click("[data-auth-action=import]"); await wait("document.querySelector('#choose-import-file')!==null");
+    await audit("French import entry"); await snapshot("import-fr");
+    await click(".entry-back"); await wait("document.querySelector('[data-auth-action=create]')!==null");
+    await click("[data-auth-action=create]"); await wait("document.querySelector('#shop-name')!==null");
+    await audit("French shop details"); await snapshot("setup-details-fr");
     await evaluate("Array.from(document.querySelectorAll('.language-switch button')).find(element=>element.textContent==='EN').click()");
-    for (const [selector, value] of [["#shop-name", "Desktop validation"], ["#owner-name", "Owner"], ["#device-name", "Till"], ["#cash-name", "Cash"], ["#local-secret", "654321"], ["#confirm-secret", "654321"]]) await fill(selector!, value!);
-    await submit("#local-secret");
-    await wait("document.querySelector('dialog[open]')!==null"); await click("dialog button");
+    await click(".setup-options summary");
+    for (const [selector, value] of [["#shop-name", "Desktop validation"], ["#owner-name", "Owner"], ["#device-name", "Till"], ["#cash-name", "Cash"]]) await fill(selector!, value!);
+    await submit("#shop-name"); await wait("document.querySelector('#local-secret')!==null");
+    assert.ok(await evaluate("document.querySelector('.setup-accept')?.textContent.includes('Terms of use')"), "setup names the terms");
+    await audit("English owner access"); await snapshot("setup-access-en");
+    await click(".entry-back"); await wait("document.querySelector('#shop-name')!==null");
+    assert.equal(await evaluate("document.querySelector('#shop-name').value"), "Desktop validation");
+    assert.equal(await evaluate("document.querySelector('#owner-name').value"), "Owner");
+    await submit("#shop-name"); await wait("document.querySelector('#local-secret')!==null");
+    await fill("#local-secret", "654321"); await fill("#confirm-secret", "112233"); await submit("#local-secret");
+    await wait("document.querySelector('[role=alert]')!==null");
+    await audit("Setup validation error");
+    assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.state)"), "empty");
+    await fill("#confirm-secret", "654321"); await submit("#local-secret");
+    await wait("document.querySelector('dialog[open]')!==null"); await audit("Recovery key dialog"); await click("dialog button");
     await wait("document.querySelector('#till-search')!==null");
+    await audit("English till");
     await navigate("Products & stock"); await click(".section-heading .primary");
     for (const [selector, value] of [["#product-name", "Rice"], ["#product-unit", "bag"], ["#product-barcode", "123456789"], ["#product-price", "500"], ["#product-cost", "300"], ["#opening-stock", "3"]]) await fill(selector!, value!);
-    await click(".form-panel input[type=checkbox]");
+    await click(".form-panel input[type=checkbox]"); await snapshot("product-form");
     await navigate("Till"); await navigate("Products & stock");
     assert.equal(await evaluate("document.querySelector('#product-name').value"), "Rice");
     await submit("#product-name");
-    await wait("document.querySelector('#product-name')===null && document.querySelector('tbody')?.textContent.includes('Rice')");
+    await wait("document.querySelector('#product-name')===null && document.querySelector('tbody')?.textContent.includes('Rice')"); await snapshot("products-list");
     await navigate("Till"); await wait("document.querySelector('.product-tile')?.textContent.includes('Rice')");
     // A keyboard scanner uses the same exact barcode path as physical keyboard hardware.
     window.show(); window.focus(); window.webContents.focus();
@@ -72,12 +139,13 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await fill(".cart-lines input", "0.5");
     await navigate("Products & stock"); await navigate("Till");
     assert.equal(await evaluate("document.querySelector('.cart-lines input').value"), "0.5");
-    await wait("document.querySelector('.total-line')?.textContent.includes('250')");
+    await wait("document.querySelector('.total-line')?.textContent.includes('250')"); await snapshot("till-cart");
     if (process.env["KOLO_DESKTOP_SMOKE_SCREENSHOT"] !== undefined) {
       await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())))");
       await writeFile(process.env["KOLO_DESKTOP_SMOKE_SCREENSHOT"], (await window.webContents.capturePage()).toPNG());
     }
-    await click(".checkout"); await wait("document.querySelector('.receipt-paper')?.textContent.includes('250')");
+    await click(".checkout"); await wait("document.querySelector('.receipt-paper')?.textContent.includes('250')"); await snapshot("receipt-cash");
+    assert.match(await evaluate<string>("document.querySelector('.receipt-paper .receipt-brand')?.textContent ?? ''"), /Generated by kolo · made by hblabs/, "receipt branding");
     assert.equal(await evaluate("document.querySelector('.notice.error')===null"), true);
     const checks = await evaluate<{ total: number; stock: number; sameId: boolean; history: number; conflict: string; deniedExtra: string; bridgeSafe: boolean }>(`(async()=>{
       const workspace=(await window.kolo.getWorkspace()).value, sessionId=workspace.sessionId;
@@ -96,48 +164,67 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await wait("document.querySelector('.notice.success')!==null && document.querySelector('.facts').textContent.includes('4.5')", "stock added");
     await click("input[name=movement-kind][value=count]"); await fill("#movement-quantity", "4"); await fill("#movement-reason", "Shelf"); await submit("#movement-quantity");
     await wait("document.querySelector('.notice.success')?.textContent.includes('-0.5') && document.querySelector('.facts').textContent.includes('4 bag')", "stock counted");
-    await wait("document.querySelectorAll('.detail-layout tbody tr').length===4", "stock history");
-    await press(".detail-heading button", "Edit"); await fill("#edit-name", "Rice 25kg"); await submit("#edit-name");
+    await wait("document.querySelectorAll('.detail-layout tbody tr').length===4", "stock history"); await snapshot("product-detail");
+    await press(".detail-heading button", "Edit"); await snapshot("product-edit"); await fill("#edit-name", "Rice 25kg"); await submit("#edit-name");
     await wait("document.querySelector('.detail-layout h2')?.textContent==='Rice 25kg' && document.querySelector('#edit-name')===null", "product edit");
     await press(".tabs button", "Categories"); await fill("#category-name", "Grain"); await submit("#category-name");
-    await wait("Array.from(document.querySelectorAll('tbody')).some(element=>element.textContent.includes('Grain'))", "category created");
+    await wait("Array.from(document.querySelectorAll('tbody')).some(element=>element.textContent.includes('Grain'))", "category created"); await snapshot("categories");
     // Credit: a customer with a limit buys with part payment, then pays some of the balance.
     await navigate("Customers"); await click(".section-heading .primary"); await fill("#customer-name", "Awa"); await fill("#customer-limit", "1000"); await submit("#customer-name");
-    await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.detail-layout h2')[0]?.textContent==='Awa';})()", "customer created");
+    await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.detail-layout h2')[0]?.textContent==='Awa';})()", "customer created"); await snapshot("customer-detail");
     await navigate("Till"); await wait("document.querySelector('.product-tile')?.textContent.includes('Rice 25kg')", "edited product in till");
     await click(".product-tile"); await fill("#customer-search", "Aw"); await wait("document.querySelector('.customer-results button')!==null", "customer search");
     await click(".customer-results button"); await wait("document.querySelector('.customer-choice')?.textContent.includes('Awa')", "customer chosen");
     await fill(".payment-row input", "200"); await wait("Array.from(document.querySelectorAll('.settlement-line')).some(element=>element.textContent.includes('300'))", "credit remainder");
-    await fill("#cash-received", "500"); await wait("document.querySelector('.change-line')?.textContent.includes('300')", "change due");
-    await click(".checkout"); await wait("document.querySelector('.receipt-paper')?.textContent.includes('Awa') && document.querySelector('.receipt-owing')?.textContent.includes('300')", "credit receipt");
+    await fill("#cash-received", "500"); await wait("document.querySelector('.change-line')?.textContent.includes('300')", "change due"); await snapshot("till-credit");
+    await click(".checkout"); await wait("document.querySelector('.receipt-paper')?.textContent.includes('Awa') && document.querySelector('.receipt-owing')?.textContent.includes('300')", "credit receipt"); await snapshot("receipt-credit");
     await navigate("Customers"); await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.facts')[0]?.textContent.includes('300');})()", "customer balance");
     await fill("#payment-amount", "100"); await submit("#payment-amount");
     await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.notice.success').length===1 && v('.facts')[0]?.textContent.includes('200') && v('.detail-layout tbody tr').length===2;})()", "customer payment");
     // Purchase: a supplier delivery received at cost, part paid at the door and the rest owed.
     await navigate("Purchases & suppliers"); await clickVisible(".tabs button", "Suppliers"); await clickVisible(".actions.spaced button");
-    await fill("#supplier-name", "Grossiste"); await submit("#supplier-name"); await wait(`${visible(".detail-layout h2")}[0]?.textContent==='Grossiste'`, "supplier created");
+    await fill("#supplier-name", "Grossiste"); await submit("#supplier-name"); await wait(`${visible(".detail-layout h2")}[0]?.textContent==='Grossiste'`, "supplier created"); await snapshot("supplier-detail");
     await clickVisible(".tabs button", "Purchases"); await clickVisible(".section-heading .primary");
     await fill("#supplier-search", "Gro"); await wait(`${visible(".customer-results button")}.length===1`, "supplier search"); await clickVisible(".customer-results button");
     await fill("#purchase-product", "Rice"); await wait(`${visible(".customer-results button")}.length===1`, "product search"); await clickVisible(".customer-results button");
     await fill(".purchase-form .cell-input", "5"); await fill(".purchase-form td:nth-child(3) .cell-input", "300"); await fill("#purchase-paid", "500");
-    await wait(`${visible(".purchase-form .settlement-line")}[0]?.textContent.includes('1,000')`, "supplier payable");
-    await submit("#purchase-reference"); await wait("document.querySelector('.purchase-form')===null && document.querySelector('.receipt-layout tbody tr')!==null", "purchase recorded");
+    await wait(`${visible(".purchase-form .settlement-line")}[0]?.textContent.includes('1,000')`, "supplier payable"); await snapshot("purchase-form");
+    await submit("#purchase-reference"); await wait("document.querySelector('.purchase-form')===null && document.querySelector('.record-layout tbody tr')!==null", "purchase recorded"); await snapshot("purchases-list");
     await clickVisible(".tabs button", "Suppliers"); await wait(`${visible(".facts dd")}[0]?.textContent.replace(/[^0-9-]/g,'')==='1000'`, "supplier balance");
     // Money: cash in, a count that is short and its correction, then an expense from the till.
     await navigate("Accounts & expenses"); await clickVisible(".row-link", "Cash"); await wait(`${visible(".facts dd")}[0]?.textContent.replace(/[^0-9-]/g,'')==='50'`, "cash balance");
     await fill("#money-amount", "1000"); await fill("#money-reason", "Float"); await submit("#money-amount"); await wait(`${visible(".facts dd")}[0]?.textContent.replace(/[^0-9-]/g,'')==='1050'`, "money in");
-    await fill("#cash-counted", "1000"); await submit("#cash-counted"); await wait(`${visible(".facts.compare")}[0]?.textContent.includes('-50')`, "cash compared");
+    await fill("#cash-counted", "1000"); await submit("#cash-counted"); await wait(`${visible(".facts.compare")}[0]?.textContent.includes('-50')`, "cash compared"); await snapshot("account-count");
     await fill("#cash-correction-reason", "Shortage"); await submit("#cash-correction-reason"); await wait(`${visible(".facts")}[0]?.textContent.includes('1,000')`, "cash corrected");
     await clickVisible(".tabs button", "Expenses"); await fill("#expense-amount", "200"); await fill("#expense-description", "Charcoal"); await submit("#expense-amount");
-    await wait(`${visible("tbody tr")}.some(row=>row.textContent.includes('200'))`, "expense recorded");
+    await wait(`${visible("tbody tr")}.some(row=>row.textContent.includes('200'))`, "expense recorded"); await snapshot("expenses");
     await clickVisible(".tabs button", "Accounts"); await wait(`${visible(".facts dd")}[0]?.textContent.replace(/[^0-9-]/g,'')==='800'`, "balance after expense");
     // Reports: today's summary reflects the two sales (250 + 500) and the expense.
     await navigate("Reports"); await wait("document.querySelector('.stat-tile strong')?.textContent.replace(/[^0-9-]/g,'')==='750'", "sales report");
+    await audit("Reports");
     assert.equal(await evaluate("Array.from(document.querySelectorAll('.stat-tile')).find(tile=>tile.textContent.startsWith('Expenses'))?.textContent.replace(/[^0-9-]/g,'')"), "200");
+    // Settings: an explicit appearance overrides the system theme and persists; "System" follows it again.
+    await navigate("Settings"); await wait(`${visible("input[name=appearance]")}.length===3`, "settings page");
+    await audit("Settings");
+    assert.match(await evaluate<string>("document.querySelector('.about-panel dd')?.textContent ?? ''"), /^KOLO \d+\.\d+\.\d+$/, "settings shows the version");
+    const canvas = "getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim()";
+    const previousTheme = nativeTheme.themeSource;
+    try {
+      for (const [system, choice, expected] of [["light", "Dark", "#1f2b25"], ["dark", "Light", "#f4f7f3"]] as const) {
+        nativeTheme.themeSource = system;
+        await clickVisible("input[name=appearance]", undefined, choice);
+        await wait(`${canvas}===${JSON.stringify(expected)}`, `explicit ${choice} appearance`);
+        assert.equal(await evaluate("localStorage.getItem('kolo.appearance')"), choice.toLowerCase());
+        await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        await snapshot(`settings-${choice.toLowerCase()}-over-${system}`);
+      }
+      await clickVisible("input[name=appearance]", undefined, "System");
+      await wait(`document.documentElement.dataset.theme===undefined && ${canvas}==='#1f2b25'`, "system appearance restored");
+    } finally { nativeTheme.themeSource = previousTheme; }
     // Return: one bag of the credit sale comes back; its value is credited to the customer.
-    await navigate("Receipts"); await clickVisible(".receipt-choice"); await wait(`${visible(".receipt-paper")}[0]?.textContent.includes('Awa')`, "credit receipt");
+    await navigate("Receipts"); await clickVisible(".receipt-list .row-link"); await wait(`${visible(".receipt-paper")}[0]?.textContent.includes('Awa')`, "credit receipt");
     await clickVisible(".receipt-paper button", "Return items"); await wait(`${visible(".return-form .cell-input")}.length===1`, "return form");
-    await fill(".return-form .cell-input", "1"); await wait(`${visible(".return-form .total-line")}[0]?.textContent.replace(/[^0-9]/g,'')==='500'`, "return preview");
+    await fill(".return-form .cell-input", "1"); await wait(`${visible(".return-form .total-line")}[0]?.textContent.replace(/[^0-9]/g,'')==='500'`, "return preview"); await snapshot("return-form");
     await fill("#return-reason", "Damaged"); await submit("#return-reason");
     await wait(`document.querySelector('.return-form')===null && ${visible(".receipt-paper")}[0]?.textContent.includes('Returned')`, "return recorded");
     // Printing uses the OS print path; rendering to PDF exercises the same print stylesheet without a dialog.
@@ -149,15 +236,16 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     for (const [selector, value] of [["#member-name", "Zoé"], ["#member-secret", "765432"], ["#member-confirm", "765432"]]) await fill(selector!, value!);
     await submit("#member-name"); await wait(`${visible(".staff-detail h2")}[0]?.textContent==='Zoé'`, "staff created");
     await clickVisible(".permission-group .check input:not(:checked)", undefined, "Sell on credit");
-    await wait(`${visible(".permission-group .check")}.find(label=>label.textContent==='Sell on credit')?.querySelector('input').checked===true`, "credit granted");
+    await wait(`${visible(".permission-group .check")}.find(label=>label.textContent==='Sell on credit')?.querySelector('input').checked===true`, "credit granted"); await snapshot("staff-detail");
     if (process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"] !== undefined) await writeFile(process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"], (await window.webContents.capturePage()).toPNG());
     assert.equal(await evaluate("document.querySelector('.notice.error')===null"), true);
     // Backup, then restore it over this shop: the activated database is served by a new
     // application, the restored shop opens locked, and the restart phase must find it.
     await navigate("Backup & devices");
+    await audit("Backup and devices");
     for (const [selector, value] of [["#backup-password", "correct horse battery"], ["#backup-confirm", "correct horse battery"]]) await fill(selector!, value!);
     await submit("#backup-password"); await wait(`${visible(".notice.success")}.some(element=>element.textContent==='File saved.')`, "backup saved");
-    await fill("#restore-password", "correct horse battery"); await submit("#restore-password"); await wait(`${visible(".file-summary")}[0]?.textContent.includes('Desktop validation')`, "backup checked");
+    await fill("#restore-password", "correct horse battery"); await submit("#restore-password"); await wait(`${visible(".file-summary")}[0]?.textContent.includes('Desktop validation')`, "backup checked"); await snapshot("restore-form");
     for (const [selector, value] of [["#restore-name", "Desktop validation"], ["#restore-secret", "654321"], ["#restore-confirm", "654321"]]) await fill(selector!, value!);
     await submit("#restore-name"); await wait("document.querySelector('#local-secret')!==null", "restored shop locked");
     process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment, supplier purchase, cash count/correction, expense, reports, sale return, staff and backup/restore passed\n");
@@ -166,10 +254,165 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     const state = await evaluate<string>("window.kolo.getWorkspace().then(result=>result.value.state)"); assert.equal(state, "locked");
     await fill("#local-secret", "654321"); await submit("#local-secret");
     await wait("document.querySelector('#till-search')!==null");
-    await navigate("Receipts"); await wait("document.querySelector('.receipt-choice')!==null"); await click(".receipt-choice");
+    await navigate("Receipts"); await wait("document.querySelector('.receipt-list .row-link')!==null"); await click(".receipt-list .row-link");
     await wait("document.querySelector('.receipt-paper')?.textContent.includes('Awa')");
     const stateAfter = await evaluate<{ stock: number; total: number }>(`(async()=>{const {sessionId}=(await window.kolo.getWorkspace()).value;const history=(await window.kolo.listReceipts({sessionId})).value;return {stock:(await window.kolo.listProducts({sessionId})).value.items[0].onHandThousandths,total:(await window.kolo.getReceipt({sessionId,saleId:history.items[0].id})).value.totalMinor};})()`);
     assert.deepEqual(stateAfter, { stock: 9000, total: 500 });
+    // Staying signed in is on by default; the following phases verify locked boots, so turn it off in Settings.
+    await navigate("Settings"); await wait(`${visible("#remember-session")}[0]?.checked===true`, "stay signed in defaults on");
+    await clickVisible("#remember-session"); await wait(`${visible("#remember-session")}[0]?.checked===false && !${visible("#remember-session")}[0].disabled`, "stay signed in turned off");
     process.stdout.write("Actual Electron process restart, locked boot, credential unlock and persisted receipt/stock passed\n");
+  } else if (["resilience", "crash-commit", "crash-reopen"].includes(phase)) {
+    await wait("document.querySelector('#local-secret')!==null");
+    assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.state)"), "locked");
+    await fill("#local-secret", "654321"); await submit("#local-secret");
+    await wait("document.querySelector('#till-search')!==null");
+    if (phase === "crash-commit") {
+      const committed = await evaluate(`(async()=>{
+        const {sessionId}=(await window.kolo.getWorkspace()).value;
+        const product=(await window.kolo.listProducts({sessionId})).value.items[0];
+        const account=(await window.kolo.listAccounts({sessionId})).value.items[0];
+        return await window.kolo.checkout({sessionId,requestId:crypto.randomUUID(),accountId:account.id,lines:[{productId:product.id,quantity:1000,unitPriceMinor:500}]});
+      })()`);
+      assert.equal((committed as { ok: boolean }).ok, true);
+      process.stdout.write("KOLO_CRASH_READY\n");
+      await new Promise(() => {}); // The parent kills the real main process after the durable reply.
+    } else if (phase === "crash-reopen") {
+      const recovered = await evaluate(`(async()=>{const {sessionId}=(await window.kolo.getWorkspace()).value;return {count:(await window.kolo.listReceipts({sessionId})).value.items.length,stock:(await window.kolo.listProducts({sessionId})).value.items[0].onHandThousandths};})()`);
+      assert.deepEqual(recovered, { count: 3, stock: 8000 });
+      process.stdout.write("Forced main-process termination retained committed sale exactly once and rebooted locked\n");
+    } else {
+      const recovery = await evaluate(`(async()=>{
+        const expect=result=>{if(!result.ok)throw Error(result.error.code);return result.value;};
+        const initial=expect(await window.kolo.getWorkspace()),ownerId=initial.members.find(member=>member.name===initial.actor.name).id;
+        const before=expect(await window.kolo.listReceipts({sessionId:initial.sessionId})).items.length;
+        const key=expect(await window.kolo.recoveryKey({sessionId:initial.sessionId,secret:'654321'}));
+        const recovered=expect(await window.kolo.recoverAccess({recoveryCode:key,newSecret:'112233'}));
+        if(recovered.state!=='locked')throw Error('recovery must lock');
+        const next=expect(await window.kolo.unlock({userId:ownerId,secret:'112233'}));
+        const after=expect(await window.kolo.listReceipts({sessionId:next.sessionId})).items.length;
+        const nextKey=expect(await window.kolo.recoveryKey({sessionId:next.sessionId,secret:'112233'}));
+        expect(await window.kolo.recoverAccess({recoveryCode:nextKey,newSecret:'654321'}));
+        expect(await window.kolo.unlock({userId:ownerId,secret:'654321'}));
+        return {before,after};
+      })()`);
+      assert.deepEqual(recovery, { before: 2, after: 2 });
+      await wait("document.querySelector('#till-search')!==null", "owner recovered");
+      // Native keyboard events prove the skip link is reachable and hidden screens stay out of focus.
+      await evaluate("document.activeElement?.blur(); document.querySelector('.skip-link').focus()");
+      assert.equal(await evaluate("document.activeElement.textContent"), "Skip to content");
+      window.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+      window.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+      await wait("document.activeElement?.id==='main-content'", "skip link focus");
+      window.minimize(); await wait("window.kolo.getWorkspace().then(result=>result.value.state==='locked')", "minimize lock");
+      window.restore(); window.show(); window.focus();
+      await wait("document.querySelector('#local-secret')!==null"); await fill("#local-secret", "654321"); await submit("#local-secret");
+      await wait("document.querySelector('#till-search')!==null");
+      const crashed = new Promise<void>(resolve => window.webContents.once("render-process-gone", () => resolve()));
+      const reloadUrl = window.webContents.getURL();
+      process.kill(window.webContents.getOSProcessId(), "SIGKILL"); await crashed;
+      await window.loadURL(reloadUrl);
+      await wait("document.querySelector('#local-secret')!==null", "renderer crash locked recovery");
+      assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.state)"), "locked");
+      process.stdout.write("Native owner code replacement preserved receipts; keyboard skip link, minimize lock and renderer crash recovery passed\n");
+    }
+  } else if (phase === "entry-recovery") {
+    await wait("document.querySelector('#local-secret')!==null");
+    await audit("Desktop login"); await snapshot("login-en");
+    // The code can be revealed to check typing, and hidden again before unlocking.
+    await fill("#local-secret", "654321"); await click(".secret-toggle[aria-controls=local-secret]");
+    await wait("document.querySelector('#local-secret').type==='text' && document.querySelector('.secret-toggle').textContent==='Hide'", "reveal code");
+    await audit("Desktop login with code shown"); await snapshot("login-code-shown-en");
+    await click(".secret-toggle[aria-controls=local-secret]"); await wait("document.querySelector('#local-secret').type==='password'", "hide code");
+    await fill("#local-secret", "");
+    window.setSize(880,620);
+    await audit("Login at minimum desktop width");
+    assert.equal(await evaluate("document.documentElement.scrollWidth<=window.innerWidth"),true);
+    await snapshot("login-compact-en"); window.setSize(1280,850);
+    await fill("#local-secret", "654321"); await submit("#local-secret");
+    await wait("document.querySelector('#till-search')!==null");
+    const key = await evaluate<string>("window.kolo.getWorkspace().then(result=>window.kolo.recoveryKey({sessionId:result.value.sessionId,secret:'654321'})).then(result=>result.value)");
+    await evaluate("window.kolo.lock()"); await wait("document.querySelector('[data-auth-action=recover]')!==null");
+    await click("[data-auth-action=recover]"); await wait("document.querySelector('#recovery-key')!==null");
+    await audit("Owner code recovery"); await snapshot("recovery-en");
+    await fill("#recovery-key", key); await fill("#local-secret", "112233"); await fill("#confirm-secret", "112233"); await submit("#recovery-key");
+    await wait("document.querySelector('#user-id')!==null && document.querySelector('.notice.success')!==null");
+    assert.equal(await evaluate("document.querySelector('#local-secret').value"), "");
+    await fill("#local-secret", "112233"); await submit("#local-secret"); await wait("document.querySelector('#till-search')!==null");
+    await evaluate(`(async()=>{const {sessionId}=(await window.kolo.getWorkspace()).value;const key=(await window.kolo.recoveryKey({sessionId,secret:'112233'})).value;const result=await window.kolo.recoverAccess({recoveryCode:key,newSecret:'654321'});if(!result.ok)throw Error(result.error.code);})()`);
+    process.stdout.write("Desktop choice screens, two-step setup, draft-preserving back navigation, compact login and recovery DOM flow passed\n");
+  } else if (phase === "import-replace") {
+    // Signed out, importing a backup replaces this computer's shop; the old one becomes a safety copy.
+    await wait("document.querySelector('#local-secret')!==null");
+    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('.entry-choice')).map(element=>element.dataset.authAction)"), ["import"], "login offers only import besides signing in");
+    await audit("Login with import option"); await snapshot("login-import-en");
+    await click("[data-auth-action=import]"); await wait("document.querySelector('#choose-import-file')!==null");
+    await click("#choose-import-file"); await wait("document.querySelector('#restore-password')!==null", "backup recognized");
+    await fill("#restore-password", "correct horse battery"); await submit("#restore-password");
+    await wait(`${visible(".file-summary")}[0]?.textContent.includes('Desktop validation')`, "backup checked");
+    assert.ok(await evaluate("document.querySelector('.notice[role=note]')?.textContent.includes('Desktop validation')"), "replacement warning names the current shop");
+    await audit("Import replacing the current shop"); await snapshot("import-replace-en");
+    for (const [selector, value] of [["#restore-name", "Desktop validation"], ["#restore-secret", "654321"], ["#restore-confirm", "654321"]]) await fill(selector!, value!);
+    await submit("#restore-name"); await wait("document.querySelector('#local-secret')!==null", "restored shop locked");
+    assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.shopName)"), "Desktop validation");
+    assert.ok((await evaluate<{ name: string }[]>("window.kolo.savedShops().then(result=>result.value)")).some(item => item.name === "Desktop validation"), "previous shop kept as a safety copy");
+    await fill("#local-secret", "654321"); await submit("#local-secret"); await wait("document.querySelector('#till-search')!==null");
+    assert.ok(await evaluate("window.kolo.getWorkspace().then(result=>window.kolo.listProducts({sessionId:result.value.sessionId})).then(result=>result.value.items.length>0)"));
+    process.stdout.write("Signed-out import replaced the shop from a backup and kept the previous one as a safety copy\n");
+  } else if (phase === "import-reopen") {
+    await wait("document.querySelector('#local-secret')!==null");
+    assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.shopName)"), "Desktop validation");
+    await fill("#local-secret", "654321"); await submit("#local-secret");
+    await wait("document.querySelector('#till-search')!==null");
+    process.stdout.write("Imported shop remains active across process restart\n");
+  } else if (phase === "remember-on") {
+    await wait("document.querySelector('#local-secret')!==null");
+    await fill("#local-secret", "654321"); await submit("#local-secret");
+    await wait("document.querySelector('#till-search')!==null");
+    await navigate("Settings"); await wait(`${visible("#remember-session")}[0]?.checked===false && !${visible("#remember-session")}[0].disabled`, "stay signed in off");
+    await clickVisible("#remember-session"); await wait(`${visible("#remember-session")}[0]?.checked===true && !${visible("#remember-session")}[0].disabled`, "stay signed in turned on");
+    await audit("Settings with stay signed in"); await snapshot("settings-remember-en");
+    window.minimize(); await new Promise(resolve => setTimeout(resolve, 500));
+    assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.state)"), "unlocked", "minimize keeps a remembered user");
+    window.restore(); window.show(); window.focus();
+    process.stdout.write("Stay signed in turned on from Settings; minimizing kept the till open\n");
+  } else if (phase === "remember-reopen") {
+    await wait("document.querySelector('#till-search')!==null", "remembered user reopens the till");
+    assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.state)"), "unlocked");
+    assert.equal(await evaluate("document.querySelector('#local-secret')"), null);
+    await clickVisible(".topbar-actions .secondary", "Lock"); await wait("document.querySelector('#local-secret')!==null", "explicit lock");
+    process.stdout.write("Remembered user reopened after restart without a code; Lock signed out\n");
+  } else if (phase === "remember-locked") {
+    await wait("document.querySelector('#local-secret')!==null", "locked after explicit lock");
+    assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.state)"), "locked");
+    process.stdout.write("Explicit Lock is remembered across restart\n");
+  } else if (phase === "restore-file") {
+    // Fresh installation restores a supplied backup from the entry screen, as a new shop PC would.
+    const password = process.env["KOLO_DESKTOP_SMOKE_OPEN_PASSWORD"], shop = process.env["KOLO_DESKTOP_SMOKE_OPEN_SHOP"];
+    if (password === undefined || shop === undefined) throw new Error("restore-file needs the backup password and shop name");
+    await wait("document.querySelector('[data-auth-action=import]')!==null");
+    // From a locked shop's login page, the import replaces that shop and keeps it as a safety copy.
+    const current = await evaluate<string | null>("window.kolo.getWorkspace().then(result=>result.value.state==='empty'?null:result.value.shopName)");
+    await click("[data-auth-action=import]"); await wait("document.querySelector('#choose-import-file')!==null");
+    await click("#choose-import-file"); await wait("document.querySelector('#restore-password')!==null", "backup recognized");
+    await fill("#restore-password", password); await submit("#restore-password");
+    await wait(`${visible(".file-summary")}[0]?.textContent.includes(${JSON.stringify(shop)})`, "backup checked");
+    for (const [selector, value] of [["#restore-name", shop], ["#restore-secret", "135790"], ["#restore-confirm", "135790"]]) await fill(selector!, value!);
+    await snapshot("restore-file-form");
+    await submit("#restore-name"); await wait("document.querySelector('#local-secret')!==null", "restored shop locked");
+    if (current !== null) assert.ok((await evaluate<{ name: string }[]>("window.kolo.savedShops().then(result=>result.value)")).some(item => item.name === current), "previous shop kept");
+    // Open the restored shop and capture the busiest lists for layout review.
+    await fill("#local-secret", "135790"); await submit("#local-secret"); await wait("document.querySelector('.nav-item')!==null", "restored shop opens");
+    for (const [index, name] of [[3, "purchases"], [8, "receipts"], [1, "products"]] as const) {
+      await evaluate(`document.querySelectorAll('.nav-item')[${index}].click()`); await wait(`${visible("tbody tr")}.length>3`, `${name} rows`);
+      if (name !== "products") {
+        // Visited sections stay mounted but hidden; measure the visible one.
+        const widths = await evaluate<[number, number]>(`[${visible(".record-layout .panel")}[0].getBoundingClientRect().width,${visible(".workspace-content")}[0].getBoundingClientRect().width]`);
+        assert.ok(widths[0] > widths[1] * 0.8, `${name} list spans the page (${widths.join(", ")})`);
+        assert.equal(await evaluate(`getComputedStyle(${visible("tbody tr:last-child td")}[0]).borderBottomStyle`), "none", "no divider under the last row");
+      }
+      await snapshot(`restored-${name}`);
+    }
+    process.stdout.write(`${current === null ? "Fresh installation" : `Login page of ${current}`} restored ${shop} from a supplied backup\n`);
   } else throw new Error("unknown workflow smoke phase");
 }

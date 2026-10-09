@@ -1,9 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, powerMonitor, safeStorage, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor, safeStorage, nativeTheme, type IpcMainInvokeEvent } from "electron";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import { randomUUIDv7 } from "node:crypto";
 import { desktopStatus } from "./database.js";
 import { DesktopApplication } from "./application.js";
+import { desktopSessionMemory } from "./session-memory.js";
 import { desktopHandlers } from "./handlers.js";
 import { localCredentialsOnDesktop, desktopExchangeCrypto, desktopTransferCrypto } from "./local-credentials.js";
 import { pickDesktopTransferFile, saveDesktopTransferFile } from "./transfer-files.js";
@@ -14,10 +16,20 @@ import type { Database } from "@kolo/core/data/database/driver";
 
 const smokeTest = process.argv.includes("--smoke-test");
 const workflowSmoke = process.argv.includes("--workflow-smoke");
-if (smokeTest || workflowSmoke) {
+const benchmarkSmoke = process.argv.includes("--benchmark-smoke");
+const bootStart = performance.now();
+nativeTheme.themeSource = "system";
+const windowBackground = (): string => nativeTheme.shouldUseDarkColors ? "#1f2b25" : "#f4f7f3";
+if (smokeTest || workflowSmoke || benchmarkSmoke) {
   const temporaryDirectory = process.env["KOLO_DESKTOP_SMOKE_DIR"];
   if (temporaryDirectory === undefined) throw new Error("smoke test requires a disposable user-data directory");
   app.setPath("userData", temporaryDirectory);
+} else {
+  // Keep the existing shop location across packaged product-name changes, including
+  // clean installs where Electron requires the overridden directory to exist first.
+  const directory = join(app.getPath("appData"), "@kolo/desktop");
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  app.setPath("userData", directory);
 }
 
 if (!app.requestSingleInstanceLock()) { app.quit(); } else {
@@ -28,6 +40,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   let interval: ReturnType<typeof setInterval> | undefined;
   let closing = false, closed = false;
   const stop = async (): Promise<void> => {
+    closing = true;
     if (interval !== undefined) clearInterval(interval);
     await application?.dispose(); application = undefined;
     database?.close(); database = undefined; fileSlots?.close(); fileSlots = undefined;
@@ -46,6 +59,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     try {
       fileSlots = nodeWorkspaceFiles(app.getPath("userData")); database = fileSlots.openActive(); migrate(database);
       const slots = fileSlots, credentials = localCredentialsOnDesktop(join(app.getPath("userData"), "credentials"), safeStorage);
+      const memory = desktopSessionMemory(join(app.getPath("userData"), "session"), safeStorage);
       const dialogs: TransferDialogs = workflowSmoke ? (await import("./workflow-smoke.js")).smokeDialogs() : {
         open: () => pickDesktopTransferFile(dialog), save: document => saveDesktopTransferFile(document, dialog) };
       // Restore and pairing activate a new database: a new application serves it, and the old one
@@ -57,9 +71,9 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
             application = await serve(activated); database = activated;
             void previous?.dispose().finally(() => previousDatabase?.close());
             if (window !== undefined && !window.isDestroyed()) window.webContents.send("kolo:changed");
-          } });
+          } }, memory);
         await created.initialize();
-        created.onChanged(() => { if (created === application && window !== undefined && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("kolo:changed"); });
+        created.onChanged(() => { if (!closing && created === application && window !== undefined && !window.isDestroyed() && !window.webContents.isDestroyed() && !window.webContents.mainFrame.isDestroyed()) window.webContents.send("kolo:changed"); });
         return created;
       };
       application = await serve(database);
@@ -67,23 +81,33 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
       const rendererUrl = pathToFileURL(rendererPath).href;
       const trusted = (candidate: unknown): boolean => {
         const event = candidate as IpcMainInvokeEvent;
-        return window !== undefined && !window.isDestroyed() && event.sender === window.webContents &&
+        return !closing && window !== undefined && !window.isDestroyed() && event.sender === window.webContents &&
           event.senderFrame === window.webContents.mainFrame && event.senderFrame?.url === rendererUrl;
       };
       for (const [channel, handler] of Object.entries(desktopHandlers(() => application!, () => desktopStatus(database!), trusted))) ipcMain.handle(channel, handler);
-      window = new BrowserWindow({ width: 1280, height: 850, minWidth: 880, minHeight: 620, backgroundColor: "#f6f5ef",
+      window = new BrowserWindow({ width: 1280, height: 850, minWidth: 880, minHeight: 620, backgroundColor: windowBackground(),
         webPreferences: { preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: false } });
-      const lock = (): void => { void application?.lock(); };
-      window.on("minimize", lock);
-      powerMonitor.on("suspend", lock); powerMonitor.on("lock-screen", lock);
+      const updateWindowTheme = (): void => { if (window !== undefined && !window.isDestroyed()) window.setBackgroundColor(windowBackground()); };
+      nativeTheme.on("updated", updateWindowTheme);
+      window.on("closed", () => nativeTheme.removeListener("updated", updateWindowTheme));
+      // Stepping away keeps a user who chose to stay signed in; a lost or navigated renderer always locks.
+      const away = (): void => { void application?.autoLock("away"); }, lock = (): void => { void application?.autoLock("integrity"); };
+      window.on("minimize", away);
+      powerMonitor.on("suspend", away); powerMonitor.on("lock-screen", away);
       window.webContents.on("render-process-gone", lock);
-      window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) lock(); });
+      // The initial renderer load is not a navigation away; any later main-frame navigation or reload locks.
+      let loaded = false;
+      window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => { if (loaded && isMainFrame && !isInPlace) lock(); });
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       window.webContents.on("will-attach-webview", event => event.preventDefault());
       window.webContents.on("will-navigate", event => event.preventDefault());
       interval = setInterval(() => { void application?.seal(); }, 3000);
       await window.loadFile(rendererPath);
-      if (workflowSmoke) {
+      loaded = true;
+      if (benchmarkSmoke) {
+        const { benchmarkDesktop } = await import("./benchmark.js");
+        await benchmarkDesktop(window, database, performance.now() - bootStart); app.quit();
+      } else if (workflowSmoke) {
         const { runDesktopWorkflowSmoke } = await import("./workflow-smoke.js");
         await runDesktopWorkflowSmoke(window, process.env["KOLO_DESKTOP_SMOKE_PHASE"] ?? "create");
         app.quit();
@@ -93,7 +117,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
         process.stdout.write("Desktop runtime boot, SQLite and preload IPC passed\n"); app.quit();
       }
     } catch (error) {
-      if (smokeTest || workflowSmoke) {
+      if (smokeTest || workflowSmoke || benchmarkSmoke) {
         // Smoke runs use disposable fixtures only, so the failure detail is safe to print.
         process.stderr.write(`Desktop runtime smoke failed: ${error instanceof Error ? error.message : "unknown"}\n`); await stop(); closed = true; app.exit(1); return;
       }

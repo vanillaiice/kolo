@@ -1,0 +1,50 @@
+import type { ShopService } from "../../shared/service.ts";
+import type { Language } from "../text.ts";
+import { ErrorText, useAction, useRead, useText } from "./ui.tsx";
+import { LegalLinks } from "./Legal.tsx";
+import type { LegalKind } from "../legal.ts";
+
+/** Window appearance choice; "system" follows the operating system's light/dark setting. */
+export type Appearance = "system" | "light" | "dark";
+const appearanceKey = "kolo.appearance";
+/** Reads the saved appearance for this computer, defaulting to the system setting. */
+export function storedAppearance(): Appearance {
+  try { const value = localStorage.getItem(appearanceKey); return value === "light" || value === "dark" ? value : "system"; } catch { return "system"; }
+}
+/** Applies an appearance to the document and remembers it for the next launch. */
+export function applyAppearance(value: Appearance): void {
+  if (value === "system") delete document.documentElement.dataset["theme"]; else document.documentElement.dataset["theme"] = value;
+  try { localStorage.setItem(appearanceKey, value); } catch { /* The choice remains active for the current session. */ }
+}
+
+/** Per-computer display and session preferences, available to every signed-in user. */
+export function Settings({ service, sessionId, appearance, onAppearance, language, onLanguage, onLegal }: {
+  readonly service: ShopService; readonly sessionId: string;
+  readonly appearance: Appearance; readonly onAppearance: (value: Appearance) => void;
+  readonly language: Language; readonly onLanguage: (value: Language) => void; readonly onLegal: (kind: LegalKind) => void;
+}): React.JSX.Element {
+  const { t } = useText(), action = useAction();
+  const preferences = useRead(() => service.sessionPreferences({ sessionId }), [service, sessionId]);
+  const remember = (enabled: boolean): void => { void action.run(() => service.setRememberSession({ sessionId, enabled })).then(value => { if (value !== undefined) preferences.retry(); }); };
+  return <section className="workspace-content">
+    <div className="section-heading"><div><p className="eyebrow">{t("settings")}</p><h1>{t("settingsHelp")}</h1></div></div>
+    <div className="detail-layout">
+      <div className="panel"><h2 id="appearance-title">{t("appearance")}</h2><p className="hint">{t("appearanceHelp")}</p>
+        <div className="segmented" role="radiogroup" aria-labelledby="appearance-title">{(["system", "light", "dark"] as const).map(item =>
+          <label key={item} className={appearance === item ? "selected" : ""}><input type="radio" name="appearance" value={item} checked={appearance === item} onChange={() => onAppearance(item)}/>{t(`appearance.${item}`)}</label>)}</div>
+      </div>
+      <div className="panel"><h2>{t("signIn")}</h2>
+        <label className="check" htmlFor="remember-session"><input id="remember-session" type="checkbox" checked={preferences.data?.rememberSession ?? false}
+          disabled={action.busy || preferences.data === undefined} onChange={event => remember(event.target.checked)}/>{t("rememberSession")}</label>
+        <p className="hint">{t("rememberSessionHelp")}</p><ErrorText message={action.error ?? preferences.error}/>
+      </div>
+      <div className="panel"><h2 id="language-title">{t("language")}</h2><p className="hint">{t("languageHelp")}</p>
+        <div className="segmented" role="radiogroup" aria-labelledby="language-title">{(["fr", "en"] as const).map(item =>
+          <label key={item} className={language === item ? "selected" : ""}><input type="radio" name="language" value={item} checked={language === item} onChange={() => onLanguage(item)}/>{item === "fr" ? "Français" : "English"}</label>)}</div>
+      </div>
+      <div className="panel about-panel"><h2>{t("about")}</h2><p className="hint">{t("aboutHelp")}</p>
+        <dl className="facts"><dt>{t("version")}</dt><dd>KOLO {__KOLO_VERSION__}</dd></dl>
+        <p className="eyebrow about-legal-title">{t("legal")}</p><LegalLinks onOpen={onLegal}/></div>
+    </div>
+  </section>;
+}

@@ -1,4 +1,4 @@
-import { createWorkspace, currentInstallation, recoverWorkspaceSetup, resumeWorkspaceProvisioning, unlockWorkspace, lockWorkspace, unlockedActor } from "@kolo/core/identity/workspace";
+import { createWorkspace, currentInstallation, recoverWorkspaceSetup, resumeWorkspaceProvisioning, unlockWorkspace, lockWorkspace, unlockedActor, rememberMember, resumeWorkspace, type RememberedMember } from "@kolo/core/identity/workspace";
 import { ownerRecoveryCode, recoverOwnerAccess, resumeOwnerRecovery } from "@kolo/core/identity/recovery";
 import { WorkspaceError, type OperationContext, type WorkspacePorts } from "@kolo/core/identity/types";
 import type { Permission } from "@kolo/core/identity/permissions";
@@ -14,7 +14,7 @@ import { RuleError } from "@kolo/core/rules/amounts";
 import { subscribeChanges } from "@kolo/core/data/database/changes";
 import { sealPendingEvents } from "@kolo/core/application/exchange";
 import type { ExchangeCrypto } from "@kolo/core/exchange/types";
-import type { CategoryView, CustomerDetails, CustomerView, ProductView, Result, ShopService, WorkspaceView } from "../shared/service.js";
+import type { CategoryView, CustomerDetails, CustomerView, ProductView, Result, SessionPreferences, ShopService, WorkspaceView } from "../shared/service.js";
 import { object, text, uuid, whole, boolean, page, optional } from "./validation.ts";
 import { CommandError, isValidationError, nextVersion, type Host } from "./host.ts";
 import * as purchasing from "./purchasing.ts";
@@ -24,6 +24,7 @@ import * as returns from "./returns.ts";
 import * as staff from "./staff.ts";
 import * as transfer from "./transfer.ts";
 import type { Database } from "@kolo/core/data/database/driver";
+import { migrate } from "@kolo/core/data/database/migrations";
 
 const customerFields = ["name", "phone", "address", "notes", "creditLimitMinor"] as const;
 function customerDetails(data: Record<string, unknown>): CustomerDetails {
@@ -35,6 +36,16 @@ function customerDetails(data: Record<string, unknown>): CustomerDetails {
 function sameDetails(stored: Customer, details: CustomerDetails): boolean {
   return stored.name === details.name && stored.phone === details.phone && stored.address === details.address &&
     stored.notes === details.notes && stored.creditLimitMinor === details.creditLimitMinor;
+}
+/**
+ * Host storage for staying signed in. The remembered member must live in OS-protected storage;
+ * the enabled flag defaults to on when nothing was saved.
+ */
+export interface SessionMemory {
+  enabled(): Promise<boolean>;
+  setEnabled(value: boolean): Promise<void>;
+  read(): Promise<RememberedMember | undefined>;
+  write(value: RememberedMember | undefined): Promise<void>;
 }
 /** Desktop authority and operations. The opaque core context never leaves this host object. */
 export class DesktopApplication implements ShopService {
@@ -52,15 +63,26 @@ export class DesktopApplication implements ShopService {
   readonly #transfer: (transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void> }) | undefined;
   #staged: transfer.StagedFile | undefined;
   private readonly crypto: ExchangeCrypto | undefined;
-  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void> }) {
-    this.#transfer = files;
+  readonly #memory: SessionMemory | undefined;
+  #remember = false;
+  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void> }, memory?: SessionMemory) {
+    this.#transfer = files; this.#memory = memory;
     this.ports = ports; this.crypto = crypto; this.#host = { ports, actor: (data, required) => this.#actor(data, required) };
     lockWorkspace(ports.database);
     this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority"], () => this.#notify());
   }
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   async initialize(): Promise<void> {
-    await this.#track(this.#identity(async () => { await recoverWorkspaceSetup(this.ports); await resumeOwnerRecovery(this.ports); }));
+    await this.#track(this.#identity(async () => { await recoverWorkspaceSetup(this.ports); await resumeOwnerRecovery(this.ports); await this.#resume(); }));
+  }
+  /**
+   * Automatic lock from the host. "away" (minimize, suspend, OS lock) is skipped while the user
+   * chose to stay signed in; "integrity" (renderer loss/navigation) always locks but keeps the
+   * remembered user for the next start.
+   */
+  async autoLock(reason: "away" | "integrity"): Promise<void> {
+    if (reason === "away" && this.#remember && this.#context !== undefined) return;
+    await this.#run(() => { this.#invalidate(); this.#notify(); });
   }
   /** Invalidates authority immediately, then waits for native work before the caller closes SQLite. */
   async dispose(): Promise<void> {
@@ -80,6 +102,53 @@ export class DesktopApplication implements ShopService {
   onChanged(listener: () => void): () => void { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   /** Public boot metadata and current session; invalid/suspended contexts return locked views. */
   getWorkspace(): Promise<Result<WorkspaceView>> { return this.#run(() => this.#view()); }
+  /**
+   * Confirms the displayed locked/pending/legacy shop and switches to a migrated empty slot.
+   * No credential proof is required to start a separate shop; old data/credentials are retained
+   * and remain protected. Single-flight identity work and the slot CAS prevent overlapping swaps.
+   * Failed staging/activation keeps the previous active slot; a successful switch returns activated.
+   */
+  startNewShop(input: unknown): ReturnType<ShopService["startNewShop"]> {
+    return this.#run(() => this.#identity(async () => {
+      const data = object(input, ["confirmedName"]), view = this.#view();
+      if (!["locked", "pending", "legacy"].includes(view.state)) throw new CommandError("permission_denied");
+      if (text(data["confirmedName"]) !== (view.shopName ?? "KOLO")) throw new CommandError("confirmation_required");
+      const files = this.#transfer;
+      if (files === undefined) throw new CommandError("unavailable");
+      const epoch = this.#epoch;
+      return transfer.translated(async () => {
+        const candidate = await files.files.empty();
+        try {
+          migrate(candidate.database); this.#checkEpoch(epoch);
+          const next = await candidate.activate(this.ports.database);
+          this.#invalidate(); await transfer.release(this.#staged); this.#staged = undefined;
+          await files.onActivated(next);
+          return { activated: true } as const;
+        } finally { await candidate.discard(); }
+      });
+    }));
+  }
+  savedShops(): ReturnType<ShopService["savedShops"]> {
+    return this.#run(async () => {
+      if (this.#view().state === "unlocked") throw new CommandError("permission_denied");
+      return this.#transfer?.files.saved?.() ?? [];
+    });
+  }
+  openSavedShop(input: unknown): ReturnType<ShopService["openSavedShop"]> {
+    return this.#run(() => this.#identity(async () => {
+      const data = object(input, ["id"]);
+      if (this.#view().state === "unlocked") throw new CommandError("permission_denied");
+      const files = this.#transfer, epoch = this.#epoch;
+      if (files?.files.selectSaved === undefined) throw new CommandError("unavailable");
+      return transfer.translated(async () => {
+        this.#checkEpoch(epoch);
+        const next = await files.files.selectSaved!(text(data["id"]), this.ports.database);
+        this.#invalidate(); await transfer.release(this.#staged); this.#staged = undefined;
+        await files.onActivated(next);
+        return { activated: true } as const;
+      });
+    }));
+  }
   /** Strict fresh setup bound to host identity/platform, with protected native provisioning. */
   createShop(input: unknown): Promise<Result<WorkspaceView>> {
     return this.#run(() => this.#identity(async () => {
@@ -106,18 +175,33 @@ export class DesktopApplication implements ShopService {
       this.#invalidate(false);
       const context = await unlockWorkspace({ userId: uuid(data["userId"]), secret: text(data["secret"], 256, false) }, this.ports);
       this.#checkEpoch(epoch); this.#context = context; this.#sessionId = this.ports.newId(); this.#notify();
+      if (this.#remember) await this.#store(rememberMember(context), epoch);
       return this.#view();
     }));
   }
-  /** Immediately invalidates authority and in-flight proofs while retaining all saved facts. */
+  /** Immediately invalidates authority and in-flight proofs, and forgets a remembered user. */
   lock(): Promise<Result<WorkspaceView>> {
-    return this.#run(() => { this.#invalidate(); this.#notify(); return this.#view(); });
+    return this.#run(async () => { this.#invalidate(); this.#notify(); await this.#store(undefined); return this.#view(); });
+  }
+  sessionPreferences(input: unknown): Promise<Result<SessionPreferences>> {
+    return this.#run(() => { this.#actor(object(input, ["sessionId"])); return { rememberSession: this.#remember }; });
+  }
+  setRememberSession(input: unknown): Promise<Result<SessionPreferences>> {
+    return this.#run(() => this.#identity(async () => {
+      const data = object(input, ["sessionId", "enabled"]), context = this.#actor(data), enabled = boolean(data["enabled"]), epoch = this.#epoch;
+      const memory = this.#memory;
+      if (memory === undefined) throw new CommandError("unavailable");
+      await memory.setEnabled(enabled); this.#remember = enabled;
+      await this.#store(enabled ? rememberMember(context) : undefined, epoch);
+      return { rememberSession: enabled };
+    }));
   }
   /** Owner recovery uses the separate protected key and leaves the installation locked. */
   recoverAccess(input: unknown): Promise<Result<WorkspaceView>> {
     return this.#run(() => this.#identity(async () => {
       const data = object(input, ["recoveryCode", "newSecret"]), epoch = this.#epoch;
       this.#invalidate(false);
+      await this.#store(undefined);
       await recoverOwnerAccess({ recoveryCode: text(data["recoveryCode"], 256), newSecret: text(data["newSecret"], 256, false) }, this.ports);
       this.#checkEpoch(epoch); this.#notify(); return this.#view();
     }));
@@ -493,6 +577,7 @@ export class DesktopApplication implements ShopService {
   /** Backup, pairing and exchange through native dialogs; see transfer.ts. File work is single-flight. */
   discardFile(): ReturnType<ShopService["discardFile"]> { return this.#run(async () => { await transfer.release(this.#staged); this.#staged = undefined; return null; }); }
   saveBackup(input?: unknown): ReturnType<ShopService["saveBackup"]> { return this.#file(host => transfer.saveBackup(host, input)); }
+  chooseImportFile(input?: unknown): ReturnType<ShopService["chooseImportFile"]> { return this.#file(host => transfer.chooseImportFile(host, input)); }
   openBackup(input?: unknown): ReturnType<ShopService["openBackup"]> { return this.#file(host => transfer.openBackup(host, input)); }
   restoreBackup(input?: unknown): ReturnType<ShopService["restoreBackup"]> { return this.#file(host => transfer.restoreBackup(host, input)); }
   saveInvite(input?: unknown): ReturnType<ShopService["saveInvite"]> { return this.#file(host => transfer.saveInvite(host, input)); }
@@ -568,7 +653,7 @@ export class DesktopApplication implements ShopService {
     }
     const configured = state.state === "locked" || state.state === "unlocked";
     const members = configured ? this.ports.database.all(`SELECT u.id,u.name FROM users u JOIN local_memberships m ON m.user_id=u.id AND m.business_id=u.business_id
-      WHERE u.business_id=? AND u.active=1 AND m.active=1 ORDER BY u.name,u.id LIMIT 100`, [state.installation.businessId]).map(row=>({id:String(row["id"]),name:String(row["name"])})) : [];
+      WHERE u.business_id=? AND u.active=1 AND m.active=1 ORDER BY (m.role='OWNER') DESC,u.name,u.id LIMIT 100`, [state.installation.businessId]).map(row=>({id:String(row["id"]),name:String(row["name"])})) : [];
     return { state: configured ? actor === null ? "locked" : "unlocked" : state.state, shopName: configured ? state.installation.businessName : null,
       members, actor, sessionId: actor === null ? null : this.#sessionId ?? null };
   }
@@ -577,6 +662,29 @@ export class DesktopApplication implements ShopService {
     lockWorkspace(this.ports.database); this.#context = undefined; this.#sessionId = undefined;
     // A checked file is tied to the session that checked it; locking forgets it.
     if (this.#staged !== undefined && this.#staged.kind !== "invite" && this.#staged.kind !== "backup") { this.#staged = undefined; }
+  }
+  /** Reopens a remembered member at start; a stale or unreadable record is forgotten and grants nothing. */
+  async #resume(): Promise<void> {
+    const memory = this.#memory;
+    if (memory === undefined) return;
+    this.#remember = await memory.enabled().catch(() => false);
+    if (!this.#remember) return;
+    const remembered = await memory.read().catch(() => undefined);
+    if (remembered === undefined) return;
+    try { this.#context = resumeWorkspace(remembered, this.ports); this.#sessionId = this.ports.newId(); }
+    catch { await this.#store(undefined); }
+  }
+  /**
+   * Saves or forgets the remembered user. Storage failure never fails the caller's command; it only
+   * means the next start is locked. A save overtaken by a lock is undone.
+   */
+  async #store(value: RememberedMember | undefined, epoch?: number): Promise<void> {
+    const memory = this.#memory;
+    if (memory === undefined) return;
+    try {
+      await memory.write(value);
+      if (value !== undefined && epoch !== undefined && epoch !== this.#epoch) await memory.write(undefined);
+    } catch { /* The remembered user is a convenience; failing closed leaves the next start locked. */ }
   }
   #checkEpoch(epoch: number): void { if (this.#closed || epoch !== this.#epoch) { lockWorkspace(this.ports.database); throw new WorkspaceError("locked"); } }
   #notify(): void { for (const listener of this.#listeners) { try { listener(); } catch { /* Observer failure cannot undo a durable command. */ } } }

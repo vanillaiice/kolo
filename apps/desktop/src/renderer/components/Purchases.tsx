@@ -34,7 +34,7 @@ function PurchaseHistory({service,sessionId,revision,canReturn}:{service:ShopSer
   const list=useRead(()=>service.listPurchases({sessionId,...(cursor?.revision===revision?{after:cursor.after}:{})}),[service,sessionId,cursor,revision]);
   const detail=useRead(()=>selected===undefined?Promise.resolve({ok:true as const,value:null}):service.getPurchase({sessionId,purchaseId:selected}),[service,sessionId,selected,revision]);
   const date=(value:string):string=>new Date(value).toLocaleString(language==="fr"?"fr-FR":"en-GB");
-  return <div className="receipt-layout"><div className="panel"><h2>{t("purchaseList")}</h2>
+  return <div className={`record-layout${selected===undefined?"":" with-detail"}`}><div className="panel"><h2>{t("purchaseList")}</h2>
     <ReadState loading={list.loading} error={list.error} empty={list.data?.items.length===0} emptyText={t("noPurchases")} retry={list.retry}>
       <div className="table-wrap"><table><thead><tr><th>{t("date")}</th><th>{t("supplier")}</th><th>{t("referenceLabel")}</th><th>{t("total")}</th></tr></thead><tbody>
         {list.data?.items.map(item=><tr key={item.id} className={selected===item.id?"selected-row":""}><td><button className="row-link" onClick={()=>setSelected(item.id)}>{date(item.occurredAt)}</button></td>

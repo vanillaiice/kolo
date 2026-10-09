@@ -197,9 +197,21 @@ export interface BundleView { readonly total: number; readonly ready: number; re
 /** Whether a native save dialog wrote the prepared file (false when the user cancelled). */
 export interface SavedFile { readonly saved: boolean; }
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
+/** Per-computer session behaviour. */
+export interface SessionPreferences { readonly rememberSession: boolean }
+
 export interface ShopService {
   /** Public boot status; no credentials or key references are returned. */
   getWorkspace(): Promise<Result<WorkspaceView>>;
+  /**
+   * From a locked/pending/legacy installation, confirms its displayed name and activates a
+   * fresh empty local database. Existing files/credentials stay on disk; no old access is granted.
+   */
+  startNewShop(input: { readonly confirmedName: string }): Promise<Result<{ readonly activated: true }>>;
+  /** Lists other local shops by display name; credentials remain protected. */
+  savedShops(): Promise<Result<readonly { readonly id: string; readonly name: string }[]>>;
+  /** Selects a saved local database while locked; unlocking still requires its credentials. */
+  openSavedShop(input: { readonly id: string }): Promise<Result<{ readonly activated: true }>>;
   /** Offline setup commits a locked shop; a separate credential proof unlocks it. */
   createShop(input: SetupRequest): Promise<Result<WorkspaceView>>;
   /** Resumes a durable interrupted setup without generating another installation. */
@@ -210,6 +222,13 @@ export interface ShopService {
   lock(): Promise<Result<WorkspaceView>>;
   /** Owner recovery uses the separately stored recovery key, then leaves the till locked. */
   recoverAccess(input: { readonly recoveryCode: string; readonly newSecret: string }): Promise<Result<WorkspaceView>>;
+  /** Whether this computer keeps the signed-in user open across restarts. Any signed-in user may read it. */
+  sessionPreferences(input: SessionRequest): Promise<Result<SessionPreferences>>;
+  /**
+   * Turns staying signed in on or off for this computer. Enabling remembers the current user;
+   * disabling forgets any remembered user so the next start is locked.
+   */
+  setRememberSession(input: SessionRequest & { readonly enabled: boolean }): Promise<Result<SessionPreferences>>;
   /** Requires both current owner authority and a fresh credential proof. */
   recoveryKey(input: SessionRequest & { readonly secret: string }): Promise<Result<string | null>>;
   /** Bounded literal catalogue search with optional stock according to current permissions. */
@@ -311,13 +330,20 @@ export interface ShopService {
   resetStaffSecret(input: SessionRequest & { readonly userId: string; readonly secret: string }): Promise<Result<StaffView>>;
   /** Owner: encrypts a backup with a file password and saves it through the native dialog. */
   saveBackup(input: SessionRequest & { readonly password: string }): Promise<Result<SavedFile>>;
-  /** Picks and checks a backup file; nothing is replaced until restoreBackup. */
+  /**
+   * Import screen: opens one file dialog and reports whether the file is a backup or a pairing
+   * invite. The next openBackup or openInvite uses that file instead of asking again.
+   */
+  chooseImportFile(): Promise<Result<{ readonly kind: "backup" | "invite" }>>;
+  /** Checks a backup (the file chosen for import, or a newly picked one); nothing is replaced until restoreBackup. */
   openBackup(input: { readonly password: string }): Promise<Result<BackupFileView>>;
   /**
-   * Restores the checked backup after the shop name is typed back. An empty installation needs a new
-   * owner code; a configured one needs the owner's session. The new shop opens locked.
+   * Restores the checked backup after its shop name is typed back, with a new code for this computer.
+   * An empty computer restores directly. The owner's session replaces the open shop. Signed out, a
+   * computer that has a shop needs `replace: true`: that shop is kept on disk as a safety copy and,
+   * if the restore fails, stays the active shop. The restored shop opens locked.
    */
-  restoreBackup(input: { readonly sessionId?: string; readonly confirmedName: string; readonly deviceLabel: string; readonly secret: string }): Promise<Result<{ readonly activated: boolean }>>;
+  restoreBackup(input: { readonly sessionId?: string; readonly confirmedName: string; readonly deviceLabel: string; readonly secret: string; readonly replace?: boolean }): Promise<Result<{ readonly activated: boolean }>>;
   /** Forgets any checked file and its staged snapshot. */
   discardFile(): Promise<Result<null>>;
   /** Owner: saves a pairing invite for another till and returns the fingerprint to compare. */
@@ -355,7 +381,8 @@ export interface ShopService {
   /** Reads the immutable persisted receipt under current sales-view authority. */
   getReceipt(input: SessionRequest & { readonly saleId: string }): Promise<Result<Receipt>>;
   /** Bounded actor-scoped saved receipt history. */
-  listReceipts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly number: string; readonly occurredAt: string }>>>;
+  /** Newest-first receipt history with each sale's exact total and customer, if any. */
+  listReceipts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly number: string; readonly occurredAt: string; readonly totalMinor: number; readonly customerName?: string }>>>;
   /** Invalidation only: subscribers reread bounded pages; no business database mirror. */
   onChanged(listener: () => void): () => void;
 }

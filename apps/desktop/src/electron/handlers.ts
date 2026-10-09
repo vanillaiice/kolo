@@ -19,11 +19,16 @@ export function desktopHandlers(current: DesktopApplication | (() => DesktopAppl
     try { return status(); } catch { throw new Error("status unavailable"); }
   };
   query("kolo:workspace", () => application.getWorkspace());
+  query("kolo:saved-shops", () => application.savedShops());
+  command("kolo:open-saved-shop", input => application.openSavedShop(input));
+  command("kolo:start-new-shop", input => application.startNewShop(input));
   query("kolo:lock", () => application.lock());
   command("kolo:setup", input => application.createShop(input));
   command("kolo:finish-setup", input => application.finishSetup(input));
   command("kolo:unlock", input => application.unlock(input));
   command("kolo:recover", input => application.recoverAccess(input));
+  command("kolo:session-preferences", input => application.sessionPreferences(input));
+  command("kolo:remember-session", input => application.setRememberSession(input));
   command("kolo:recovery-key", input => application.recoveryKey(input));
   command("kolo:products", input => application.listProducts(input));
   command("kolo:product", input => application.getProduct(input));
@@ -74,6 +79,7 @@ export function desktopHandlers(current: DesktopApplication | (() => DesktopAppl
   command("kolo:reset-staff-secret", input => application.resetStaffSecret(input));
   query("kolo:discard-file", () => application.discardFile());
   command("kolo:save-backup", input => application.saveBackup(input));
+  query("kolo:choose-import-file", () => application.chooseImportFile());
   command("kolo:open-backup", input => application.openBackup(input));
   command("kolo:restore-backup", input => application.restoreBackup(input));
   command("kolo:save-invite", input => application.saveInvite(input));

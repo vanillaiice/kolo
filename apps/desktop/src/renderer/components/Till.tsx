@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Cursor } from "@kolo/core/application/queries";
 import { quantityEntry, quantityInput } from "@kolo/core/domain/entry";
-import { formatMoney, formatQuantity } from "@kolo/core/domain/money";
+import { formatMoney, formatQuantityWithUnit } from "@kolo/core/domain/money";
 import { lineTotal, subtotalOf } from "@kolo/core/rules/pricing";
 import { moneyEntry } from "@kolo/core/domain/entry";
 import type { Permission } from "@kolo/core/identity/permissions";
@@ -77,7 +77,7 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
       <ReadState loading={products.loading} error={products.error} empty={products.data?.items.length===0} emptyText={t(term===""?"noProducts":"noResults")} retry={products.retry}>
         <div className="product-grid">{products.data?.items.map(product=><button key={product.id} className="product-tile" disabled={frozen} onClick={()=>add(product)}>
           <span className="product-initial" aria-hidden="true">{product.name.slice(0,1).toLocaleUpperCase()}</span><strong>{product.name}</strong><span className="money">{formatMoney(product.sellingPriceMinor,language)}</span>
-          <small className={product.onHandThousandths!==undefined&&product.onHandThousandths<0?"negative":"muted"}>{product.onHandThousandths===undefined?product.unit:`${t("stock")}: ${formatQuantity(product.onHandThousandths,language)} ${product.unit}`}</small>
+          <small className={product.onHandThousandths!==undefined&&product.onHandThousandths<0?"negative":"muted"}>{product.onHandThousandths===undefined?product.unit:`${t("stock")}: ${formatQuantityWithUnit(product.onHandThousandths,product.unit,language)}`}</small>
         </button>)}</div>
       </ReadState>
       <Pager hasFirst={cursor!==undefined} hasNext={products.data?.next!==undefined} onFirst={()=>setCursor(undefined)} onNext={()=>{if(products.data?.next)setCursor({after:products.data.next,revision});}}/>

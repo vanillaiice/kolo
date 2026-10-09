@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { moneyEntry, quantityEntry, quantityInput } from "@kolo/core/domain/entry";
-import { formatMoney, formatQuantity } from "@kolo/core/domain/money";
+import { formatMoney, formatQuantity, formatQuantityWithUnit } from "@kolo/core/domain/money";
 import type { Cursor } from "@kolo/core/application/queries";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { CategoryView, ProductView, Result, ShopService } from "../../shared/service.ts";
@@ -42,7 +42,7 @@ function ProductList({service,sessionId,revision,onOpen}:{service:ShopService;se
 }
 function Stock({product}:{product:ProductView}):React.JSX.Element{
   const {t,language}=useText();
-  return product.onHandThousandths===undefined?<>—</>:<><span className={product.onHandThousandths<0?"negative":""}>{formatQuantity(product.onHandThousandths,language)} {product.unit}</span>{product.onHandThousandths<0&&<small className="negative">{t("negativeStock")}</small>}</>;
+  return product.onHandThousandths===undefined?<>—</>:<><span className={product.onHandThousandths<0?"negative":""}>{formatQuantityWithUnit(product.onHandThousandths,product.unit,language)}</span>{product.onHandThousandths<0&&<small className="negative">{t("negativeStock")}</small>}</>;
 }
 /** One product: details stay visible while a revision rereads them, and drafts survive rereads. */
 function ProductDetail({service,sessionId,revision,permissions,productId,onBack}:Props&{productId:string;onBack:()=>void}):React.JSX.Element{
@@ -63,7 +63,7 @@ function ProductDetail({service,sessionId,revision,permissions,productId,onBack}
       <dl className="facts"><dt>{t("stock")}</dt><dd><Stock product={shown}/></dd><dt>{t("sellingPrice")}</dt><dd className="money">{formatMoney(shown.sellingPriceMinor,language)}</dd>
         <dt>{t("unitCost")}</dt><dd className="money">{shown.purchasePriceMinor===undefined?"—":formatMoney(shown.purchasePriceMinor,language)}</dd>
         <dt>{t("unit")}</dt><dd>{shown.unit} · {t(shown.divisible?"fractional":"wholeUnits")}</dd><dt>{t("barcodeLabel")}</dt><dd>{shown.barcode??"—"}</dd>
-        <dt>{t("minimumStock")}</dt><dd>{formatQuantity(shown.minimumStockThousandths,language)} {shown.unit}</dd></dl>
+        <dt>{t("minimumStock")}</dt><dd>{formatQuantityWithUnit(shown.minimumStockThousandths,shown.unit,language)}</dd></dl>
     </div>
     {editing!==undefined&&<EditProduct key={editing.version} service={service} sessionId={sessionId} product={editing} onReload={()=>setEditing(shown)} onSaved={value=>{setShown(value);setEditing(undefined);}} onClose={()=>setEditing(undefined)}/>}
     {shown.active&&canMove&&<StockMovement service={service} sessionId={sessionId} product={shown} permissions={permissions} onSaved={setShown}/>}
@@ -116,7 +116,7 @@ function StockMovement({service,sessionId,product,permissions,onSaved}:{service:
     });
     if(value===undefined)return;
     onSaved(value.product);setQuantity("");setReason("");setRequestId(crypto.randomUUID());
-    setSaved(value.deltaThousandths===undefined?t("movementSaved"):`${t("countDifference")} ${value.deltaThousandths>0?"+":""}${formatQuantity(value.deltaThousandths,language)} ${product.unit}`);
+    setSaved(value.deltaThousandths===undefined?t("movementSaved"):`${t("countDifference")} ${value.deltaThousandths>0?"+":""}${formatQuantityWithUnit(value.deltaThousandths,product.unit,language)}`);
   };
   return <div className="panel form-panel"><h2>{t("stockMovement")}</h2><p className="hint">{t("movementHelp")}</p><form onSubmit={event=>{event.preventDefault();void submit();}}>
     <fieldset disabled={action.busy||uncertain}><div className="segmented" role="radiogroup" aria-label={t("stockMovement")}>{kinds.map(item=><label key={item} className={kind===item?"selected":""}><input type="radio" name="movement-kind" value={item} checked={kind===item} onChange={()=>setKind(item)}/>{t(item==="add"?"addStock":item)}</label>)}</div>
