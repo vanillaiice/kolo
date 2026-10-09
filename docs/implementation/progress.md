@@ -661,3 +661,27 @@ Implemented:
 
 Reports, returns, staff and backup/exchange screens; receipt printing; hardware,
 accessibility/performance and Windows packaging acceptance.
+
+## 2026-10-09 — Desktop reports (F5)
+
+Implemented a Reports section with a permission-filtered report choice, local-day period
+inputs with Today/Last 7 days/This month presets, and results for summary (sales, sales
+count, gross profit, expenses, net result, customer and supplier debts, stock alerts and
+uncosted-line warning), sales totals and breakdowns by product/category/account/seller,
+account cash flow, stock value, best sellers, stock alerts, customer and supplier debts,
+and purchases by supplier. One validated `report` IPC command (`electron/reports.ts`)
+reads the existing core report functions under their permissions.
+
+### Verification
+
+- A real-SQLite host case checks exact dashboard, product, cash-flow, valuation, debt,
+  purchase and empty-period figures against a purchased, part-credit-sold and expensed
+  fixture; malformed kinds/periods and inventory-role/cashier authority are refused.
+- The actual Electron workflow checks today's summary sales and expenses after the earlier
+  steps; the summary screen was visually inspected.
+- `npm run check` and `npm run smoke:desktop:workflow` passed.
+
+### Remaining
+
+Returns, staff and backup/exchange screens; receipt printing; hardware,
+accessibility/performance and Windows packaging acceptance.

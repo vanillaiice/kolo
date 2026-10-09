@@ -19,6 +19,7 @@ import { object, text, uuid, whole, boolean, page, optional } from "./validation
 import { CommandError, isValidationError, nextVersion, type Host } from "./host.ts";
 import * as purchasing from "./purchasing.ts";
 import * as finance from "./finance.ts";
+import * as reports from "./reports.ts";
 
 const customerFields = ["name", "phone", "address", "notes", "creditLimitMinor"] as const;
 function customerDetails(data: Record<string, unknown>): CustomerDetails {
@@ -469,6 +470,8 @@ export class DesktopApplication implements ShopService {
   listExpenses(input: unknown): ReturnType<ShopService["listExpenses"]> { return this.#run(() => finance.listExpenses(this.#host, input)); }
   recordExpense(input: unknown): ReturnType<ShopService["recordExpense"]> { return this.#run(() => finance.recordExpense(this.#host, input)); }
   reverseExpense(input: unknown): ReturnType<ShopService["reverseExpense"]> { return this.#run(() => finance.reverseExpense(this.#host, input)); }
+  /** Period and snapshot reports; see reports.ts. */
+  report(input: unknown): ReturnType<ShopService["report"]> { return this.#run(() => reports.report(this.#host, input)); }
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): ReturnType<ShopService["getReceipt"]> {
     return this.#run(() => { const data = object(input, ["sessionId", "saleId"]); return receipt(this.#actor(data), uuid(data["saleId"])); });

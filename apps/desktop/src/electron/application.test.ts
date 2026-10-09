@@ -494,3 +494,30 @@ it("core validation refusals reach the UI as invalid input, not storage failures
     value(await f.application.recordExpense({sessionId,requestId:randomUUID(),accountId:cash.id,category:"OTHER",amountMinor:100,description:"Charcoal"}));
   }finally{await f.dispose();}
 });
+it("reports read exact period figures under report authority and refuse malformed periods",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:0,purchasePriceMinor:300})));
+    const cash=value(await f.application.listPaymentAccounts({sessionId})).items[0]!.id,customer=value(await f.application.createCustomer({sessionId,requestId:randomUUID(),name:"Awa"}));
+    value(await f.application.recordPurchase({sessionId,requestId:randomUUID(),lines:[{productId:item.id,quantity:5000,unitCostMinor:300}],payment:{accountId:cash,amountMinor:1500}}));
+    value(await f.application.moveMoney({sessionId,requestId:randomUUID(),accountId:cash,direction:"in",amountMinor:5000,reason:"Float"}));
+    value(await f.application.checkout({sessionId,requestId:randomUUID(),customerId:customer.id,lines:[{productId:item.id,quantity:2000,unitPriceMinor:500}],payments:[{accountId:cash,amountMinor:600}]}));
+    value(await f.application.recordExpense({sessionId,requestId:randomUUID(),accountId:cash,category:"RENT",amountMinor:100}));
+    const period={sessionId,from:"2026-10-06T00:00:00.000Z",until:"2026-10-07T00:00:00.000Z"};
+    const dashboard=value(await f.application.report({...period,kind:"dashboard"}));
+    assert.deepEqual(dashboard.kind==="dashboard"&&[dashboard.salesMinor,dashboard.transactions,dashboard.grossProfitMinor,dashboard.expensesMinor,dashboard.netResultMinor,dashboard.customerDebtMinor],[1000,1,400,100,300,400]);
+    const byProduct=value(await f.application.report({...period,kind:"salesByProduct"}));assert.deepEqual(byProduct.kind==="salesByProduct"&&byProduct.lines.map(line=>[line.label,line.totalMinor]),[["Rice",1000]]);
+    const flow=value(await f.application.report({...period,kind:"cashFlow"}));assert.equal(flow.kind==="cashFlow"&&flow.accounts[0]!.closingMinor,4000);
+    const valuation=value(await f.application.report({...period,kind:"valuation"}));assert.deepEqual(valuation.kind==="valuation"&&[valuation.totalMinor,valuation.products[0]!.onHandThousandths],[900,3000]);
+    const debts=value(await f.application.report({...period,kind:"customerDebt"}));assert.deepEqual(debts.kind==="customerDebt"&&debts.lines.map(line=>line.totalMinor),[400]);
+    const bought=value(await f.application.report({...period,kind:"purchases"}));assert.deepEqual(bought.kind==="purchases"&&[bought.totalMinor,bought.deliveries],[1500,1]);
+    const empty=value(await f.application.report({...period,kind:"sales",from:"2026-10-07T00:00:00.000Z",until:"2026-10-08T00:00:00.000Z"}));assert.equal(empty.kind==="sales"&&empty.totalMinor,0);
+    for(const bad of [{kind:"everything"},{from:"2026-10-07"},{until:period.from},{from:"2026-10-06T00:00:00.000Z",until:"2040-01-01T00:00:00.000Z"},{until:"not a date"},{extra:1}])
+      failure(await f.application.report({...period,kind:"sales",...bad}),"invalid_input");
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const keeperId=await createLocalMember(context,{name:"Stock",role:"INVENTORY",secret:"765432"}),cashierId=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"876543"});
+    const keeper=value(await f.application.unlock({userId:keeperId,secret:"765432"})).sessionId!;
+    value(await f.application.report({...period,sessionId:keeper,kind:"stockAlerts"}));failure(await f.application.report({...period,sessionId:keeper,kind:"dashboard"}),"permission_denied");
+    const cashier=value(await f.application.unlock({userId:cashierId,secret:"876543"})).sessionId!;
+    for(const kind of ["sales","valuation","customerDebt"] as const)failure(await f.application.report({...period,sessionId:cashier,kind}),"permission_denied");
+  }finally{await f.dispose();}
+});

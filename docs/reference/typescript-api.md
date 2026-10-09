@@ -97,6 +97,8 @@ class DesktopApplication implements ShopService {
   listExpenses(input: unknown): Promise<Result<Page<ExpenseView>>>;
   recordExpense(input: unknown): Promise<Result<ExpenseView>>;
   reverseExpense(input: unknown): Promise<Result<ExpenseView>>;
+  /** Period and snapshot reports; see reports.ts. */
+  report(input: unknown): Promise<Result<ReportResult>>;
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): Promise<Result<Receipt>>;
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
@@ -338,6 +340,14 @@ One recorded purchase with lines, door payments and payable.
 
 ```ts
 getPurchase(host: Host, input: unknown): PurchaseView;
+```
+
+## [apps/desktop/src/electron/reports.ts](../../apps/desktop/src/electron/reports.ts)
+
+One report under its core permission; the period is at most about ten years and must not be empty.
+
+```ts
+report(host: Host, input: unknown): ReportResult;
 ```
 
 ## [apps/desktop/src/electron/transfer-files.ts](../../apps/desktop/src/electron/transfer-files.ts)
@@ -783,6 +793,95 @@ export interface CashCountView {
 }
 ```
 
+Report kinds, each under its own core report permission.
+
+```ts
+export type ReportKind = "dashboard" | "sales" | "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "cashFlow" | "valuation" | "fastMoving" | "stockAlerts" | "customerDebt" | "supplierDebt" | "purchases";
+```
+
+A labelled total; `count` is lines, transactions or entries depending on the report.
+
+```ts
+export interface ReportLine {
+    readonly key: string;
+    readonly label: string;
+    readonly totalMinor: number;
+    readonly count: number;
+}
+```
+
+Serializable report results. Row lists are capped; `truncated` says more rows exist.
+
+```ts
+export type ReportResult = {
+    readonly kind: "dashboard";
+    readonly salesMinor: number;
+    readonly transactions: number;
+    readonly grossProfitMinor: number;
+    readonly costMinor: number;
+    readonly linesWithoutCost: number;
+    readonly expensesMinor: number;
+    readonly netResultMinor: number;
+    readonly customerDebtMinor: number;
+    readonly supplierDebtMinor: number;
+    readonly lowStock: number;
+} | {
+    readonly kind: "sales";
+    readonly totalMinor: number;
+    readonly transactions: number;
+    readonly itemsSoldThousandths: number;
+} | {
+    readonly kind: "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "customerDebt" | "supplierDebt";
+    readonly lines: readonly ReportLine[];
+    readonly truncated: boolean;
+} | {
+    readonly kind: "cashFlow";
+    readonly accounts: readonly {
+        readonly accountId: string;
+        readonly name: string;
+        readonly inMinor: number;
+        readonly outMinor: number;
+        readonly netMinor: number;
+        readonly closingMinor: number;
+    }[];
+} | {
+    readonly kind: "valuation";
+    readonly totalMinor: number;
+    readonly uncosted: number;
+    readonly truncated: boolean;
+    readonly products: readonly {
+        readonly productId: string;
+        readonly name: string;
+        readonly onHandThousandths: number;
+        readonly unitCostMinor?: number;
+        readonly valueMinor?: number;
+    }[];
+} | {
+    readonly kind: "fastMoving";
+    readonly products: readonly {
+        readonly productId: string;
+        readonly name: string;
+        readonly soldThousandths: number;
+        readonly revenueMinor: number;
+        readonly onHandThousandths: number;
+    }[];
+} | {
+    readonly kind: "stockAlerts";
+    readonly products: readonly {
+        readonly productId: string;
+        readonly name: string;
+        readonly onHandThousandths: number;
+    }[];
+    readonly truncated: boolean;
+} | {
+    readonly kind: "purchases";
+    readonly totalMinor: number;
+    readonly deliveries: number;
+    readonly bySupplier: readonly ReportLine[];
+    readonly truncated: boolean;
+};
+```
+
 Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it.
 
 ```ts
@@ -951,6 +1050,11 @@ export interface ShopService {
         readonly requestId: string;
         readonly expenseId: string;
     }): Promise<Result<ExpenseView>>;
+    report(input: SessionRequest & {
+        readonly kind: ReportKind;
+        readonly from: string;
+        readonly until: string;
+    }): Promise<Result<ReportResult>>;
     listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{
         readonly id: string;
         readonly name: string;

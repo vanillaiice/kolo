@@ -121,9 +121,13 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await clickVisible(".tabs button", "Expenses"); await fill("#expense-amount", "200"); await fill("#expense-description", "Charcoal"); await submit("#expense-amount");
     await wait(`${visible("tbody tr")}.some(row=>row.textContent.includes('200'))`, "expense recorded");
     await clickVisible(".tabs button", "Accounts"); await wait(`${visible(".facts dd")}[0]?.textContent.replace(/[^0-9-]/g,'')==='800'`, "balance after expense");
+    // Reports: today's summary reflects the two sales (250 + 500) and the expense.
+    await navigate("Reports"); await wait("document.querySelector('.stat-tile strong')?.textContent.replace(/[^0-9-]/g,'')==='750'", "sales report");
+    assert.equal(await evaluate("Array.from(document.querySelectorAll('.stat-tile')).find(tile=>tile.textContent.startsWith('Expenses'))?.textContent.replace(/[^0-9-]/g,'')"), "200");
+    if (process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"] !== undefined) await writeFile(process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"], (await window.webContents.capturePage()).toPNG());
     assert.equal(await evaluate("document.querySelector('.notice.error')===null"), true);
     await click(".topbar-actions .secondary"); await wait("document.querySelector('#local-secret')!==null");
-    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment, supplier purchase, cash count/correction and expense passed\n");
+    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment, supplier purchase, cash count/correction, expense and reports passed\n");
   } else if (phase === "reopen") {
     await wait("document.querySelector('#local-secret')!==null");
     const state = await evaluate<string>("window.kolo.getWorkspace().then(result=>result.value.state)"); assert.equal(state, "locked");

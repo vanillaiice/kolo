@@ -138,6 +138,23 @@ export interface ExpenseView {
 }
 /** Expected balance against a counted amount; a correction makes the books match the count. */
 export interface CashCountView { readonly expectedMinor: number; readonly countedMinor: number; readonly differenceMinor: number; }
+/** Report kinds, each under its own core report permission. */
+export type ReportKind = "dashboard" | "sales" | "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "cashFlow" | "valuation" |
+  "fastMoving" | "stockAlerts" | "customerDebt" | "supplierDebt" | "purchases";
+/** A labelled total; `count` is lines, transactions or entries depending on the report. */
+export interface ReportLine { readonly key: string; readonly label: string; readonly totalMinor: number; readonly count: number; }
+/** Serializable report results. Row lists are capped; `truncated` says more rows exist. */
+export type ReportResult =
+  | { readonly kind: "dashboard"; readonly salesMinor: number; readonly transactions: number; readonly grossProfitMinor: number; readonly costMinor: number; readonly linesWithoutCost: number;
+      readonly expensesMinor: number; readonly netResultMinor: number; readonly customerDebtMinor: number; readonly supplierDebtMinor: number; readonly lowStock: number }
+  | { readonly kind: "sales"; readonly totalMinor: number; readonly transactions: number; readonly itemsSoldThousandths: number }
+  | { readonly kind: "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "customerDebt" | "supplierDebt"; readonly lines: readonly ReportLine[]; readonly truncated: boolean }
+  | { readonly kind: "cashFlow"; readonly accounts: readonly { readonly accountId: string; readonly name: string; readonly inMinor: number; readonly outMinor: number; readonly netMinor: number; readonly closingMinor: number }[] }
+  | { readonly kind: "valuation"; readonly totalMinor: number; readonly uncosted: number; readonly truncated: boolean;
+      readonly products: readonly { readonly productId: string; readonly name: string; readonly onHandThousandths: number; readonly unitCostMinor?: number; readonly valueMinor?: number }[] }
+  | { readonly kind: "fastMoving"; readonly products: readonly { readonly productId: string; readonly name: string; readonly soldThousandths: number; readonly revenueMinor: number; readonly onHandThousandths: number }[] }
+  | { readonly kind: "stockAlerts"; readonly products: readonly { readonly productId: string; readonly name: string; readonly onHandThousandths: number }[]; readonly truncated: boolean }
+  | { readonly kind: "purchases"; readonly totalMinor: number; readonly deliveries: number; readonly bySupplier: readonly ReportLine[]; readonly truncated: boolean };
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
 export interface ShopService {
   /** Public boot status; no credentials or key references are returned. */
@@ -230,6 +247,11 @@ export interface ShopService {
   recordExpense(input: SessionRequest & { readonly requestId: string; readonly accountId: string; readonly category: ExpenseCategory; readonly amountMinor: number; readonly description?: string; readonly reference?: string }): Promise<Result<ExpenseView>>;
   /** Compensates an expense with an equal negative entry; it is never edited. */
   reverseExpense(input: SessionRequest & { readonly requestId: string; readonly expenseId: string }): Promise<Result<ExpenseView>>;
+  /**
+   * Reads one report for a period given as ISO instants [from, until), computed by the UI from
+   * local calendar days. Period-free reports (valuation, debts, alerts) ignore the period.
+   */
+  report(input: SessionRequest & { readonly kind: ReportKind; readonly from: string; readonly until: string }): Promise<Result<ReportResult>>;
   /** Bounded account names for cash checkout, without disclosing financial balances. */
   listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly name: string }>>>;
   /** Atomic cash sale; identical retries return the original saved sale ID. */

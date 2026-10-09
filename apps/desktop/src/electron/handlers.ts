@@ -61,6 +61,7 @@ export function desktopHandlers(application: DesktopApplication, status: () => D
   command("kolo:expenses", input => application.listExpenses(input));
   command("kolo:record-expense", input => application.recordExpense(input));
   command("kolo:reverse-expense", input => application.reverseExpense(input));
+  command("kolo:report", input => application.report(input));
   command("kolo:cash-accounts", input => application.listCashAccounts(input));
   command("kolo:checkout", input => application.checkout(input));
   command("kolo:receipt", input => application.getReceipt(input));

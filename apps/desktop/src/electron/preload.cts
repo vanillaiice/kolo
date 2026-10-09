@@ -49,6 +49,7 @@ const bridge: DesktopBridge = {
   listExpenses: input => ipcRenderer.invoke("kolo:expenses", input),
   recordExpense: input => ipcRenderer.invoke("kolo:record-expense", input),
   reverseExpense: input => ipcRenderer.invoke("kolo:reverse-expense", input),
+  report: input => ipcRenderer.invoke("kolo:report", input),
   listCashAccounts: input => ipcRenderer.invoke("kolo:cash-accounts", input),
   checkout: input => ipcRenderer.invoke("kolo:checkout", input),
   getReceipt: input => ipcRenderer.invoke("kolo:receipt", input),

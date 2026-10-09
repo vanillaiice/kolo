@@ -23,7 +23,7 @@ for details, payments and statements. The React DOM screens depend on a replacea
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Reports, returns, staff
+Returns, staff
 screens, backup/exchange screens, printers and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
 business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
 
@@ -162,6 +162,19 @@ the expense ID; "Other" requires a description. An expense is reversed once by a
 negative entry naming it; reversals cannot be reversed. Core data-layer validation errors
 (for example `ExpenseError`) are reported as `invalid_input`, not `storage_failed`.
 Commands live in `electron/finance.ts`.
+
+## Reports contract
+
+`report` takes a report kind and a period `[from, until)` of ISO instants that the UI
+derives from local calendar days with the shared `localDayPeriod` rule (empty or
+decade-plus periods are refused). Each kind is read through the existing core report
+function under its own permission: summary/profit/cash flow/stock value under
+`reports.financial`, sales breakdowns under `reports.sales`, best sellers and stock alerts
+under `reports.inventory`, customer debts under `reports.customers`, purchases and
+supplier debts under `reports.suppliers`. Results are serializable and row lists are
+capped at 500 (stock alerts at 100) with a `truncated` flag; totals stay exact. The
+Reports section shows stat tiles and tables only. Commands live in `electron/reports.ts`.
+`KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT` optionally saves the fixture summary screen.
 
 ## Remaining F5 packages
 
