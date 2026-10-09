@@ -278,19 +278,22 @@ export function countStock(context: OperationContext, input: { readonly productI
 /**
  * Owner-authorized count plus explicit cash correction under cash.count/cash.reconcile/
  * cash.move. Recomputes the expected balance atomically and appends the adjustment and
- * audit. An equal count records audit only; a reason is always required.
+ * audit. An equal count records audit only; a reason is always required. An optional
+ * caller request ID names the adjustment and is kept in the local audit, so adapters can
+ * recognise a retried correction instead of correcting again against later movements.
  */
-export function adjustCashToCount(context: OperationContext, input: { readonly accountId: string; readonly countedMinor: number; readonly reason: string; readonly branchId?: string | undefined }): Reconciliation {
+export function adjustCashToCount(context: OperationContext, input: { readonly accountId: string; readonly countedMinor: number; readonly reason: string; readonly branchId?: string | undefined; readonly requestId?: string | undefined }): Reconciliation {
   return authorizedOperation(context, ["cash.count", "cash.reconcile", "cash.move"], (database, tx, ports, revision) => {
     related(tx, context, "financial_accounts", input.accountId); checkBranch(tx, context, input.branchId);
     if (input.reason.trim() === "") throw new WorkspaceError("invalid_input");
     const result = reconcile(tx, context.businessId, input.accountId, input.countedMinor);
     if (result.differenceMinor !== 0) {
       const at = ports.now();
-      writeCash(database, { eventId: nextId(ports), movements: [{ id: nextId(ports), ...context, branchId: input.branchId,
+      writeCash(database, { eventId: nextId(ports), movements: [{ id: input.requestId ?? nextId(ports), ...context, branchId: input.branchId,
         accountId: input.accountId, type: "ADJUSTMENT", amountMinor: result.differenceMinor, reason: input.reason.trim(), occurredAt: at, recordedAt: at }] });
     }
-    appendLocalAudit(tx, context, ports, revision, "CASH_RECONCILED", input.accountId, { ...result, reason: input.reason.trim() });
+    appendLocalAudit(tx, context, ports, revision, "CASH_RECONCILED", input.accountId, { ...result, reason: input.reason.trim(),
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }) });
     return result;
   });
 }

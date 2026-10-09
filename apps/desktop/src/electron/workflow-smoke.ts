@@ -11,7 +11,8 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
       if (await evaluate<boolean>(condition)) return;
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    process.stderr.write(`Desktop workflow timed out: ${diagnostic}\n`);
+    const alerts = await evaluate<string>("Array.from(document.querySelectorAll('[role=alert]')).filter(element=>element.offsetParent!==null).map(element=>element.textContent).join(' | ')");
+    process.stderr.write(`Desktop workflow timed out: ${diagnostic}${alerts === "" ? "" : ` (visible alerts: ${alerts})`}\n`);
     throw new Error("desktop DOM condition timed out");
   };
   const fill = async (selector: string, value: string): Promise<void> => {
@@ -111,10 +112,18 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await fill(".purchase-form .cell-input", "5"); await fill(".purchase-form td:nth-child(3) .cell-input", "300"); await fill("#purchase-paid", "500");
     await wait(`${visible(".purchase-form .settlement-line")}[0]?.textContent.includes('1,000')`, "supplier payable");
     await submit("#purchase-reference"); await wait("document.querySelector('.purchase-form')===null && document.querySelector('.receipt-layout tbody tr')!==null", "purchase recorded");
-    await clickVisible(".tabs button", "Suppliers"); await wait(`${visible(".facts")}[0]?.textContent.includes('1,000')`, "supplier balance");
+    await clickVisible(".tabs button", "Suppliers"); await wait(`${visible(".facts dd")}[0]?.textContent.replace(/[^0-9-]/g,'')==='1000'`, "supplier balance");
+    // Money: cash in, a count that is short and its correction, then an expense from the till.
+    await navigate("Accounts & expenses"); await clickVisible(".row-link", "Cash"); await wait(`${visible(".facts dd")}[0]?.textContent.replace(/[^0-9-]/g,'')==='50'`, "cash balance");
+    await fill("#money-amount", "1000"); await fill("#money-reason", "Float"); await submit("#money-amount"); await wait(`${visible(".facts dd")}[0]?.textContent.replace(/[^0-9-]/g,'')==='1050'`, "money in");
+    await fill("#cash-counted", "1000"); await submit("#cash-counted"); await wait(`${visible(".facts.compare")}[0]?.textContent.includes('-50')`, "cash compared");
+    await fill("#cash-correction-reason", "Shortage"); await submit("#cash-correction-reason"); await wait(`${visible(".facts")}[0]?.textContent.includes('1,000')`, "cash corrected");
+    await clickVisible(".tabs button", "Expenses"); await fill("#expense-amount", "200"); await fill("#expense-description", "Charcoal"); await submit("#expense-amount");
+    await wait(`${visible("tbody tr")}.some(row=>row.textContent.includes('200'))`, "expense recorded");
+    await clickVisible(".tabs button", "Accounts"); await wait(`${visible(".facts dd")}[0]?.textContent.replace(/[^0-9-]/g,'')==='800'`, "balance after expense");
     assert.equal(await evaluate("document.querySelector('.notice.error')===null"), true);
     await click(".topbar-actions .secondary"); await wait("document.querySelector('#local-secret')!==null");
-    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment and supplier purchase passed\n");
+    process.stdout.write("Actual Electron DOM setup, protected credentials, product/opening stock, barcode, fractional cash checkout, saved receipt, stock movement/count, product edit, category, credit sale, customer payment, supplier purchase, cash count/correction and expense passed\n");
   } else if (phase === "reopen") {
     await wait("document.querySelector('#local-secret')!==null");
     const state = await evaluate<string>("window.kolo.getWorkspace().then(result=>result.value.state)"); assert.equal(state, "locked");

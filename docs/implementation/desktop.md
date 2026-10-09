@@ -23,7 +23,7 @@ for details, payments and statements. The React DOM screens depend on a replacea
 point chooses the Electron preload adapter. French/English UI is keyed. The till draft
 and product-entry drafts stay mounted while navigating and clear on lock/session change.
 
-Finance, reports, returns, staff
+Reports, returns, staff
 screens, backup/exchange screens, printers and installers remain to be implemented. A browser app, browser storage/credentials and authenticated
 business HTTP API do not exist. Nest still supplies health/readiness/capabilities.
 
@@ -146,6 +146,22 @@ event's claimed account movements, since door payments carry no purchase referen
 Supplier details, archive and payments follow the customer pattern; supplier statements
 show purchases on credit positive and payments negative. Feature commands live in
 `electron/purchasing.ts` behind the small `Host` interface in `electron/host.ts`.
+
+## Accounts and expenses contract
+
+Accounts list derived balances under `finance.accounts.view` plus `cash.view`; creation,
+renaming, re-kinding and archive need `finance.accounts.manage` and follow the versioned
+pattern. Money in/out and two-leg transfers need `cash.move`, carry a reason, and use the
+request ID as the (outgoing) movement ID so retries never move money twice; actors without
+balance authority get the account without a balance. A count compares expected and
+counted amounts and records audit only (`cash.count`). A correction (`cash.count`,
+`cash.reconcile`, `cash.move`) passes its request ID to core `adjustCashToCount`, which names
+the adjustment and audit, so a retried correction returns its original result instead of
+correcting again after later movements. Expenses (`expenses.create`) use the request ID as
+the expense ID; "Other" requires a description. An expense is reversed once by an equal
+negative entry naming it; reversals cannot be reversed. Core data-layer validation errors
+(for example `ExpenseError`) are reported as `invalid_input`, not `storage_failed`.
+Commands live in `electron/finance.ts`.
 
 ## Remaining F5 packages
 

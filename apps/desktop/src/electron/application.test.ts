@@ -437,3 +437,60 @@ it("supplier details are versioned and purchase authority is enforced; failed pu
     failure(await f.application.listSuppliers({sessionId:cashier}),"permission_denied");failure(await f.application.listPurchases({sessionId:cashier}),"permission_denied");
   }finally{await f.dispose();}
 });
+it("accounts move, transfer, count and correct money exactly; retries never move it twice",async()=>{
+  const f=fixture();try{
+    const {sessionId}=await owner(f),cash=value(await f.application.listAccounts({sessionId})).items[0]!;
+    const bank=value(await f.application.createAccount({sessionId,requestId:randomUUID(),name:"Bank",kind:"BANK"}));
+    const deposit={sessionId:sessionId!,requestId:randomUUID(),accountId:cash.id,direction:"in" as const,amountMinor:10000,reason:"Float"};
+    assert.equal(value(await f.application.moveMoney(deposit)).onHandMinor,10000);assert.equal(value(await f.application.moveMoney(deposit)).onHandMinor,10000);
+    failure(await f.application.moveMoney({...deposit,direction:"out"}),"request_conflict");
+    const transfer={sessionId:sessionId!,requestId:randomUUID(),fromAccountId:cash.id,toAccountId:bank.id,amountMinor:4000,reason:"Banking"};
+    assert.equal(value(await f.application.transferMoney(transfer)).onHandMinor,6000);assert.equal(value(await f.application.transferMoney(transfer)).onHandMinor,6000);
+    failure(await f.application.transferMoney({...transfer,amountMinor:1}),"request_conflict");
+    assert.deepEqual(value(await f.application.listAccounts({sessionId})).items.map(item=>[item.name,item.onHandMinor]),[["Bank",4000],["Cash",6000]]);
+    for(const bad of [{toAccountId:cash.id},{amountMinor:0},{reason:""}])failure(await f.application.transferMoney({...transfer,requestId:randomUUID(),...bad}),"invalid_input");
+    assert.deepEqual(value(await f.application.countCash({sessionId,accountId:cash.id,countedMinor:5500})),{expectedMinor:6000,countedMinor:5500,differenceMinor:-500});
+    const correction={sessionId:sessionId!,requestId:randomUUID(),accountId:cash.id,countedMinor:5500,reason:"Shortage"};
+    assert.equal(value(await f.application.correctCash(correction)).differenceMinor,-500);
+    value(await f.application.moveMoney({...deposit,requestId:randomUUID(),amountMinor:100}));
+    assert.deepEqual(value(await f.application.correctCash(correction)),{expectedMinor:6000,countedMinor:5500,differenceMinor:-500});
+    failure(await f.application.correctCash({...correction,countedMinor:5000}),"request_conflict");
+    assert.equal(value(await f.application.listAccounts({sessionId})).items.find(item=>item.id===cash.id)!.onHandMinor,5600);
+    const renamed=value(await f.application.updateAccount({sessionId,accountId:bank.id,version:bank.version,name:"Afriland",kind:"BANK",active:true}));
+    failure(await f.application.updateAccount({sessionId,accountId:bank.id,version:bank.version,name:"Other",kind:"BANK",active:true}),"request_conflict");
+    value(await f.application.updateAccount({sessionId,accountId:bank.id,version:renamed.version,name:"Afriland",kind:"BANK",active:false}));
+    failure(await f.application.transferMoney({...transfer,requestId:randomUUID()}),"scope_mismatch");
+    assert.equal(value(await f.application.listAccounts({sessionId,includeInactive:true})).items.length,2);
+    for(const bad of [{kind:"WALLET"},{name:" "}])failure(await f.application.createAccount({sessionId,requestId:randomUUID(),name:"X",kind:"CASH",...bad}),"invalid_input");
+  }finally{await f.dispose();}
+});
+it("expenses are recorded, retried and reversed once by compensation, under expense authority",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,cash=value(await f.application.listAccounts({sessionId})).items[0]!;
+    value(await f.application.moveMoney({sessionId,requestId:randomUUID(),accountId:cash.id,direction:"in",amountMinor:20000,reason:"Float"}));
+    const rent={sessionId,requestId:randomUUID(),accountId:cash.id,category:"RENT" as const,amountMinor:15000,description:"October"};
+    const saved=value(await f.application.recordExpense(rent));assert.equal(value(await f.application.recordExpense(rent)).id,saved.id);
+    failure(await f.application.recordExpense({...rent,amountMinor:1}),"request_conflict");
+    for(const bad of [{category:"FOOD"},{amountMinor:0},{description:"x".repeat(201)}])failure(await f.application.recordExpense({...rent,requestId:randomUUID(),...bad}),"invalid_input");
+    assert.equal(value(await f.application.listAccounts({sessionId})).items[0]!.onHandMinor,5000);
+    const reversal={sessionId,requestId:randomUUID(),expenseId:saved.id};
+    assert.equal(value(await f.application.reverseExpense(reversal)).reversed,true);assert.equal(value(await f.application.reverseExpense(reversal)).reversed,true);
+    failure(await f.application.reverseExpense({...reversal,requestId:randomUUID()}),"request_conflict");
+    const list=value(await f.application.listExpenses({sessionId})).items;
+    assert.deepEqual(list.map(item=>[item.amountMinor,item.reversed,item.reversesId===saved.id]).sort(),[[-15000,false,true],[15000,true,false]]);
+    failure(await f.application.reverseExpense({sessionId,requestId:randomUUID(),expenseId:list.find(item=>item.amountMinor<0)!.id}),"request_conflict");
+    assert.equal(value(await f.application.listAccounts({sessionId})).items[0]!.onHandMinor,20000);
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const staff=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"765432"}),cashier=value(await f.application.unlock({userId:staff,secret:"765432"})).sessionId!;
+    failure(await f.application.recordExpense({...rent,sessionId:cashier,requestId:randomUUID()}),"permission_denied");
+    failure(await f.application.listAccounts({sessionId:cashier}),"permission_denied");failure(await f.application.listExpenses({sessionId:cashier}),"permission_denied");
+    failure(await f.application.moveMoney({sessionId:cashier,requestId:randomUUID(),accountId:cash.id,direction:"out",amountMinor:1,reason:"x"}),"permission_denied");
+  }finally{await f.dispose();}
+});
+it("core validation refusals reach the UI as invalid input, not storage failures",async()=>{
+  const f=fixture();try{
+    const {sessionId}=await owner(f),cash=value(await f.application.listAccounts({sessionId})).items[0]!;
+    failure(await f.application.recordExpense({sessionId,requestId:randomUUID(),accountId:cash.id,category:"OTHER",amountMinor:100}),"invalid_input");
+    value(await f.application.recordExpense({sessionId,requestId:randomUUID(),accountId:cash.id,category:"OTHER",amountMinor:100,description:"Charcoal"}));
+  }finally{await f.dispose();}
+});

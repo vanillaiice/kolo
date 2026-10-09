@@ -128,6 +128,16 @@ it("a count's request ID names its movement and audit, including a count that ma
   assert.throws(() => commands.countStock(f.context, { productId: p, countedThousandths: 0, reason: "Shelf", requestId: moved }));
   assert.equal(queries.productStock(f.context, p).onHandThousandths, 1500);
 });
+it("a cash correction's request ID names its adjustment and audit, including a count that matched", async () => {
+  const f = await fixture(), moved = randomUUIDv7(), matched = randomUUIDv7();
+  assert.equal(commands.adjustCashToCount(f.context, { accountId: f.account.id, countedMinor: 700, reason: "Float", requestId: moved }).differenceMinor, 700);
+  assert.deepEqual({ ...f.db.get(`SELECT type,amount_minor FROM account_movements WHERE id=?`, [moved]) }, { type: "ADJUSTMENT", amount_minor: 700 });
+  assert.equal(commands.adjustCashToCount(f.context, { accountId: f.account.id, countedMinor: 700, reason: "Float", requestId: matched }).differenceMinor, 0);
+  assert.equal(f.db.get(`SELECT count(*) AS n FROM account_movements WHERE id=?`, [matched])!["n"], 0);
+  for (const id of [moved, matched]) assert.equal(f.db.get(`SELECT count(*) AS n FROM local_audit WHERE action='CASH_RECONCILED' AND json_extract(payload,'$.requestId')=?`, [id])!["n"], 1);
+  assert.throws(() => commands.adjustCashToCount(f.context, { accountId: f.account.id, countedMinor: 0, reason: "Float", requestId: moved }));
+  assert.equal(queries.accounts(f.context).items.find(item => item.id === f.account.id)!.onHandMinor, 700);
+});
 it("schema 18 upgrades forward preserving catalogue metadata, events and append-only history", async () => {
   const db = openDatabase(); databases.push(db); db.run(`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL,applied_at TEXT NOT NULL) STRICT`);
   for (const migration of MIGRATIONS.filter(item => item.version <= 18)) db.transaction(tx => { for (const sql of migration.statements) tx.run(sql); tx.run(`INSERT INTO schema_migrations VALUES (?,?,?)`, [migration.version, migration.name, at]); });

@@ -86,6 +86,17 @@ class DesktopApplication implements ShopService {
   recordPurchase(input: unknown): Promise<Result<{ readonly purchaseId: string; }>>;
   listPurchases(input: unknown): Promise<Result<Page<PurchaseSummary>>>;
   getPurchase(input: unknown): Promise<Result<PurchaseView>>;
+  /** Account, cash and expense commands; see finance.ts. */
+  listAccounts(input: unknown): Promise<Result<Page<AccountView>>>;
+  createAccount(input: unknown): Promise<Result<AccountView>>;
+  updateAccount(input: unknown): Promise<Result<AccountView>>;
+  moveMoney(input: unknown): Promise<Result<AccountView>>;
+  transferMoney(input: unknown): Promise<Result<AccountView>>;
+  countCash(input: unknown): Promise<Result<CashCountView>>;
+  correctCash(input: unknown): Promise<Result<CashCountView>>;
+  listExpenses(input: unknown): Promise<Result<Page<ExpenseView>>>;
+  recordExpense(input: unknown): Promise<Result<ExpenseView>>;
+  reverseExpense(input: unknown): Promise<Result<ExpenseView>>;
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): Promise<Result<Receipt>>;
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
@@ -107,6 +118,68 @@ Read boot status; a missing shop requires setup rather than fabricated demo data
 desktopStatus(database: Database): DesktopStatus;
 ```
 
+## [apps/desktop/src/electron/finance.ts](../../apps/desktop/src/electron/finance.ts)
+
+Accounts with derived balances under finance.accounts.view and cash.view.
+
+```ts
+listAccounts(host: Host, input: unknown): Page<AccountView>;
+```
+
+Creates an account named by its request ID; only this actor's identical creation counts as a retry.
+
+```ts
+createAccount(host: Host, input: unknown): AccountView;
+```
+
+Renames, re-kinds, archives or restores an account from the displayed version.
+
+```ts
+updateAccount(host: Host, input: unknown): AccountView;
+```
+
+Money in or out of one active account under cash.move; the request ID is the movement ID.
+
+```ts
+moveMoney(host: Host, input: unknown): AccountView;
+```
+
+Atomic transfer between two different active accounts; the request ID names the outgoing leg.
+
+```ts
+transferMoney(host: Host, input: unknown): AccountView;
+```
+
+Compares a count with the expected balance under cash.count; audit only, no money moves.
+
+```ts
+countCash(host: Host, input: unknown): CashCountView;
+```
+
+Corrects the books to a count; a retried correction returns its original result instead of correcting again.
+
+```ts
+correctCash(host: Host, input: unknown): CashCountView;
+```
+
+Newest-first bounded expenses under expenses.view.
+
+```ts
+listExpenses(host: Host, input: unknown): Page<ExpenseView>;
+```
+
+Records an expense from one active account; the request ID is the expense ID.
+
+```ts
+recordExpense(host: Host, input: unknown): ExpenseView;
+```
+
+Compensates one unreversed expense; the request ID is the reversal's ID.
+
+```ts
+reverseExpense(host: Host, input: unknown): ExpenseView;
+```
+
 ## [apps/desktop/src/electron/handlers.ts](../../apps/desktop/src/electron/handlers.ts)
 
 A host-owned dispatcher map; none of its channel names are supplied by the renderer API.
@@ -124,6 +197,12 @@ class CommandError extends Error {
   code: FailureCode;
   constructor(code: FailureCode);
 }
+```
+
+Whether an error is a refused input rather than a storage failure.
+
+```ts
+isValidationError(error: unknown): boolean;
 ```
 
 What feature modules need from the desktop host: ports and the current actor, never the session itself.
@@ -652,6 +731,58 @@ export interface PurchaseView extends PurchaseSummary {
 }
 ```
 
+Account kinds: an account is where money is, never a payment method.
+
+```ts
+export type AccountKind = PaymentAccountView["kind"];
+```
+
+A financial account with its derived balance.
+
+```ts
+export interface AccountView {
+    readonly id: string;
+    readonly name: string;
+    readonly kind: AccountKind;
+    readonly active: boolean;
+    readonly version: string;
+    readonly onHandMinor?: number;
+}
+```
+
+Expense categories shared with mobile and reports.
+
+```ts
+export type ExpenseCategory = "RENT" | "ELECTRICITY" | "WATER" | "TRANSPORT" | "SALARY" | "PACKAGING" | "MAINTENANCE" | "INTERNET" | "MARKETING" | "OTHER";
+```
+
+One immutable expense; reversals are later negative entries naming the original.
+
+```ts
+export interface ExpenseView {
+    readonly id: string;
+    readonly occurredAt: string;
+    readonly category: ExpenseCategory;
+    readonly amountMinor: number;
+    readonly accountId: string;
+    readonly accountName: string;
+    readonly description?: string;
+    readonly reference?: string;
+    readonly reversesId?: string;
+    readonly reversed: boolean;
+}
+```
+
+Expected balance against a counted amount; a correction makes the books match the count.
+
+```ts
+export interface CashCountView {
+    readonly expectedMinor: number;
+    readonly countedMinor: number;
+    readonly differenceMinor: number;
+}
+```
+
 Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it.
 
 ```ts
@@ -767,6 +898,59 @@ export interface ShopService {
     getPurchase(input: SessionRequest & {
         readonly purchaseId: string;
     }): Promise<Result<PurchaseView>>;
+    listAccounts(input: CatalogueQuery): Promise<Result<Page<AccountView>>>;
+    createAccount(input: SessionRequest & {
+        readonly requestId: string;
+        readonly name: string;
+        readonly kind: AccountKind;
+    }): Promise<Result<AccountView>>;
+    updateAccount(input: SessionRequest & {
+        readonly accountId: string;
+        readonly version: string;
+        readonly name: string;
+        readonly kind: AccountKind;
+        readonly active: boolean;
+    }): Promise<Result<AccountView>>;
+    moveMoney(input: SessionRequest & {
+        readonly requestId: string;
+        readonly accountId: string;
+        readonly direction: "in" | "out";
+        readonly amountMinor: number;
+        readonly reason: string;
+    }): Promise<Result<AccountView>>;
+    transferMoney(input: SessionRequest & {
+        readonly requestId: string;
+        readonly fromAccountId: string;
+        readonly toAccountId: string;
+        readonly amountMinor: number;
+        readonly reason: string;
+    }): Promise<Result<AccountView>>;
+    countCash(input: SessionRequest & {
+        readonly accountId: string;
+        readonly countedMinor: number;
+    }): Promise<Result<CashCountView>>;
+    correctCash(input: SessionRequest & {
+        readonly requestId: string;
+        readonly accountId: string;
+        readonly countedMinor: number;
+        readonly reason: string;
+    }): Promise<Result<CashCountView>>;
+    listExpenses(input: SessionRequest & {
+        readonly after?: PageQuery["after"];
+        readonly limit?: number;
+    }): Promise<Result<Page<ExpenseView>>>;
+    recordExpense(input: SessionRequest & {
+        readonly requestId: string;
+        readonly accountId: string;
+        readonly category: ExpenseCategory;
+        readonly amountMinor: number;
+        readonly description?: string;
+        readonly reference?: string;
+    }): Promise<Result<ExpenseView>>;
+    reverseExpense(input: SessionRequest & {
+        readonly requestId: string;
+        readonly expenseId: string;
+    }): Promise<Result<ExpenseView>>;
     listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{
         readonly id: string;
         readonly name: string;
@@ -1460,7 +1644,9 @@ countStock(context: OperationContext, input: {
 
 Owner-authorized count plus explicit cash correction under cash.count/cash.reconcile/
 cash.move. Recomputes the expected balance atomically and appends the adjustment and
-audit. An equal count records audit only; a reason is always required.
+audit. An equal count records audit only; a reason is always required. An optional
+caller request ID names the adjustment and is kept in the local audit, so adapters can
+recognise a retried correction instead of correcting again against later movements.
 
 ```ts
 adjustCashToCount(context: OperationContext, input: {
@@ -1468,6 +1654,7 @@ adjustCashToCount(context: OperationContext, input: {
     readonly countedMinor: number;
     readonly reason: string;
     readonly branchId?: string | undefined;
+    readonly requestId?: string | undefined;
 }): Reconciliation;
 ```
 

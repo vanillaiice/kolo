@@ -631,3 +631,33 @@ Implemented:
 Finance (accounts, transfers, reconciliation, expenses), reports, returns, staff and
 backup/exchange screens; receipt printing; hardware, accessibility/performance and
 Windows packaging acceptance.
+
+## 2026-10-09 — Desktop accounts, money movements and expenses (F5)
+
+Implemented:
+
+- "Accounts & expenses" section. Accounts: balances, archived filter, versioned
+  create/rename/re-kind/archive, money in/out and transfers with reasons, and a count that
+  compares expected and counted amounts before an explicit correction with a reason.
+- Expenses: record from any account by category (description required for "Other"),
+  newest-first history with reversal status, and one-time compensating reversal.
+- Core `adjustCashToCount` accepts an optional request ID naming its adjustment and audit,
+  mirroring `countStock`; no migration or event payload change.
+- Ten new named, validated IPC commands in `electron/finance.ts`. Core data-layer
+  validation errors now surface as `invalid_input` rather than `storage_failed`.
+
+### Verification
+
+- Core case: request-named cash corrections, including a matching count.
+- Real-SQLite host cases: deposits, transfers, retries/conflicts, count and correction
+  retried after a later movement, versioned account edits, archived account refusals,
+  malformed kinds/names; expenses recorded, retried, reversed once, reversal of a reversal
+  refused, balances restored; cashier refusals; OTHER without description as invalid input.
+- The actual Electron workflow takes money in, counts short, corrects, records an expense
+  and checks each balance. The runner now prints visible alerts when a step times out.
+- `npm run check`, `npm run bundle:mobile` and `npm run smoke:desktop:workflow` passed.
+
+### Remaining
+
+Reports, returns, staff and backup/exchange screens; receipt printing; hardware,
+accessibility/performance and Windows packaging acceptance.

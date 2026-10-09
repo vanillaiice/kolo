@@ -7,6 +7,13 @@ export class CommandError extends Error {
   readonly code: FailureCode;
   constructor(code: FailureCode) { super(code); this.code = code; }
 }
+/**
+ * Core data-layer validation failures: the request was refused before anything was written.
+ * Matched by name so the host need not import every repository module.
+ */
+const validationErrors = new Set(["MovementError", "CustomerError", "ProductError", "CashError", "ExpenseError", "PurchaseError", "SaleError", "SupplierError", "AccountError"]);
+/** Whether an error is a refused input rather than a storage failure. */
+export function isValidationError(error: unknown): boolean { return error instanceof Error && validationErrors.has(error.name); }
 /** What feature modules need from the desktop host: ports and the current actor, never the session itself. */
 export interface Host {
   readonly ports: WorkspacePorts;

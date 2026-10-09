@@ -121,6 +121,23 @@ export interface PurchaseView extends PurchaseSummary {
   readonly lines: readonly { readonly id: string; readonly productId: string; readonly name: string; readonly quantity: number; readonly unitCostMinor: number }[];
   readonly paidMinor: number; readonly outstandingMinor: number;
 }
+/** Account kinds: an account is where money is, never a payment method. */
+export type AccountKind = PaymentAccountView["kind"];
+/** A financial account with its derived balance. */
+export interface AccountView {
+  readonly id: string; readonly name: string; readonly kind: AccountKind; readonly active: boolean; readonly version: string;
+  /** Absent when the actor may move money but not view balances. */
+  readonly onHandMinor?: number;
+}
+/** Expense categories shared with mobile and reports. */
+export type ExpenseCategory = "RENT" | "ELECTRICITY" | "WATER" | "TRANSPORT" | "SALARY" | "PACKAGING" | "MAINTENANCE" | "INTERNET" | "MARKETING" | "OTHER";
+/** One immutable expense; reversals are later negative entries naming the original. */
+export interface ExpenseView {
+  readonly id: string; readonly occurredAt: string; readonly category: ExpenseCategory; readonly amountMinor: number; readonly accountId: string; readonly accountName: string;
+  readonly description?: string; readonly reference?: string; readonly reversesId?: string; readonly reversed: boolean;
+}
+/** Expected balance against a counted amount; a correction makes the books match the count. */
+export interface CashCountView { readonly expectedMinor: number; readonly countedMinor: number; readonly differenceMinor: number; }
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
 export interface ShopService {
   /** Public boot status; no credentials or key references are returned. */
@@ -193,6 +210,26 @@ export interface ShopService {
   listPurchases(input: SessionRequest & { readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<Page<PurchaseSummary>>>;
   /** One recorded purchase with its lines and settlement. */
   getPurchase(input: SessionRequest & { readonly purchaseId: string }): Promise<Result<PurchaseView>>;
+  /** Accounts with balances under finance.accounts.view and cash.view. */
+  listAccounts(input: CatalogueQuery): Promise<Result<Page<AccountView>>>;
+  /** Creates an account named by the request ID under finance.accounts.manage. */
+  createAccount(input: SessionRequest & { readonly requestId: string; readonly name: string; readonly kind: AccountKind }): Promise<Result<AccountView>>;
+  /** Renames, re-kinds, archives or restores an account from the displayed version. */
+  updateAccount(input: SessionRequest & { readonly accountId: string; readonly version: string; readonly name: string; readonly kind: AccountKind; readonly active: boolean }): Promise<Result<AccountView>>;
+  /** Money in or out of one account with a reason; the request ID names the movement. */
+  moveMoney(input: SessionRequest & { readonly requestId: string; readonly accountId: string; readonly direction: "in" | "out"; readonly amountMinor: number; readonly reason: string }): Promise<Result<AccountView>>;
+  /** Atomic two-leg transfer between accounts; the request ID names the outgoing leg. */
+  transferMoney(input: SessionRequest & { readonly requestId: string; readonly fromAccountId: string; readonly toAccountId: string; readonly amountMinor: number; readonly reason: string }): Promise<Result<AccountView>>;
+  /** Compares a counted amount with the expected balance; records audit only. */
+  countCash(input: SessionRequest & { readonly accountId: string; readonly countedMinor: number }): Promise<Result<CashCountView>>;
+  /** Corrects the books to a count with a reason; a retry returns the original result. */
+  correctCash(input: SessionRequest & { readonly requestId: string; readonly accountId: string; readonly countedMinor: number; readonly reason: string }): Promise<Result<CashCountView>>;
+  /** Newest-first bounded expenses under expenses.view. */
+  listExpenses(input: SessionRequest & { readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<Page<ExpenseView>>>;
+  /** Records an expense paid from one account; the request ID names the expense. */
+  recordExpense(input: SessionRequest & { readonly requestId: string; readonly accountId: string; readonly category: ExpenseCategory; readonly amountMinor: number; readonly description?: string; readonly reference?: string }): Promise<Result<ExpenseView>>;
+  /** Compensates an expense with an equal negative entry; it is never edited. */
+  reverseExpense(input: SessionRequest & { readonly requestId: string; readonly expenseId: string }): Promise<Result<ExpenseView>>;
   /** Bounded account names for cash checkout, without disclosing financial balances. */
   listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly name: string }>>>;
   /** Atomic cash sale; identical retries return the original saved sale ID. */

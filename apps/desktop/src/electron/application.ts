@@ -16,8 +16,9 @@ import { sealPendingEvents } from "@kolo/core/application/exchange";
 import type { ExchangeCrypto } from "@kolo/core/exchange/types";
 import type { CategoryView, CustomerDetails, CustomerView, ProductView, Result, ShopService, WorkspaceView } from "../shared/service.js";
 import { object, text, uuid, whole, boolean, page, optional } from "./validation.ts";
-import { CommandError, nextVersion, type Host } from "./host.ts";
+import { CommandError, isValidationError, nextVersion, type Host } from "./host.ts";
 import * as purchasing from "./purchasing.ts";
+import * as finance from "./finance.ts";
 
 const customerFields = ["name", "phone", "address", "notes", "creditLimitMinor"] as const;
 function customerDetails(data: Record<string, unknown>): CustomerDetails {
@@ -47,7 +48,7 @@ export class DesktopApplication implements ShopService {
   constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto) {
     this.ports = ports; this.crypto = crypto; this.#host = { ports, actor: (data, required) => this.#actor(data, required) };
     lockWorkspace(ports.database);
-    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "authority"], () => this.#notify());
+    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority"], () => this.#notify());
   }
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   async initialize(): Promise<void> {
@@ -457,6 +458,17 @@ export class DesktopApplication implements ShopService {
   recordPurchase(input: unknown): ReturnType<ShopService["recordPurchase"]> { return this.#run(() => purchasing.recordPurchase(this.#host, input)); }
   listPurchases(input: unknown): ReturnType<ShopService["listPurchases"]> { return this.#run(() => purchasing.listPurchases(this.#host, input)); }
   getPurchase(input: unknown): ReturnType<ShopService["getPurchase"]> { return this.#run(() => purchasing.getPurchase(this.#host, input)); }
+  /** Account, cash and expense commands; see finance.ts. */
+  listAccounts(input: unknown): ReturnType<ShopService["listAccounts"]> { return this.#run(() => finance.listAccounts(this.#host, input)); }
+  createAccount(input: unknown): ReturnType<ShopService["createAccount"]> { return this.#run(() => finance.createAccount(this.#host, input)); }
+  updateAccount(input: unknown): ReturnType<ShopService["updateAccount"]> { return this.#run(() => finance.updateAccount(this.#host, input)); }
+  moveMoney(input: unknown): ReturnType<ShopService["moveMoney"]> { return this.#run(() => finance.moveMoney(this.#host, input)); }
+  transferMoney(input: unknown): ReturnType<ShopService["transferMoney"]> { return this.#run(() => finance.transferMoney(this.#host, input)); }
+  countCash(input: unknown): ReturnType<ShopService["countCash"]> { return this.#run(() => finance.countCash(this.#host, input)); }
+  correctCash(input: unknown): ReturnType<ShopService["correctCash"]> { return this.#run(() => finance.correctCash(this.#host, input)); }
+  listExpenses(input: unknown): ReturnType<ShopService["listExpenses"]> { return this.#run(() => finance.listExpenses(this.#host, input)); }
+  recordExpense(input: unknown): ReturnType<ShopService["recordExpense"]> { return this.#run(() => finance.recordExpense(this.#host, input)); }
+  reverseExpense(input: unknown): ReturnType<ShopService["reverseExpense"]> { return this.#run(() => finance.reverseExpense(this.#host, input)); }
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): ReturnType<ShopService["getReceipt"]> {
     return this.#run(() => { const data = object(input, ["sessionId", "saleId"]); return receipt(this.#actor(data), uuid(data["saleId"])); });
@@ -529,7 +541,7 @@ export class DesktopApplication implements ShopService {
     catch (error) {
       if (error instanceof WorkspaceError) return { ok: false, error: { code: error.code, ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }) } };
       if (error instanceof CommandError) return { ok: false, error: { code: error.code } };
-      return { ok: false, error: { code: error instanceof RuleError ? "invalid_input" : "storage_failed" } };
+      return { ok: false, error: { code: error instanceof RuleError || isValidationError(error) ? "invalid_input" : "storage_failed" } };
     }
   }
 }
