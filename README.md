@@ -25,10 +25,9 @@ pharmacies and wholesalers in Cameroon and across Africa.
 
 ## Status
 
-KOLO is in beta. The Windows desktop app covers the full shop workflow. The Android
-app is being tested on real devices. Barcode scanning (camera and scanners) and online
-sync are not available yet. Test builds
-appear on the [Releases](https://github.com/vanillaiice/kolo/releases) page.
+KOLO is in beta on Windows and Android; both apps cover the full shop workflow.
+Barcode scanning (camera and scanners) and online sync are not available yet. Beta
+builds appear on the [Releases](https://github.com/vanillaiice/kolo/releases) page.
 
 ## For developers
 
