@@ -8,14 +8,14 @@ import { ErrorText, ReadState, Select, call, useAction, useRead, useText } from 
  * Partial or full return of a sale or purchase. The preview and the commit both use the host's
  * exact rules; the request names the predecessor it was made from, so a concurrent return makes
  * it stale instead of double-returning. An uncertain outcome freezes the draft for an identical retry.
- * The form opens below the record list, so its heading takes focus to bring it into view.
+ * It opens as a modal dialog over the record; Escape or Cancel closes it unless a recording is in flight.
  */
 export function ReturnForm({service,sessionId,revision,kind,originalId,onDone}:{readonly service:ShopService;readonly sessionId:string;readonly revision:number;readonly kind:"SALE"|"PURCHASE";readonly originalId:string;readonly onDone:(saved:boolean)=>void}):React.JSX.Element{
   const {t,language}=useText(),action=useAction();
   const [reload,setReload]=useState(0),[quantities,setQuantities]=useState<Record<string,string>>({}),[refundText,setRefundText]=useState<string|null>(null),[accountId,setAccountId]=useState(""),[reason,setReason]=useState("");
   const [uncertain,setUncertain]=useState(false),pending=useRef<ReturnRequest|undefined>(undefined),frozen=action.busy||uncertain;
-  const heading=useRef<HTMLHeadingElement>(null);
-  useEffect(()=>{heading.current?.scrollIntoView({block:"start"});heading.current?.focus({preventScroll:true});},[]);
+  const dialog=useRef<HTMLDialogElement>(null),heading=useRef<HTMLHeadingElement>(null);
+  useEffect(()=>{dialog.current?.showModal();heading.current?.focus();},[]);
   const source=useRead(()=>service.returnSource({sessionId,kind,originalId}),[service,sessionId,kind,originalId,reload]);
   const accounts=useRead(()=>service.listPaymentAccounts({sessionId,limit:100}),[service,sessionId,revision]);
   let items:{originalItemId:string;quantity:number}[]=[],valid=true;
@@ -37,7 +37,7 @@ export function ReturnForm({service,sessionId,revision,kind,originalId,onDone}:{
     if(saved!==undefined)onDone(true);
   };
   const remaining=(source.data?.items??[]).filter(item=>item.originalQuantity>item.returnedQuantity);
-  return <div className="panel form-panel return-form"><h2 ref={heading} tabIndex={-1}>{t(kind==="SALE"?"returnItems":"returnGoods")}</h2>
+  return <dialog ref={dialog} className="form-dialog return-form" aria-labelledby="return-title" onCancel={event=>{event.preventDefault();if(!frozen)onDone(false);}}><h2 id="return-title" ref={heading} tabIndex={-1}>{t(kind==="SALE"?"returnItems":"returnGoods")}</h2>
     <ReadState loading={source.loading} error={source.error} empty={remaining.length===0} emptyText={t("nothingReturnable")} retry={source.retry}>
       <form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={frozen}>
         <div className="actions spaced"><button type="button" className="secondary" onClick={()=>change(()=>setQuantities(Object.fromEntries(remaining.map(item=>[item.id,quantityInput(item.originalQuantity-item.returnedQuantity)]))))}>{t("fullReturn")}</button></div>
@@ -56,5 +56,5 @@ export function ReturnForm({service,sessionId,revision,kind,originalId,onDone}:{
       <div className="actions"><button className="primary" type="submit" disabled={action.busy||!valid||!uncertain&&(preview.data==null||blocker!==undefined||refund>0&&account===""||reason.trim()==="")}>{action.busy?t("recording"):uncertain?t("retry"):t("recordReturn")}</button>
         {action.error?.code==="stale_return"&&<button type="button" className="secondary" onClick={()=>{pending.current=undefined;action.setError(undefined);setReload(value=>value+1);}}>{t("reload")}</button>}
         <button type="button" className="secondary" disabled={frozen} onClick={()=>onDone(false)}>{t("cancel")}</button></div></form>
-    </ReadState></div>;
+    </ReadState></dialog>;
 }

@@ -235,7 +235,13 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     } finally { nativeTheme.themeSource = previousTheme; }
     // Return: one bag of the credit sale comes back; its value is credited to the customer.
     await navigate("Receipts"); await clickVisible(".receipt-list .row-link"); await wait(`${visible(".receipt-paper")}[0]?.textContent.includes('Awa')`, "credit receipt");
-    await clickVisible(".receipt-paper button", "Return items"); await wait(`${visible(".return-form .cell-input")}.length===1 && document.activeElement===document.querySelector(".return-form h2") && (r=>r.top>=0&&r.bottom<=innerHeight)(document.querySelector(".return-form h2").getBoundingClientRect())`, "return form focused and in view");
+    // Half-width window: the open record replaces the list at the top, and Back returns to the list.
+    window.setSize(880,620);
+    await clickVisible(".receipt-paper .back-to-list"); await wait(`${visible(".receipt-paper")}.length===0 && ${visible(".receipt-list .row-link")}.length>0`, "narrow back to list");
+    await evaluate("scrollTo(0,document.body.scrollHeight)"); await clickVisible(".receipt-list .row-link");
+    await wait(`${visible(".receipt-list")}.length===0 && (r=>r.top>=0&&r.top<innerHeight)(${visible(".receipt-paper")}[0].getBoundingClientRect()) && ${visible(".receipt-paper")}[0].textContent.includes('Awa')`, "narrow receipt replaces list in view");
+    await snapshot("receipt-narrow"); window.setSize(1280,850);
+    await clickVisible(".receipt-paper button", "Return items"); await wait(`document.querySelector("dialog.return-form")?.open===true && ${visible(".return-form .cell-input")}.length===1 && document.activeElement===document.querySelector(".return-form h2")`, "return dialog open and focused");
     await fill(".return-form .cell-input", "1"); await wait(`${visible(".return-form .total-line")}[0]?.textContent.replace(/[^0-9]/g,'')==='500'`, "return preview"); await snapshot("return-form");
     await fill("#return-reason", "Damaged"); await submit("#return-reason");
     await wait(`document.querySelector('.return-form')===null && ${visible(".receipt-paper")}[0]?.textContent.includes('Returned')`, "return recorded");

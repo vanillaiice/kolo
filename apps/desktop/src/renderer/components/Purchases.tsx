@@ -5,7 +5,7 @@ import { lineTotal, subtotalOf } from "@kolo/core/rules/pricing";
 import type { Cursor } from "@kolo/core/application/queries";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { ProductView, PurchaseRequest, Result, ShopService, SupplierDetails, SupplierView } from "../../shared/service.ts";
-import { ErrorText, Field, Pager, ReadState, Select, call, useAction, useRead, useText } from "./ui.tsx";
+import { BackToList, ErrorText, Field, Pager, ReadState, Select, call, useAction, useRead, useRevealDetail, useText } from "./ui.tsx";
 import { Balance, Statement } from "./Customers.tsx";
 import { ReturnForm } from "./ReturnForm.tsx";
 
@@ -32,7 +32,7 @@ function PurchaseHistory({service,sessionId,revision,canReturn}:{service:ShopSer
   const {t,language}=useText();
   const [cursor,setCursor]=useState<{ after: Cursor; revision: number }>(),[selected,setSelected]=useState<string>(),[returning,setReturning]=useState<string>();
   const list=useRead(()=>service.listPurchases({sessionId,...(cursor?.revision===revision?{after:cursor.after}:{})}),[service,sessionId,cursor,revision]);
-  const detail=useRead(()=>selected===undefined?Promise.resolve({ok:true as const,value:null}):service.getPurchase({sessionId,purchaseId:selected}),[service,sessionId,selected,revision]);
+  const detail=useRead(()=>selected===undefined?Promise.resolve({ok:true as const,value:null}):service.getPurchase({sessionId,purchaseId:selected}),[service,sessionId,selected,revision]),detailPanel=useRevealDetail(selected);
   const date=(value:string):string=>new Date(value).toLocaleString(language==="fr"?"fr-FR":"en-GB");
   return <div className={`record-layout${selected===undefined?"":" with-detail"}`}><div className="panel"><h2>{t("purchaseList")}</h2>
     <ReadState loading={list.loading} error={list.error} empty={list.data?.items.length===0} emptyText={t("noPurchases")} retry={list.retry}>
@@ -42,7 +42,7 @@ function PurchaseHistory({service,sessionId,revision,canReturn}:{service:ShopSer
       </tbody></table></div>
     </ReadState>
     <Pager hasFirst={cursor!==undefined} hasNext={list.data?.next!==undefined} onFirst={()=>setCursor(undefined)} onNext={()=>{if(list.data?.next)setCursor({after:list.data.next,revision});}}/></div>
-    {selected!==undefined&&<div className="panel receipt-paper purchase-detail"><ReadState loading={detail.loading} error={detail.error} empty={detail.data===null} emptyText={t("noResults")} retry={detail.retry}>
+    {selected!==undefined&&<div className="panel receipt-paper purchase-detail" ref={detailPanel}><BackToList label={t("purchaseList")} onBack={()=>setSelected(undefined)}/><ReadState loading={detail.loading} error={detail.error} empty={detail.data===null} emptyText={t("noResults")} retry={detail.retry}>
       {detail.data&&<><div className="receipt-header"><h2>{t("purchase")}</h2><p className="muted">{date(detail.data.occurredAt)}</p>
         <p className="receipt-customer">{detail.data.supplierName||t("noSupplier")}{detail.data.reference===""?"":` · ${detail.data.reference}`}</p></div>
         {detail.data.lines.map(line=><div className="receipt-line" key={line.id}><strong>{line.name}</strong><span>{formatQuantity(line.quantity,language)} × {formatMoney(line.unitCostMinor,language)}</span></div>)}

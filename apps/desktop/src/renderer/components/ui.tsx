@@ -80,3 +80,22 @@ export function ReadState({ loading, error, empty, emptyText, retry, children }:
   const { t } = useText();
   return loading ? <p className="muted" role="status">{t("opening")}</p> : error !== undefined ? <><ErrorText message={error} /><button className="secondary" onClick={retry}>{t("retry")}</button></> : empty ? <div className="empty"><p>{emptyText}</p></div> : <>{children}</>;
 }
+
+/** Width at which `.record-layout` stacks; keep in step with styles.css. */
+const STACKED_RECORDS = "(max-width: 1100px)";
+
+/**
+ * List/detail screens: when the layout is stacked the detail replaces the list, so opening a
+ * record brings the detail to the top of the window. Wide layouts already show both and do not move.
+ */
+export function useRevealDetail(selected: string | undefined): React.RefObject<HTMLDivElement | null> {
+  const detail = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (selected !== undefined && window.matchMedia(STACKED_RECORDS).matches) detail.current?.scrollIntoView({ block: "start" }); }, [selected]);
+  return detail;
+}
+
+/** Return from a record to its list; only shown while the record layout is stacked. */
+export function BackToList({ label, onBack }: { readonly label: string; readonly onBack: () => void }): React.JSX.Element {
+  const { t } = useText();
+  return <button type="button" className="text-button back-to-list no-print" onClick={onBack}><span aria-hidden="true">←</span>{t("back")} · {label}</button>;
+}
