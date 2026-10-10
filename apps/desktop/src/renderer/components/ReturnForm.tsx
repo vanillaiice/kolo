@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { moneyEntry, quantityEntry, quantityInput } from "@kolo/core/domain/entry";
 import { formatMoney, formatQuantity } from "@kolo/core/domain/money";
 import type { ReturnRequest, ShopService } from "../../shared/service.ts";
@@ -8,11 +8,14 @@ import { ErrorText, ReadState, Select, call, useAction, useRead, useText } from 
  * Partial or full return of a sale or purchase. The preview and the commit both use the host's
  * exact rules; the request names the predecessor it was made from, so a concurrent return makes
  * it stale instead of double-returning. An uncertain outcome freezes the draft for an identical retry.
+ * The form opens below the record list, so its heading takes focus to bring it into view.
  */
 export function ReturnForm({service,sessionId,revision,kind,originalId,onDone}:{readonly service:ShopService;readonly sessionId:string;readonly revision:number;readonly kind:"SALE"|"PURCHASE";readonly originalId:string;readonly onDone:(saved:boolean)=>void}):React.JSX.Element{
   const {t,language}=useText(),action=useAction();
   const [reload,setReload]=useState(0),[quantities,setQuantities]=useState<Record<string,string>>({}),[refundText,setRefundText]=useState<string|null>(null),[accountId,setAccountId]=useState(""),[reason,setReason]=useState("");
   const [uncertain,setUncertain]=useState(false),pending=useRef<ReturnRequest|undefined>(undefined),frozen=action.busy||uncertain;
+  const heading=useRef<HTMLHeadingElement>(null);
+  useEffect(()=>{heading.current?.scrollIntoView({block:"start"});heading.current?.focus({preventScroll:true});},[]);
   const source=useRead(()=>service.returnSource({sessionId,kind,originalId}),[service,sessionId,kind,originalId,reload]);
   const accounts=useRead(()=>service.listPaymentAccounts({sessionId,limit:100}),[service,sessionId,revision]);
   let items:{originalItemId:string;quantity:number}[]=[],valid=true;
@@ -34,7 +37,7 @@ export function ReturnForm({service,sessionId,revision,kind,originalId,onDone}:{
     if(saved!==undefined)onDone(true);
   };
   const remaining=(source.data?.items??[]).filter(item=>item.originalQuantity>item.returnedQuantity);
-  return <div className="panel form-panel return-form"><h2>{t(kind==="SALE"?"returnItems":"returnGoods")}</h2>
+  return <div className="panel form-panel return-form"><h2 ref={heading} tabIndex={-1}>{t(kind==="SALE"?"returnItems":"returnGoods")}</h2>
     <ReadState loading={source.loading} error={source.error} empty={remaining.length===0} emptyText={t("nothingReturnable")} retry={source.retry}>
       <form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={frozen}>
         <div className="actions spaced"><button type="button" className="secondary" onClick={()=>change(()=>setQuantities(Object.fromEntries(remaining.map(item=>[item.id,quantityInput(item.originalQuantity-item.returnedQuantity)]))))}>{t("fullReturn")}</button></div>

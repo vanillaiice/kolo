@@ -235,7 +235,7 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     } finally { nativeTheme.themeSource = previousTheme; }
     // Return: one bag of the credit sale comes back; its value is credited to the customer.
     await navigate("Receipts"); await clickVisible(".receipt-list .row-link"); await wait(`${visible(".receipt-paper")}[0]?.textContent.includes('Awa')`, "credit receipt");
-    await clickVisible(".receipt-paper button", "Return items"); await wait(`${visible(".return-form .cell-input")}.length===1`, "return form");
+    await clickVisible(".receipt-paper button", "Return items"); await wait(`${visible(".return-form .cell-input")}.length===1 && document.activeElement===document.querySelector(".return-form h2") && (r=>r.top>=0&&r.bottom<=innerHeight)(document.querySelector(".return-form h2").getBoundingClientRect())`, "return form focused and in view");
     await fill(".return-form .cell-input", "1"); await wait(`${visible(".return-form .total-line")}[0]?.textContent.replace(/[^0-9]/g,'')==='500'`, "return preview"); await snapshot("return-form");
     await fill("#return-reason", "Damaged"); await submit("#return-reason");
     await wait(`document.querySelector('.return-form')===null && ${visible(".receipt-paper")}[0]?.textContent.includes('Returned')`, "return recorded");
