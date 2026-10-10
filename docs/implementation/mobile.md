@@ -1,76 +1,98 @@
-# Mobile operations (F4)
+# Mobile operations
 
-The unlocked app now opens permission-aware operational navigation. The till draft
-stays mounted while browsing the other operational tabs; lock/background/cold boot
-clears this transient draft. Saved facts remain in SQLite. Staff and file-transfer
-screens retain their existing F1/F3 lifecycle.
+The Expo app was reorganized on 2026-10-10 to reach parity with the desktop's business
+capabilities on a small screen. SQLite and the shared core operations stay the foundation;
+the [parity checklist](mobile-parity.md) maps every desktop action to its mobile screen.
+Installed Android acceptance (F1/F3/F4 and the parity checks) has not run.
 
-## Delivered software
+## Structure
 
-- Product and category create/edit/archive/reactivation, barcode, cost/price, fractional
-  quantity and reorder settings; signed category detail exchange uses the product LWW rule.
-- Stock levels/history, opening stock, damage, manual additions and actual shelf counts.
-  Negative stock stays visible. `countStock` computes its compensation in the transaction.
-- Cash/split/credit till, named customer selection, whole-sale discount, decimal quantities,
-  exact hardware-keyboard barcode submit and removal of recorded payment allocations.
-  Credit/discount permissions are independent; default cashiers cannot extend credit.
-- Customer/supplier details, archived counterparties, derived balances, bounded statements,
-  customer collections, supplier payments and multi-line stock purchases with door payment.
-- Accounts, cash in/out, two-leg transfers, count comparison and explicit reasoned cash
-  adjustment. Comparing alone records audit and changes no money; an adjustment recomputes
-  its expected balance inside the transaction.
-- Expense creation/history and compensating reversal; originals are never edited.
-- Saved receipts/history, original price/name snapshots, original settlement, recorded
-  return total and optional OS text sharing. Printer output is a remaining hardware gate.
-- Partial/full sale/purchase return previews and compensating stock/refund/debt entries.
-  See [ADR-023](../adr/ADR-023-partial-returns-and-source-ordering.md).
-- Net sales/profit/purchase period summaries and paginated stock/debt alerts. Calendar-day
-  ranges use the device timezone and half-open UTC instants, including DST. Unknown costs
-  remain visible as a count; profit is labeled an estimate. Existing detailed original-sale
-  breakdown reports remain gross transaction history and are not presented as net returns.
-- Keyed French/English text throughout active setup/unlock/recovery, staff, operations
-  and transfer screens, including roles, permissions, error codes and exchange counts.
-  Language selection is available before setup and persists across cold boots in a
-  separate device preference database; replacing/restoring a shop preserves this setting.
-  Failed preference reads/writes leave offline work available and show a retry action.
-  Status messages retain keys/values so changing language also updates existing feedback.
-  Business names, device labels, fingerprints and recovery keys remain literal data.
-  The unused legacy server-login screen is outside the active navigation.
+- `app/App.tsx` owns boot, the active database and the lock lifecycle. Every unlock starts a
+  session **generation**; `SessionProvider` is keyed by it, so lock, actor change and database
+  replacement unmount screens, drafts, subscriptions and previews together.
+- `app/session.tsx` exposes the session, `useRevision` (frozen while a screen is hidden),
+  `usePermissions` and `useDraft` (backed by `app/draft-store.ts`).
+- `app/navigation*.ts(x)` and `features/shell` provide four destinations — **Sell, Products,
+  Activity, More** — as stacks (list → detail → action). Phones use a bottom bar; from 600 dp
+  (adjusted for font scale) a side rail with list/detail side by side. Hidden stack screens stay
+  mounted (search and scroll survive) but do not query. Back closes a sheet, pops the stack with a
+  discard confirmation for edited forms, returns to the landing destination, then leaves the app.
+- `components/theme.ts` translates the desktop tokens (light and dark); `components/ui.tsx`
+  holds the shared primitives (screen header/footer, buttons, fields, rows, notices, segmented
+  choices, searchable picker sheet, confirmation dialog, bounded paged list, stat tiles).
+- Language and appearance (system/light/dark) live in the device preference database, outside
+  backups and events; both are available before setup.
+
+## Session and lock contract
+
+**Stay signed in** (Settings, on by default, as on the desktop; user decision 2026-10-10): the
+phone does not lock in the background and a cold boot reopens the last unlocked user without a
+code. Unlock saves the remembered member (business, user, credential reference) only in the
+Android keystore; the on/off flag is a device preference. Core `resumeWorkspace` reopens it only
+if business, device and member are active, not locked out and the credential reference is
+unchanged, so a code reset, owner recovery, restore or pairing makes it stale; a stale or
+unreadable record is forgotten and grants nothing. **Lock** forgets the remembered user, and
+turning the option off forgets it and restores locking on background and cold boot. Anyone with
+the phone can open a remembered till, so turn it off on shared phones.
+
+With the option off, leaving the app locks it at once. Android screens KOLO opens itself through
+`session.systemUi` (file and photo pickers, share sheet, print dialog) count as staying in the app
+and never lock, with no time limit (user decision 2026-10-10). A result that returns after a lock
+or session change is refused (`locked`), and the actor must still be active. Unsigned events are sealed after commits (coalesced, single-flight) with a
+60-second recovery retry, instead of the previous three-second loop.
+
+## Workflows
+
+- **Entry:** Create a shop (shop details, then owner access; default till/cash names with an
+  optional customization; the recovery key needs an explicit acknowledgement) or Import a file,
+  recognized from its structure (`data/transfer/file-kind.ts`) as a backup or pairing invite.
+  A shop on the phone offers unlock, owner recovery and backup import. Replacing a shop names it
+  and needs typed confirmation; the restore goes into an empty stage bound to the current slot
+  (`SlotControl.alias`), so the active pointer moves only on success. Pending setup, pending
+  joining and legacy migration remain recoverable steps.
+- **Selling:** product selection (exact barcode on Enter with unknown/archived feedback, debounced
+  name search, category filter, cart bar), cart (quantities, customer, permitted discount) and
+  payment (cash with change calculation, split across named accounts, credit naming who owes).
+  The draft carries stable sale/event/credit IDs: a repeated tap resolves to the recorded sale;
+  failure keeps the draft; success clears it and opens the receipt reread from SQLite.
+- **Records:** product detail/edit/archive with version checks (`changedMeanwhile`), a main
+  category plus other categories (ADR-028), stock
+  additions, damage, opening stock, counts and history, photos; categories; customers and
+  suppliers with statements, collections and payments; purchases in three steps with door
+  payment and supplier debt; accounts with money in/out, transfers, count comparison and an
+  explicit reasoned correction; expenses with compensating reversal; returns through quantities,
+  preview, refund bounded by what was settled, confirmation, and reload on a stale predecessor.
+- **Reports and analytics:** every desktop report kind and the analytics view come from core
+  `application/report-views` (shared with desktop), bounded to 100 rows (50 for analytics lists)
+  with exact totals. Phones show KPI tiles first and open trend, busy hours, product ranking,
+  category/payment shares and top customers on demand; every chart has a figures table.
+  Expensive reads run after the screen paints (`useDeferredRecord`).
+- **Photos:** `data/photos/photos-on-device.ts` uses Android's square crop, then native decode,
+  orientation, centre crop, 320 px resize and WebP re-encoding; only the final file, checked
+  against 64 KiB, is read into JavaScript. Thumbnails use batched digests and a session LRU cache.
+- **Backup & devices:** separate screens for backup (photos optional), restore, recovery key,
+  adding a till, sending and receiving changes, confirmations both ways, and exchange status with
+  deferred retry and diagnostics. Mobile stays on the standard transfer profile.
+- **Receipts:** OS share (text) and Android printing/PDF (`expo-print`) from saved facts;
+  cancellation never changes the sale. Direct thermal-printer adapters remain hardware work.
+- **Staff:** effective permissions by group, grants/revocations, suspension, code replacement;
+  editing is limited to the owner on a device whose pairing allows staff management.
 
 ## Read/refresh contract
 
-`application/queries` takes the current opaque operation context. Every query rechecks
-current authority and derives the shop from that context. Catalogue, ledger, expense,
-purchase and receipt pages are bounded (default 30, maximum 100), with keyset continuation.
-Search uses literal name prefixes plus exact barcode/SKU or phone prefixes where relevant.
-Forward migration 19 adds operational indexes/category device ordering; 20 adds immutable
-returns. Migrations 1–18 remain unchanged.
+Queries take the current opaque context and recheck authority. Lists are bounded (30 rows per
+page, at most 10 pages loaded) and re-read their loaded pages after a commit so position is kept.
+Search uses the FTS5 word index (migration 24) beside name prefixes and exact barcodes;
+statements show the running balance. Core additions for mobile: `application/records` single-record reads, `stockLevels` and
+`productPhotoDigests` batch reads (≤ 100 IDs), a product `categoryId` page filter, and
+`product_photos` commits now invalidate the `products` domain.
 
-Both SQLite adapters publish conservative changed-domain revisions only after the outer
-commit, with transaction depth already reset. Nested financial fan-out sends one revision
-notification; a rollback sends none. Savepoint work may conservatively invalidate a domain
-whose changes were rolled back inside a successful outer transaction. Direct repository
-writes/import appliers use the same driver. Observer errors cannot turn durable success
-into command failure. React subscribes to revisions and rereads SQLite; only the current
-bounded page and transient form/cart values are retained in the view. No global store
-mirrors the database. Active-database replacement unmounts subscriptions and old handles.
+## Verification
 
-Payment selectors expose names/details without balances under the corresponding payment
-capability. Financial balances require `finance.accounts.view` and `cash.view`. Receipt
-history/details enforce `sales.view_own` by creating actor when `sales.view` is absent.
-Report-only debt/stock readers enforce report capabilities independently of catalogue
-view rights. Every command still enforces its own permissions/reference scope.
-
-## Verification and acceptance
-
-Real SQLite tests cover a shop day and restart, whole-unit entry, exact partial returns,
-rollback after financial fan-out, literal/bounded search, duplicate-name pagination,
-query-plan index use, direct cashier/owner permissions, foreign IDs, revocation and lock.
-Real SQLite behind the synchronous native interface checks commit notifications. Real
-Ed25519 replica tests cover category dependencies and reordered/duplicate/conflicting
-return chains. These checks do not prove installed React Native rendering or native hardware.
-
-See [F4 native validation](f4-native-validation.md). F4 remains in progress until the
-installed full-day workflow, chosen receipt hardware/scanner, accessibility and
-measured low-cost-device budgets pass. No unsupported latency/memory
-budget is claimed from desktop SQLite or Metro export.
+`npm run test -w @kolo/mobile` covers preferences, localization, file recognition, drafts,
+destination rules, failure mapping, edit versions and receipt output; core tests cover the new
+reads and report views. `npm run benchmark:mobile:host` builds the large fixture (10 000
+products, 100 000 movements, 2 000-entry statement and event backlog) and times the core calls
+on the host — a baseline, not an Android measurement. Rendering, native pickers, printing,
+keystore, scanners, TalkBack and device performance need the installed procedures in
+[F4 native validation](f4-native-validation.md) and [mobile parity](mobile-parity.md).

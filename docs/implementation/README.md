@@ -10,7 +10,8 @@ the architecture changes. The plan describes work, not a claim that work is done
 | [Plan](plan.md) | Dependencies, work packages, methods, acceptance gates |
 | [Desktop release](desktop-release.md) | Installers, signing, upgrade/recovery checks and platform evidence |
 | [Desktop implementation](desktop.md) | Desktop-first priority, current foundation and first usable F5 milestone |
-| [Mobile operations](mobile.md) | F4 screens, bounded local reads, returns and refresh contract |
+| [Mobile operations](mobile.md) | Mobile structure, session/lock, workflows and refresh contract |
+| [Mobile parity](mobile-parity.md) | Desktop-to-mobile action checklist, platform differences, device gates |
 | [F4 native validation](f4-native-validation.md) | Full offline shop-day, scanner/receipt and measured device gates |
 | [Business core](business-core.md) | Existing operations, invariants, planned service surface |
 | [Exchange](exchange.md) | Journal, import/export, trust, replay, backup, Bluetooth |

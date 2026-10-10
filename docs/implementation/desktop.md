@@ -145,8 +145,8 @@ refused with `request_conflict`, which the UI shows as "changed in the meantime,
 The host advances the version past the stored one, so a local edit wins locally under
 last-write-wins even when this clock is behind the edit it replaces.
 
-Edits cover name, unit, barcode, prices, category and low-stock level of an active
-product. Whole/fractional quantity is fixed after creation. Archived products cannot be
+Edits cover name, unit, barcode, prices, main category, other categories (`otherCategoryIds`,
+ADR-028) and low-stock level of an active product. Whole/fractional quantity is fixed after creation. Archived products cannot be
 edited, sold, scanned or stocked until restored; archiving needs both edit and archive
 authority, and price changes still need `products.price` inside core.
 
@@ -196,7 +196,8 @@ function under its own permission: summary/profit/cash flow/stock value under
 `reports.financial`, sales breakdowns under `reports.sales`, best sellers and stock alerts
 under `reports.inventory`, customer debts under `reports.customers`, purchases and
 supplier debts under `reports.suppliers`. Results are serializable and row lists are
-capped at 500 (stock alerts at 100) with a `truncated` flag; totals stay exact. The
+capped at 500 (stock alerts at 100) with a `truncated` flag; totals stay exact. Report and
+analytics assembly lives in core `application/report-views`, shared with mobile. The
 Reports section shows stat tiles and tables only. Commands live in `electron/reports.ts`.
 `KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT` optionally saves the fixture summary screen.
 
@@ -212,7 +213,8 @@ result and per-point/per-product profit need `reports.financial`; top customers 
 
 Figures come from core `data/reports/analytics.ts` over the same lines and returns as the
 reports: a trend summed over its buckets equals `profitBetween`; product figures are net
-of returns and before bill discounts; busy hours count sales where they were rung up;
+of bill discounts (allocated per line as returns refund them) and of returns, and sum to the
+period's revenue; busy hours count sales where they were rung up;
 top customers are named customers only. The Analytics section (Recharts) shows KPI tiles
 with deltas, a revenue/profit line chart, a weekday × hour heatmap, best-seller bars,
 category and payment-method donuts (five slices plus "Others") and a customer table;
@@ -236,9 +238,11 @@ Sale returns need `sales.refund`; purchase returns need `purchases.create` and
 `purchases.pay`. The UI reads returnable lines and remaining quantities, previews the exact
 value with core `previewReturn`, then records against the predecessor (`priorId`) it was
 shown. A return recorded meanwhile is refused as `stale_return` with a reload, never
-double-returned. The refund (one account) is at most the value; the remainder is credited
-to the customer or deducted from the supplier debt, and without a counterparty the refund
-must cover the whole value. The request ID names the return; a retry matches kind,
+double-returned. The refund (one account) is at most the value and at most
+`ReturnSourceView.refundableMinor` — what the original settled (sale payments, or a
+delivery's total less what it left owing) less earlier refunds — so cash never changes hands
+for goods that were not paid for; the remainder is credited to the customer or deducted from
+the supplier debt, and without a counterparty the refund must cover the whole value. The request ID names the return; a retry matches kind,
 original, reason, item set and refund set. Core `ExchangeError` codes are translated to
 desktop failures. Receipts show returned value. Commands live in `electron/returns.ts`.
 

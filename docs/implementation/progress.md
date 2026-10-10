@@ -1018,3 +1018,81 @@ Validation: core tests (real SQLite) check that a trend sums exactly to `profitB
 - **Large files:** [ADR-027](../adr/ADR-027-large-files-and-product-photos.md). Transfer limits are a standard (unchanged) or large profile (1 GiB snapshot, 360 MiB payload, 496 MiB file; photo storage 256 MiB). Desktop Settings has an owner-only, per-computer "allow large files" switch stored in `preferences.json`. Readers check the active profile, including declared header lengths, before key derivation; the bounded file reader now allocates by file size rather than by cap. Mobile stays standard.
 
 Validation: core tests cover header inspection (WebP, JPEG, PNG/SVG refused, bounds), store/replace/remove with audit and no exchange event, permission checks, scope, the shop limit (standard and large), schema checks, the 21→22 upgrade, backups with and without photos (restored and stripped), and a 33 MiB incompressible payload written and read under the large profile but refused under the standard one before key derivation. Desktop tests cover the photo commands, data URLs, malformed input, the owner-only switch and its persistence, and file reads past the standard cap. The Electron workflow smoke picks a 1200×800 PNG through the real file input, checks a 320×320 WebP is stored and shown on the product page and till tile.
+
+### Logic and arithmetic audit fixes — 2026-10-10
+
+An audit of the money and quantity rules before mobile work found the core arithmetic exact (BigInt intermediates, half-away-from-zero rounding, largest-remainder discount allocation, cumulative partial returns) and fixed the following.
+
+- **Report breakdowns add up.** Sales by product, category, cashier and customer, product movement (fast/slow movers) and analytics product profit/sales were gross of whole-bill discounts and (except analytics) of returns, so they did not sum to `salesBetween`; analytics also left a discounted line's bill-discount share behind as revenue after a full return. Core `netSaleFacts` now values each sale line net of its allocated bill discount (`discountedLineTotals`, the allocation returns refund against) and each return line negative in its period; every breakdown is built from it. Sales by account is net of sale refunds; purchases by wholesaler is net of purchase returns. Busy-hours activity keeps counting sales where they were rung up.
+- **Refunds are capped at what was settled.** A return's cash refund may not exceed `ReturnSource.refundableMinor`: the sale's payments (or a delivery's door payments, its total less what it left owing) less earlier refunds of the same original. The rest goes to the customer's or supplier's ledger. Enforced in the shared `applyReturn`, so replay agrees; desktop and mobile return forms show the limit. A shop that recorded an over-refund before this change would see that return refused on replay.
+- **Mobile-safe plurals.** `formatQuantityWithUnit` no longer calls `Intl.PluralRules` (Hermes may lack it); the French/English rules are written out and checked against `Intl` at every thousandth from −3 to 3.
+- **Cart and entry.** `view()` reports `INVALID_AMOUNT` for negative or fractional prices, discounts, quantities and payments instead of showing a total from them (a negative bill discount used to raise the total). `parseAmount` refuses grouping that mixes dots and commas ("1.000,500").
+- **Stock counts per branch.** With more than one branch, `countStock` compares against the counted branch's movements; single-branch shops keep comparing the whole ledger.
+- **Legacy v1 appliers** use the shared `saleTotals`/`purchaseTotals`, so an overpaid or over-discounted sale or delivery is refused instead of applied.
+
+Not changed (policy, signalled in reports): profit counts no shrinkage from damage or count differences, and uncosted lines contribute revenue with no cost (counted in `linesWithoutCost`).
+
+Validation: a seeded property test over real SQLite (random line and bill discounts, split and credit payments, partial and full returns crossing month boundaries) checks every breakdown against an independent BigInt oracle for four periods; regression tests for the fully returned discounted line, purchases by wholesaler, refund caps (credit sale, successive returns, purchases, replayed over-refund committing nothing) and branch-scoped counts; v1 applier refusals; cart and parsing cases; plural rules without `Intl.PluralRules`. The new report, refund and branch tests were run against the previous code and fail there.
+
+### Mobile parity reorganization — 2026-10-10
+
+Implemented the mobile parity plan's software stages A–G on the existing Expo app (see
+[mobile](mobile.md) and the [parity checklist](mobile-parity.md)):
+
+- Four permission-filtered destinations with stack navigation, predictable Back, discard
+  confirmation, side rail and list/detail on wide screens; desktop-derived light/dark theme and
+  shared native primitives; appearance stored beside language.
+- Session generations own screens, drafts and async results. "Stay signed in" matches the desktop
+  (on by default; keystore-held remembered user; Lock and turning it off forget it). With it off,
+  leaving the app locks it, but pickers/share/print opened by KOLO keep the session.
+- Two-step shop creation, file-type recognition for import, guided recovery/pending/joining, and a
+  replacement restore that moves the active slot only on success.
+- Three-step selling with stable checkout identity, change calculation and named credit; product,
+  people, purchase, finance, expense and return screens with version checks and confirmations.
+- All desktop report kinds and analytics via new core `application/report-views` (the desktop now
+  delegates to it), native bar/trend/heatmap/share charts with figure tables; product photos via
+  `expo-image-picker`/`expo-image-manipulator`; printing/PDF via `expo-print`; Backup & devices hub.
+- Core: `application/records`, `stockLevels`, `productPhotoDigests`, product `categoryId` filter,
+  photo commits invalidate `products`. Commit-triggered event sealing replaces the 3 s loop.
+- Removed the superseded mobile screens and the unused legacy server-login screen.
+
+### Verification
+
+`npm run check`, `npm run bundle:mobile` and `npm run benchmark:mobile:host` (host baseline in the
+parity guide). No installed Android build, native picker/print, TalkBack or device performance
+check has run; those gates remain open.
+
+### Additional product categories and Sell fixes — 2026-10-10
+
+[ADR-028](../adr/ADR-028-additional-product-categories.md): one main category (reports) plus up to
+20 others (browsing), migration 23, signed `PRODUCT_CATEGORIES_SET` under last-write-wins; mobile
+and desktop product forms edit them and category filters match either. Mobile Sell lists the whole
+catalogue when no search or category is chosen, tapping a product no longer opens the keyboard
+(scans keep scanner focus), and inline quantity/discount rows share one label above the row.
+Verified with core replica and desktop handler tests, `npm run check` and the Android bundle.
+
+### Word search, running balances and till categories — 2026-10-10
+
+Migration 24 adds an FTS5 index (`catalogue_search`, `unicode61 remove_diacritics 2`) over product
+name/SKU/barcode/brand/description and customer/supplier name/phone/contact, kept current by
+triggers. Searches match any word (all words required, the last as a prefix while still being typed)
+beside the existing name-prefix and exact-barcode rules; typed operators are inert. Backups omit the
+derived index and restore/pairing rebuild it. Statements carry `balance_minor`, the exact running
+balance from a window sum over the whole ledger, shown on mobile and desktop. The desktop till has a
+category filter (main or other category). JSON functions were reviewed and not adopted: only small
+permission lists are stored as JSON. FTS5 is compiled into Node, Electron (SQLite 3.53.4) and the
+expo-sqlite Android build; its installed-device behaviour still needs the native gate.
+
+### Device reset, import crash and restored staff — 2026-10-10
+
+- Reset (owner only, typed shop name and owner code): mobile Settings → "Réinitialiser ce téléphone"
+  and desktop Settings → "Réinitialiser cet ordinateur" erase every shop file (active, safety copies,
+  staging, slot pointer), the protected credentials they name (core `identity/device-reset`) and the
+  remembered session, then reopen empty. Device preferences stay.
+- Mobile crash after importing a backup: the replaced database was closed while the old screens could
+  still query it, which aborts inside expo-sqlite. Replaced databases now close after those screens
+  unmount, and the native adapter ignores a second close and refuses queries on a closed handle.
+- Restoring another shop from Backup & devices used the same-shop path and was refused as another
+  shop's file; it now uses the replacement path shared with the unlock screen.
+- After a restore or pairing, staff codes belong to the other device: unlock lists (mobile and desktop)
+  show only members with a code here, and mobile explains that the owner sets the others in Staff.

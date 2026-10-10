@@ -22,6 +22,7 @@ Desktop authority and operations. The opaque core context never leaves this host
 class DesktopApplication implements ShopService {
   constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & {
     readonly onActivated: (database: Database) => Promise<void>;
+    readonly onReset?: () => void;
 }, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences());
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   initialize(): Promise<void>;
@@ -56,6 +57,9 @@ class DesktopApplication implements ShopService {
   setRememberSession(input: unknown): Promise<Result<SessionPreferences>>;
   /** Owner switch for this computer's transfer-file and photo-storage limits. */
   setLargeFiles(input: unknown): Promise<Result<SessionPreferences>>;
+  /** Erases this computer's shops after the typed shop name and the owner's code. The session is locked
+   * and the remembered user forgotten before the host deletes files, after this command has answered. */
+  resetComputer(input: unknown): Promise<Result<null>>;
   /** Owner recovery uses the separate protected key and leaves the installation locked. */
   recoverAccess(input: unknown): Promise<Result<WorkspaceView>>;
   /** Returns a protected owner recovery key only after current authority and fresh secret proof. */
@@ -454,8 +458,8 @@ report(host: Host, input: unknown): ReportResult;
 ```
 
 Light analytics for one period under reports.sales, with profit and customer sections only for
-actors holding reports.financial and reports.customers. The period is at most about ten years; the
-offset is the shop's local minutes east of UTC; an explicit bucket must keep the trend to 1,000 points.
+actors holding reports.financial and reports.customers. Figures come from core
+`application/report-views`, shared with the mobile client.
 
 ```ts
 analytics(host: Host, input: unknown): AnalyticsResult;
@@ -463,7 +467,7 @@ analytics(host: Host, input: unknown): AnalyticsResult;
 
 ## [apps/desktop/src/electron/returns.ts](../../apps/desktop/src/electron/returns.ts)
 
-Returnable lines and remaining quantities at original net values.
+Returnable lines and remaining quantities at original net values, and how much may still be refunded.
 
 ```ts
 returnSource(host: Host, input: unknown): ReturnSourceView;
@@ -820,6 +824,7 @@ export interface ProductView {
     readonly active: boolean;
     readonly version: string;
     readonly photo?: string;
+    readonly otherCategoryIds?: readonly string[];
 }
 ```
 
@@ -848,9 +853,12 @@ export interface StockMovementView {
 
 Catalogue pages may include archived rows for restoring them.
 
+`categoryId` (products only) keeps products whose main or additional category it is.
+
 ```ts
 export type CatalogueQuery = SessionRequest & PageQuery & {
     readonly includeInactive?: boolean;
+    readonly categoryId?: string;
 };
 ```
 
@@ -904,6 +912,7 @@ export interface ProductUpdateRequest extends SessionRequest {
     readonly purchasePriceMinor?: number;
     readonly categoryId?: string;
     readonly minimumStockThousandths: number;
+    readonly otherCategoryIds?: readonly string[];
 }
 ```
 
@@ -1001,6 +1010,7 @@ export interface StatementEntryView {
     readonly saleId?: string;
     readonly purchaseId?: string;
     readonly note?: string;
+    readonly balanceMinor: number;
 }
 ```
 
@@ -1133,183 +1143,6 @@ export interface CashCountView {
 }
 ```
 
-Report kinds, each under its own core report permission.
-
-```ts
-export type ReportKind = "dashboard" | "sales" | "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "cashFlow" | "valuation" | "fastMoving" | "stockAlerts" | "customerDebt" | "supplierDebt" | "purchases";
-```
-
-A labelled total; `count` is lines, transactions or entries depending on the report.
-
-```ts
-export interface ReportLine {
-    readonly key: string;
-    readonly label: string;
-    readonly totalMinor: number;
-    readonly count: number;
-}
-```
-
-Serializable report results. Row lists are capped; `truncated` says more rows exist.
-
-```ts
-export type ReportResult = {
-    readonly kind: "dashboard";
-    readonly salesMinor: number;
-    readonly transactions: number;
-    readonly grossProfitMinor: number;
-    readonly costMinor: number;
-    readonly linesWithoutCost: number;
-    readonly expensesMinor: number;
-    readonly netResultMinor: number;
-    readonly customerDebtMinor: number;
-    readonly supplierDebtMinor: number;
-    readonly lowStock: number;
-} | {
-    readonly kind: "sales";
-    readonly totalMinor: number;
-    readonly transactions: number;
-    readonly itemsSoldThousandths: number;
-} | {
-    readonly kind: "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "customerDebt" | "supplierDebt";
-    readonly lines: readonly ReportLine[];
-    readonly truncated: boolean;
-} | {
-    readonly kind: "cashFlow";
-    readonly accounts: readonly {
-        readonly accountId: string;
-        readonly name: string;
-        readonly inMinor: number;
-        readonly outMinor: number;
-        readonly netMinor: number;
-        readonly closingMinor: number;
-    }[];
-} | {
-    readonly kind: "valuation";
-    readonly totalMinor: number;
-    readonly uncosted: number;
-    readonly truncated: boolean;
-    readonly products: readonly {
-        readonly productId: string;
-        readonly name: string;
-        readonly onHandThousandths: number;
-        readonly unitCostMinor?: number;
-        readonly valueMinor?: number;
-    }[];
-} | {
-    readonly kind: "fastMoving";
-    readonly products: readonly {
-        readonly productId: string;
-        readonly name: string;
-        readonly soldThousandths: number;
-        readonly revenueMinor: number;
-        readonly onHandThousandths: number;
-    }[];
-} | {
-    readonly kind: "stockAlerts";
-    readonly products: readonly {
-        readonly productId: string;
-        readonly name: string;
-        readonly onHandThousandths: number;
-    }[];
-    readonly truncated: boolean;
-} | {
-    readonly kind: "purchases";
-    readonly totalMinor: number;
-    readonly deliveries: number;
-    readonly bySupplier: readonly ReportLine[];
-    readonly truncated: boolean;
-};
-```
-
-How an analytics trend is sliced; weeks start on Monday.
-
-```ts
-export type AnalyticsBucket = "hour" | "day" | "week" | "month";
-```
-
-One trend point keyed by local `YYYY-MM-DDTHH`, `YYYY-MM-DD` (day or week's Monday) or `YYYY-MM`; profit only with reports.financial.
-
-```ts
-export interface AnalyticsPoint {
-    readonly key: string;
-    readonly revenueMinor: number;
-    readonly transactions: number;
-    readonly grossProfitMinor?: number;
-}
-```
-
-Sales started in one local weekday (0 = Sunday) and hour, summed over the period; empty cells are absent.
-
-```ts
-export interface AnalyticsCell {
-    readonly weekday: number;
-    readonly hour: number;
-    readonly transactions: number;
-    readonly revenueMinor: number;
-}
-```
-
-A product's net sales over the period, before bill discounts; profit only with reports.financial.
-
-```ts
-export interface AnalyticsProduct {
-    readonly productId: string;
-    readonly name: string;
-    readonly soldThousandths: number;
-    readonly revenueMinor: number;
-    readonly grossProfitMinor?: number;
-}
-```
-
-A named customer's net buying over the period.
-
-```ts
-export interface AnalyticsCustomer {
-    readonly customerId: string;
-    readonly name: string;
-    readonly transactions: number;
-    readonly revenueMinor: number;
-    readonly lastPurchaseAt: string;
-}
-```
-
-Light analytics for one period. Sections the actor may not read are absent rather than failing the
-whole view: `profit` and per-point/product profit need reports.financial, `customers` needs
-reports.customers; the rest needs reports.sales. `previous` is the equal-length period just before.
-
-```ts
-export interface AnalyticsResult {
-    readonly bucket: AnalyticsBucket;
-    readonly sales: {
-        readonly revenueMinor: number;
-        readonly transactions: number;
-        readonly itemsSoldThousandths: number;
-        readonly averageBasketMinor: number;
-    };
-    readonly previous: {
-        readonly revenueMinor: number;
-        readonly transactions: number;
-        readonly grossProfitMinor?: number;
-    };
-    readonly profit?: {
-        readonly grossProfitMinor: number;
-        readonly costMinor: number;
-        readonly marginBasisPoints?: number;
-        readonly linesWithoutCost: number;
-        readonly expensesMinor: number;
-        readonly netResultMinor: number;
-    };
-    readonly trend: readonly AnalyticsPoint[];
-    readonly activity: readonly AnalyticsCell[];
-    readonly products: readonly AnalyticsProduct[];
-    readonly productsTruncated: boolean;
-    readonly categories: readonly ReportLine[];
-    readonly accounts: readonly ReportLine[];
-    readonly customers?: readonly AnalyticsCustomer[];
-}
-```
-
 What remains returnable from a sale or purchase, at the original net prices or costs.
 
 ```ts
@@ -1318,6 +1151,7 @@ export interface ReturnSourceView {
     readonly originalId: string;
     readonly priorId?: string;
     readonly hasCounterparty: boolean;
+    readonly refundableMinor: number;
     readonly items: readonly {
         readonly id: string;
         readonly name: string;
@@ -1341,8 +1175,8 @@ export interface ReturnPreview {
 ```
 
 Records a partial or full return against the predecessor the preview was made from. The
-refund (sale: paid out; purchase: received back) is at most the value; any remainder goes to
-the customer's or supplier's ledger. A return recorded meanwhile makes this one stale.
+refund (sale: paid out; purchase: received back) is at most the value and at most the source's
+`refundableMinor`; any remainder goes to the customer's or supplier's ledger. A return recorded meanwhile makes this one stale.
 
 ```ts
 export interface ReturnRequest extends SessionRequest {
@@ -1520,6 +1354,10 @@ export interface ShopService {
     setLargeFiles(input: SessionRequest & {
         readonly enabled: boolean;
     }): Promise<Result<SessionPreferences>>;
+    resetComputer(input: SessionRequest & {
+        readonly confirmedName: string;
+        readonly secret: string;
+    }): Promise<Result<null>>;
     recoveryKey(input: SessionRequest & {
         readonly secret: string;
     }): Promise<Result<string | null>>;
@@ -1933,7 +1771,7 @@ decodeSignedJournalBatch(bytes: string): { batch: { format: "kolo.events"; forma
 Strict v2 payload schemas for every current business/authority event. No credentials/tokens.
 
 ```ts
-const EVENT_PAYLOAD_SCHEMAS: { readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly PURCHASE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly CATEGORY_SAVED: ZodObject<{ category: ZodObject<{ id: ZodUUID; name: ZodString; active: ZodBoolean; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_SAVED: ZodObject<{ product: ZodObject<{ id: ZodUUID; category_id: ZodOptional<ZodUUID>; name: ZodString; unit: ZodString; selling_price_minor: ZodNumber; purchase_price_minor: ZodOptional<ZodNumber>; sku: ZodOptional<ZodString>; barcode: ZodOptional<ZodString>; description: ZodOptional<ZodString>; brand: ZodOptional<ZodString>; divisible: ZodOptional<ZodBoolean>; active: ZodOptional<ZodBoolean>; tax_rate_basis_points: ZodOptional<ZodNumber>; minimum_stock: ZodOptional<ZodNumber>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly CUSTOMER_SAVED: ZodObject<{ customer: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; credit_limit_minor: ZodOptional<ZodNumber>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_SAVED: ZodObject<{ supplier: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; contact: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly ACCOUNT_SAVED: ZodObject<{ account: ZodObject<{ id: ZodUUID; branch_id: ZodOptional<ZodUUID>; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; number: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SALE_COMPLETED: ZodObject<{ sale: ZodObject<{ id: ZodUUID; number: ZodString; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; name: ZodString; unit_price_minor: ZodNumber; quantity: ZodNumber; discount_minor: ZodOptional<ZodNumber>; tax_rate_basis_points: ZodOptional<ZodNumber>; unit_cost_minor: ZodOptional<ZodNumber>; }, $strict>>; customer_id: ZodOptional<ZodUUID>; credit_transaction_id: ZodOptional<ZodUUID>; discount_minor: ZodOptional<ZodNumber>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly PURCHASE_RECORDED: ZodObject<{ purchase: ZodObject<{ id: ZodUUID; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; unit_cost_minor: ZodNumber; quantity: ZodNumber; }, $strict>>; supplier_id: ZodOptional<ZodUUID>; supplier_transaction_id: ZodOptional<ZodUUID>; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reason: ZodString; occurred_at: ZodISODateTime; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CUSTOMER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; customer_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; supplier_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly STOCK_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CASH_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; ADJUSTMENT: "ADJUSTMENT"; CASH_IN: "CASH_IN"; CASH_OUT: "CASH_OUT"; TRANSFER_IN: "TRANSFER_IN"; TRANSFER_OUT: "TRANSFER_OUT"; }>; amount_minor: ZodNumber; counterpart_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>>; }, $strict>; readonly EXPENSE_RECORDED: ZodObject<{ expense: ZodObject<{ id: ZodUUID; category: ZodEnum<{ OTHER: "OTHER"; RENT: "RENT"; ELECTRICITY: "ELECTRICITY"; WATER: "WATER"; TRANSPORT: "TRANSPORT"; SALARY: "SALARY"; PACKAGING: "PACKAGING"; MAINTENANCE: "MAINTENANCE"; INTERNET: "INTERNET"; MARKETING: "MARKETING"; }>; account_id: ZodUUID; amount_minor: ZodNumber; occurred_at: ZodISODateTime; description: ZodOptional<ZodString>; reference: ZodOptional<ZodString>; reverses_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly WORKSPACE_CREATED: ZodObject<{ business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; accounts: ZodArray<ZodObject<{ id: ZodUUID; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; }, $strict>>; }, $strict>; readonly LEGACY_WORKSPACE_ADOPTED: ZodObject<{ business_id: ZodUUID; owner_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; provenance: ZodLiteral<"unsigned_v1_snapshot">; }, $strict>; readonly MEMBER_CREATED: ZodObject<{ user_id: ZodUUID; name: ZodString; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodLiteral<1>; }, $strict>; readonly PERMISSION_GRANTED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_REVOKED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly MEMBER_SUSPENDED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_REINSTATED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_ACCESS_RESET: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly OWNER_ACCESS_RECOVERED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; };
+const EVENT_PAYLOAD_SCHEMAS: { readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly PURCHASE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly CATEGORY_SAVED: ZodObject<{ category: ZodObject<{ id: ZodUUID; name: ZodString; active: ZodBoolean; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_SAVED: ZodObject<{ product: ZodObject<{ id: ZodUUID; category_id: ZodOptional<ZodUUID>; name: ZodString; unit: ZodString; selling_price_minor: ZodNumber; purchase_price_minor: ZodOptional<ZodNumber>; sku: ZodOptional<ZodString>; barcode: ZodOptional<ZodString>; description: ZodOptional<ZodString>; brand: ZodOptional<ZodString>; divisible: ZodOptional<ZodBoolean>; active: ZodOptional<ZodBoolean>; tax_rate_basis_points: ZodOptional<ZodNumber>; minimum_stock: ZodOptional<ZodNumber>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_CATEGORIES_SET: ZodObject<{ product_id: ZodUUID; category_ids: ZodArray<ZodUUID>; updated_at: ZodISODateTime; }, $strict>; readonly CUSTOMER_SAVED: ZodObject<{ customer: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; credit_limit_minor: ZodOptional<ZodNumber>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_SAVED: ZodObject<{ supplier: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; contact: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly ACCOUNT_SAVED: ZodObject<{ account: ZodObject<{ id: ZodUUID; branch_id: ZodOptional<ZodUUID>; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; number: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SALE_COMPLETED: ZodObject<{ sale: ZodObject<{ id: ZodUUID; number: ZodString; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; name: ZodString; unit_price_minor: ZodNumber; quantity: ZodNumber; discount_minor: ZodOptional<ZodNumber>; tax_rate_basis_points: ZodOptional<ZodNumber>; unit_cost_minor: ZodOptional<ZodNumber>; }, $strict>>; customer_id: ZodOptional<ZodUUID>; credit_transaction_id: ZodOptional<ZodUUID>; discount_minor: ZodOptional<ZodNumber>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly PURCHASE_RECORDED: ZodObject<{ purchase: ZodObject<{ id: ZodUUID; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; unit_cost_minor: ZodNumber; quantity: ZodNumber; }, $strict>>; supplier_id: ZodOptional<ZodUUID>; supplier_transaction_id: ZodOptional<ZodUUID>; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reason: ZodString; occurred_at: ZodISODateTime; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CUSTOMER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; customer_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; supplier_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly STOCK_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CASH_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; ADJUSTMENT: "ADJUSTMENT"; CASH_IN: "CASH_IN"; CASH_OUT: "CASH_OUT"; TRANSFER_IN: "TRANSFER_IN"; TRANSFER_OUT: "TRANSFER_OUT"; }>; amount_minor: ZodNumber; counterpart_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>>; }, $strict>; readonly EXPENSE_RECORDED: ZodObject<{ expense: ZodObject<{ id: ZodUUID; category: ZodEnum<{ OTHER: "OTHER"; RENT: "RENT"; ELECTRICITY: "ELECTRICITY"; WATER: "WATER"; TRANSPORT: "TRANSPORT"; SALARY: "SALARY"; PACKAGING: "PACKAGING"; MAINTENANCE: "MAINTENANCE"; INTERNET: "INTERNET"; MARKETING: "MARKETING"; }>; account_id: ZodUUID; amount_minor: ZodNumber; occurred_at: ZodISODateTime; description: ZodOptional<ZodString>; reference: ZodOptional<ZodString>; reverses_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly WORKSPACE_CREATED: ZodObject<{ business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; accounts: ZodArray<ZodObject<{ id: ZodUUID; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; }, $strict>>; }, $strict>; readonly LEGACY_WORKSPACE_ADOPTED: ZodObject<{ business_id: ZodUUID; owner_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; provenance: ZodLiteral<"unsigned_v1_snapshot">; }, $strict>; readonly MEMBER_CREATED: ZodObject<{ user_id: ZodUUID; name: ZodString; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodLiteral<1>; }, $strict>; readonly PERMISSION_GRANTED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_REVOKED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly MEMBER_SUSPENDED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_REINSTATED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_ACCESS_RESET: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly OWNER_ACCESS_RECOVERED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; };
 ```
 
 Current supported event names; unknown signed names/versions can be retained unapplied.
@@ -1986,7 +1824,7 @@ parseJournalEnvelope(input: unknown): { event_id: string; business_id: string; o
 Rejects unknown current payload fields; unsupported signed versions are distinguishable.
 
 ```ts
-parseEventPayload<T extends EventType>(type: T, version: number, input: unknown): output<{ readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<...>>; refunds: ZodArray<...>; debt_transaction_id: ZodOptional<...>; }, $strict>; }, $strict>; ... 21 more ...; readonly OWNER_ACCESS_REC...;
+parseEventPayload<T extends EventType>(type: T, version: number, input: unknown): output<{ readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<...>>; refunds: ZodArray<...>; debt_transaction_id: ZodOptional<...>; }, $strict>; }, $strict>; ... 22 more ...; readonly OWNER_ACCESS_REC...;
 ```
 
 ## [packages/contracts/src/index.ts](../../packages/contracts/src/index.ts)
@@ -2544,7 +2382,8 @@ saveAccount(context: OperationContext, input: CommandInput<SaveAccount>): boolea
 ```
 
 Counts actual stock in thousandths under inventory.count. Computes a compensating
-delta against current stock inside the write transaction; a matching count records
+delta against current stock (the counted branch's, when the shop has several)
+inside the write transaction; a matching count records
 audit only. Negative observed quantities and fractional indivisible units are refused.
 An optional caller request ID becomes the movement ID and is kept in the local audit,
 so adapters can recognise a retried count instead of recounting against later sales.
@@ -2579,6 +2418,19 @@ Saves a category under product create/edit/archive authority. LWW details, v2 ev
 
 ```ts
 saveCategory(context: OperationContext, input: Omit<Category, "businessId" | "updatedByDevice">): boolean;
+```
+
+Sets a product's additional categories under products.edit (last write wins, like product
+details). The main category stays on the product; it is removed from this set, duplicates are
+dropped, at most 20 remain, and every category must belong to the shop. The set, its v2 event and
+audit commit together. Returns false when a newer set is already stored.
+
+```ts
+setProductCategories(context: OperationContext, input: {
+    readonly productId: string;
+    readonly categoryIds: readonly string[];
+    readonly updatedAt: string;
+}): boolean;
 ```
 
 ## [packages/core/src/application/pairing.ts](../../packages/core/src/application/pairing.ts)
@@ -2684,6 +2536,13 @@ A product's photo digest under products.view, without the bytes.
 productPhotoDigest(context: OperationContext, productId: string): string;
 ```
 
+Photo digests for up to 100 products in one read, under products.view; products without a photo
+on this device are absent. Lists use the digest as a cache key and load bytes for visible rows only.
+
+```ts
+productPhotoDigests(context: OperationContext, productIds: readonly string[]): ReadonlyMap<string, string>;
+```
+
 How many photos the shop holds against its storage limit (standard or large), under products.view.
 
 ```ts
@@ -2720,6 +2579,7 @@ export interface PageQuery {
     readonly after?: Cursor;
     readonly limit?: number;
     readonly includeInactive?: boolean;
+    readonly categoryId?: string | undefined;
 }
 ```
 
@@ -2763,6 +2623,14 @@ Reads actual signed stock under inventory.view; refuses a foreign/missing produc
 
 ```ts
 productStock(context: OperationContext, productId: string): StockLevel;
+```
+
+Signed stock for up to 100 products of this shop in one read, under inventory.view. Products of
+another shop or unknown IDs are absent from the result rather than refused, so a visible list page
+can ask for its rows without a query per row.
+
+```ts
+stockLevels(context: OperationContext, productIds: readonly string[]): ReadonlyMap<string, number>;
 ```
 
 Immutable receipt facts with historical line names/prices and exact totals.
@@ -2819,7 +2687,7 @@ Keyset receipt history, newest first, bounded 1–100 and scoped to current sale
 receipts(context: OperationContext, query: PageQuery = {}): Page<ReceiptSummary>;
 ```
 
-Bounded customer/supplier ledger page, newest first; preserves signs and references for statements.
+Bounded customer/supplier ledger page, newest first; preserves signs and references, and adds `balance_minor`, the running balance after each entry.
 
 ```ts
 statement(context: OperationContext, kind: "customer" | "supplier", id: string, query: PageQuery = {}): Page<Row>;
@@ -2877,6 +2745,315 @@ Bounded stock alerts include negative stock and configured reorder thresholds un
 
 ```ts
 stockAlertPage(context: OperationContext, query: PageQuery = {}): Page<{ id: string; name: string; quantity: number; }>;
+```
+
+## [packages/core/src/application/records.ts](../../packages/core/src/application/records.ts)
+
+One product of this shop under products.view, archived or not; undefined when absent or foreign.
+
+```ts
+product(context: OperationContext, id: string): Product;
+```
+
+One customer with the derived balance under customers.view, archived or not.
+
+```ts
+customer(context: OperationContext, id: string): Customer & { outstandingMinor: number; };
+```
+
+One supplier with the derived payable under suppliers.view, archived or not.
+
+```ts
+supplier(context: OperationContext, id: string): Supplier & { outstandingMinor: number; };
+```
+
+One financial account. Its derived balance is included only for actors holding both
+finance.accounts.view and cash.view; otherwise the account is readable under cash.move
+or finance.accounts.view without a balance.
+
+```ts
+account(context: OperationContext, id: string): Account & { onHandMinor?: number; };
+```
+
+A received delivery with historical lines, door payment and what it left owing.
+
+```ts
+export interface PurchaseDetail {
+    readonly id: string;
+    readonly occurredAt: string;
+    readonly supplierId?: string;
+    readonly supplierName: string;
+    readonly reference: string;
+    readonly lines: readonly {
+        readonly id: string;
+        readonly productId: string;
+        readonly name: string;
+        readonly quantity: number;
+        readonly unitCostMinor: number;
+    }[];
+    readonly totalMinor: number;
+    readonly paidMinor: number;
+    readonly outstandingMinor: number;
+    readonly returnedMinor: number;
+}
+```
+
+One purchase under purchases.view; undefined when absent or foreign.
+
+```ts
+purchase(context: OperationContext, id: string): PurchaseDetail;
+```
+
+One immutable expense entry with its account name and reversal state.
+
+```ts
+export interface ExpenseDetail {
+    readonly id: string;
+    readonly occurredAt: string;
+    readonly category: string;
+    readonly amountMinor: number;
+    readonly accountId: string;
+    readonly accountName: string;
+    readonly branchId?: string;
+    readonly description?: string;
+    readonly reference?: string;
+    readonly reversesId?: string;
+    readonly reversedBy?: string;
+}
+```
+
+One expense under expenses.view; undefined when absent or foreign.
+
+```ts
+expense(context: OperationContext, id: string): ExpenseDetail;
+```
+
+A product's additional categories (not its main one), named, with the version of the set an edit
+must advance past, under products.view.
+
+```ts
+productCategories(context: OperationContext, productId: string): { readonly categories: readonly { readonly id: string; readonly name: string; readonly active: boolean; }[]; readonly updatedAt?: string; };
+```
+
+## [packages/core/src/application/report-views.ts](../../packages/core/src/application/report-views.ts)
+
+Report kinds, each read under its own core report permission.
+
+```ts
+export type ReportKind = "dashboard" | "sales" | "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "cashFlow" | "valuation" | "fastMoving" | "stockAlerts" | "customerDebt" | "supplierDebt" | "purchases";
+```
+
+Every report kind, in the order the clients list them.
+
+```ts
+const REPORT_KINDS: readonly ReportKind[];
+```
+
+The permission each report kind is read under.
+
+```ts
+const REPORT_PERMISSION: Readonly<Record<ReportKind, "reports.financial" | "reports.sales" | "reports.inventory" | "reports.customers" | "reports.suppliers">>;
+```
+
+A labelled total; `count` is lines, transactions or entries depending on the report.
+
+```ts
+export interface ReportLine {
+    readonly key: string;
+    readonly label: string;
+    readonly totalMinor: number;
+    readonly count: number;
+}
+```
+
+Serializable report results. Row lists are capped; `truncated` says more rows exist. Totals stay exact.
+
+```ts
+export type ReportResult = {
+    readonly kind: "dashboard";
+    readonly salesMinor: number;
+    readonly transactions: number;
+    readonly grossProfitMinor: number;
+    readonly costMinor: number;
+    readonly linesWithoutCost: number;
+    readonly expensesMinor: number;
+    readonly netResultMinor: number;
+    readonly customerDebtMinor: number;
+    readonly supplierDebtMinor: number;
+    readonly lowStock: number;
+} | {
+    readonly kind: "sales";
+    readonly totalMinor: number;
+    readonly transactions: number;
+    readonly itemsSoldThousandths: number;
+} | {
+    readonly kind: "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "customerDebt" | "supplierDebt";
+    readonly lines: readonly ReportLine[];
+    readonly truncated: boolean;
+} | {
+    readonly kind: "cashFlow";
+    readonly accounts: readonly {
+        readonly accountId: string;
+        readonly name: string;
+        readonly inMinor: number;
+        readonly outMinor: number;
+        readonly netMinor: number;
+        readonly closingMinor: number;
+    }[];
+} | {
+    readonly kind: "valuation";
+    readonly totalMinor: number;
+    readonly uncosted: number;
+    readonly truncated: boolean;
+    readonly products: readonly {
+        readonly productId: string;
+        readonly name: string;
+        readonly onHandThousandths: number;
+        readonly unitCostMinor?: number;
+        readonly valueMinor?: number;
+    }[];
+} | {
+    readonly kind: "fastMoving";
+    readonly products: readonly {
+        readonly productId: string;
+        readonly name: string;
+        readonly soldThousandths: number;
+        readonly revenueMinor: number;
+        readonly onHandThousandths: number;
+    }[];
+} | {
+    readonly kind: "stockAlerts";
+    readonly products: readonly {
+        readonly productId: string;
+        readonly name: string;
+        readonly onHandThousandths: number;
+    }[];
+    readonly truncated: boolean;
+} | {
+    readonly kind: "purchases";
+    readonly totalMinor: number;
+    readonly deliveries: number;
+    readonly bySupplier: readonly ReportLine[];
+    readonly truncated: boolean;
+};
+```
+
+How an analytics trend is sliced; weeks start on Monday.
+
+```ts
+export type AnalyticsBucket = "hour" | "day" | "week" | "month";
+```
+
+One trend point keyed by local `YYYY-MM-DDTHH`, `YYYY-MM-DD` (day or week's Monday) or `YYYY-MM`; profit only with reports.financial.
+
+```ts
+export interface AnalyticsPoint {
+    readonly key: string;
+    readonly revenueMinor: number;
+    readonly transactions: number;
+    readonly grossProfitMinor?: number;
+}
+```
+
+Sales started in one local weekday (0 = Sunday) and hour, summed over the period; empty cells are absent.
+
+```ts
+export interface AnalyticsCell {
+    readonly weekday: number;
+    readonly hour: number;
+    readonly transactions: number;
+    readonly revenueMinor: number;
+}
+```
+
+A product's net sales over the period, before bill discounts; profit only with reports.financial.
+
+```ts
+export interface AnalyticsProduct {
+    readonly productId: string;
+    readonly name: string;
+    readonly soldThousandths: number;
+    readonly revenueMinor: number;
+    readonly grossProfitMinor?: number;
+}
+```
+
+A named customer's net buying over the period.
+
+```ts
+export interface AnalyticsCustomer {
+    readonly customerId: string;
+    readonly name: string;
+    readonly transactions: number;
+    readonly revenueMinor: number;
+    readonly lastPurchaseAt: string;
+}
+```
+
+Light analytics for one period. Sections the actor may not read are absent rather than failing the
+whole view: `profit` and per-point/product profit need reports.financial, `customers` needs
+reports.customers; the rest needs reports.sales. `previous` is the equal-length period just before.
+
+```ts
+export interface AnalyticsResult {
+    readonly bucket: AnalyticsBucket;
+    readonly sales: {
+        readonly revenueMinor: number;
+        readonly transactions: number;
+        readonly itemsSoldThousandths: number;
+        readonly averageBasketMinor: number;
+    };
+    readonly previous: {
+        readonly revenueMinor: number;
+        readonly transactions: number;
+        readonly grossProfitMinor?: number;
+    };
+    readonly profit?: {
+        readonly grossProfitMinor: number;
+        readonly costMinor: number;
+        readonly marginBasisPoints?: number;
+        readonly linesWithoutCost: number;
+        readonly expensesMinor: number;
+        readonly netResultMinor: number;
+    };
+    readonly trend: readonly AnalyticsPoint[];
+    readonly activity: readonly AnalyticsCell[];
+    readonly products: readonly AnalyticsProduct[];
+    readonly productsTruncated: boolean;
+    readonly categories: readonly ReportLine[];
+    readonly accounts: readonly ReportLine[];
+    readonly customers?: readonly AnalyticsCustomer[];
+}
+```
+
+Row cap for client views. Desktop shows up to 500 rows; phones pass a smaller cap.
+
+```ts
+export interface ViewOptions {
+    readonly rows?: number;
+}
+```
+
+One report under its core permission over `[from, until)` (ISO instants from shared local-day
+rules; empty or decade-plus periods are refused). Row lists are bounded by `options.rows`
+(default and maximum 500, stock alerts 100) with a `truncated` flag; totals stay exact.
+
+```ts
+reportView(context: OperationContext, kind: ReportKind, from: string, until: string, options: ViewOptions = {}): ReportResult;
+```
+
+Light analytics for one period under reports.sales, with profit and customer sections only for
+actors holding reports.financial and reports.customers. The period is at most about ten years; the
+offset is the shop's local minutes east of UTC (at most ±840); an explicit bucket must keep the
+trend to 1,000 points. Product and share lists are bounded by `options.rows`.
+
+```ts
+analyticsView(context: OperationContext, input: {
+    readonly from: string;
+    readonly until: string;
+    readonly offsetMinutes: number;
+    readonly bucket?: AnalyticsBucket | undefined;
+}, options: ViewOptions = {}): AnalyticsResult;
 ```
 
 ## [packages/core/src/application/reports.ts](../../packages/core/src/application/reports.ts)
@@ -3079,13 +3256,13 @@ Calculates exact discounted partial/full return value from current SQLite source
 previewReturn(context: OperationContext, kind: ReturnKind, originalId: string, items: readonly ReturnSelection[]): { totalMinor: number; costMinor: number; lines: readonly { originalItemId: string; productId: string; quantity: number; amountMinor: number; costMinor: number; }[]; } & { source: ReturnSource; };
 ```
 
-Partial/full sale return under sales.refund: stock in, cash refund out, remainder as customer credit; stale predecessor commits nothing.
+Partial/full sale return under sales.refund: stock in, cash refund out (at most `refundableMinor`, what the sale collected less earlier refunds), remainder as customer credit; stale predecessor commits nothing.
 
 ```ts
 returnSale(context: OperationContext, input: ReturnCommand): void;
 ```
 
-Partial/full purchase return under purchases.create/pay: stock out, refund cash in, remainder reduces supplier debt; no original facts are edited.
+Partial/full purchase return under purchases.create/pay: stock out, refund cash in (at most `refundableMinor`, what was paid at the door less earlier refunds), remainder reduces supplier debt; no original facts are edited.
 
 ```ts
 returnPurchase(context: OperationContext, input: ReturnCommand): void;
@@ -3894,6 +4071,26 @@ one divergence that would be hardest to find.
 openNativeDatabase(connection: NativeDatabase): Database;
 ```
 
+## [packages/core/src/data/database/full-text-migration.ts](../../packages/core/src/data/database/full-text-migration.ts)
+
+Word search (migration 24).
+
+An FTS5 index over product, customer and supplier text, folded for case and accents
+(`unicode61 remove_diacritics 2`), so a word anywhere in the name, brand, description, phone or
+contact matches, not only the start of the name. Triggers keep it in step with every write,
+including replayed events and restored backups; the prefix search on `search_name` remains.
+
+```ts
+const FULL_TEXT_MIGRATION: Migration;
+```
+
+Rebuilds the word-search index from the tables it covers. Backups leave the index out (it is
+derived and would only enlarge the file), so restore and pairing rebuild it here.
+
+```ts
+rebuildFullText(tx: Queryable): void;
+```
+
 ## [packages/core/src/data/database/local-authority-migration.ts](../../packages/core/src/data/database/local-authority-migration.ts)
 
 Forward-only F1 schema. Pending setup stores intent, never credentials.
@@ -4004,6 +4201,19 @@ bounded per row here and per shop by the operation that writes it.
 const PHOTOS_MIGRATION: Migration;
 ```
 
+## [packages/core/src/data/database/product-categories-migration.ts](../../packages/core/src/data/database/product-categories-migration.ts)
+
+Additional product categories (migration 23).
+
+A product keeps one main category on its own row (`products.category_id`), which sales and
+reports group by so category totals still add up to sales. Further categories are a separate
+set, used for browsing and filtering only, with its own last-write-wins version so an older
+till that does not know the set keeps applying ordinary product edits.
+
+```ts
+const PRODUCT_CATEGORIES_MIGRATION: Migration;
+```
+
 ## [packages/core/src/data/database/returns-migration.ts](../../packages/core/src/data/database/returns-migration.ts)
 
 Forward-only append-only partial returns, linked to original immutable sales/purchases and predecessor.
@@ -4052,6 +4262,14 @@ A folded term escaped for `LIKE ... ESCAPE '\'`: a prefix by default, or a match
 likePattern(term: string, { anywhere = false }: {
     readonly anywhere?: boolean;
 } = {}): string;
+```
+
+An FTS5 query for a typed term: every word must match, the last one as a prefix while it is
+still being typed ("sac riz parf" finds "Sac de riz parfumé"). Only letters and digits reach the query, so operators, quotes and
+column filters typed by a user are inert. Returns undefined when nothing searchable remains.
+
+```ts
+fullTextQuery(term: string): string;
 ```
 
 ## [packages/core/src/data/database/transfer-migration.ts](../../packages/core/src/data/database/transfer-migration.ts)
@@ -4502,8 +4720,11 @@ A product sold for a year has thousands of movements, and a till asking how
 many are left must not load them all (§46). The answer is the same addition
 either way.
 
+With `branchId`, only that branch's movements count — what a count taken on
+that branch's shelves is compared against. Without it, the whole business.
+
 ```ts
-stockOf(database: Queryable, businessId: string, productId: string): StockLevel;
+stockOf(database: Queryable, businessId: string, productId: string, branchId?: string): StockLevel;
 ```
 
 Returns what a product's stock was at a given moment.
@@ -4635,6 +4856,33 @@ How many photos the shop holds and their total size.
 
 ```ts
 photoUsage(tx: Queryable, businessId: string, shopBytes: number = PHOTO_LIMITS.shopBytes): { photos: number; bytes: number; limitBytes: number; };
+```
+
+## [packages/core/src/data/products/product-categories.ts](../../packages/core/src/data/products/product-categories.ts)
+
+A product's additional categories as last written, with the version that wrote them.
+
+```ts
+export interface ProductCategorySet {
+    readonly businessId: string;
+    readonly productId: string;
+    readonly categoryIds: readonly string[];
+    readonly updatedAt: string;
+}
+```
+
+Replaces a product's additional categories under last-write-wins (later `updatedAt`, then the
+greater device ID), the rule product details use. Returns false when a newer set is already
+stored, so a losing local or replayed write changes nothing. Inside the caller's transaction.
+
+```ts
+writeProductCategories(tx: Queryable, set: ProductCategorySet, deviceId: string): boolean;
+```
+
+A product's additional category IDs and their version, or an empty set never written.
+
+```ts
+productCategorySet(tx: Queryable, businessId: string, productId: string): { categoryIds: string[]; updatedAt?: string; };
 ```
 
 ## [packages/core/src/data/products/products.ts](../../packages/core/src/data/products/products.ts)
@@ -4978,7 +5226,9 @@ What every product that moved in a period sold and earned, best takings first.
 Net of the returns made in the period, product by product, so a product
 returned but not sold in the period appears with negative figures rather than
 vanishing. Named by the product's current name, so a renamed product is one
-row. Bill-level discounts belong to no product and are not spread over them.
+row. Revenue is net of each sale's whole-bill discount, allocated across its
+lines exactly as a return refunds it, so a fully returned line nets to zero and
+the products sum to 's period revenue.
 
 ```ts
 productProfit(tx: Queryable, businessId: string, from: string, to: string): ProductProfit[];
@@ -5163,6 +5413,11 @@ profitBetween(tx: Queryable, businessId: string, from: string, to: string): Prof
 
 What sold, by product, best first (§21).
 
+Net, like every sales breakdown here: after line and whole-bill discounts and
+less returns made in the period (see ), so the lines sum to
+'s total. A product only returned in the period shows a
+negative total and a count of zero.
+
 ```ts
 salesByProduct(tx: Queryable, businessId: string, from: string, to: string): Line[];
 ```
@@ -5178,7 +5433,8 @@ is that a receipt must show what was actually charged.
 
 Products in no category are grouped under an empty key rather than dropped: a
 breakdown of takings that did not add up to the takings would be worse than
-an "uncategorised" line.
+an "uncategorised" line. For the same reason the lines are net of discounts
+and the period's returns, and sum to 's total.
 
 ```ts
 salesByCategory(tx: Queryable, businessId: string, from: string, to: string): Line[];
@@ -5190,11 +5446,19 @@ By account and never by "payment method": which provider took the money is
 the account's name, which is what makes adding one a row rather than a
 release (§10).
 
+Net of sale refunds paid out of each account in the period; `count` is the
+number of sale payments. Credit left owing reaches no account, so these sum to
+the period's sales only when nothing was sold on credit.
+
 ```ts
 salesByAccount(tx: Queryable, businessId: string, from: string, to: string): Line[];
 ```
 
 Who sold what, best first — §21's sales by employee.
+
+Net of discounts; a return counts against the cashier who made the original
+sale, in the period it happened. `count` is distinct sales. Sums to
+'s total.
 
 ```ts
 salesByUser(tx: Queryable, businessId: string, from: string, to: string): Line[];
@@ -5233,6 +5497,10 @@ recorded on a phone that synced on Friday still lands in Monday.
 A delivery that named nobody — a crate from the market — is grouped under an
 empty key rather than dropped. What the shop spent on stock is the question,
 and leaving those out would answer a different one.
+
+Less the value of purchase returns made in the period, against the original
+delivery's wholesaler, so the lines sum to 's total.
+`count` is deliveries received in the period.
 
 ```ts
 purchasesBySupplier(tx: Queryable, businessId: string, from: string, to: string): Line[];
@@ -5287,6 +5555,9 @@ worth a shopkeeper's attention.
 Ranked by quantity rather than by takings: a cheap thing that shifts every day
 is fast-moving even though a single generator outsells a year of it. What it
 earned is reported alongside, so a caller can see both without a second query.
+
+Both are net of the period's returns, and takings are net of whole-bill
+discounts, so a sale that came back does not make a product look fast.
 
 ```ts
 productMovement(tx: Queryable, businessId: string, from: string, to: string): ProductMovement[];
@@ -5365,6 +5636,8 @@ Every sale to them, not only the ones on credit: "what does this person buy"
 is a question about a regular, and answering it from the credit ledger alone
 would describe only the days they happened to be short.
 
+Net of discounts and of the returns they made in the period.
+
 ```ts
 customerPurchases(tx: Queryable, businessId: string, customerId: string, from: string, to: string): Line[];
 ```
@@ -5415,6 +5688,7 @@ export interface ReturnSource {
     readonly priorId?: string | undefined;
     readonly branchId?: string | undefined;
     readonly counterpartyId?: string | undefined;
+    readonly refundableMinor: number;
     readonly items: readonly {
         id: string;
         productId: string;
@@ -6547,8 +6821,7 @@ French: -au/-eau/-eu take x, -al becomes -aux. English: consonant + y becomes -i
 pluralUnit(unit: string, language: Language = "fr"): string;
 ```
 
-A quantity followed by its unit, singular or plural by the language's own rules
-(`Intl.PluralRules`): French keeps 0, 1 and 1,5 singular, English only 1.
+A quantity followed by its unit, singular or plural by the language's own rules.
 
 ```ts
 formatQuantityWithUnit(thousandths: number, unit: string, language: Language = "fr"): string;
@@ -6625,7 +6898,7 @@ A code rather than a sentence, because the till speaks French and English
 written in. The screen turns these into words.
 
 ```ts
-export type Problem = "EMPTY" | "OVERPAID" | "DISCOUNT_EXCEEDS_SALE" | "CREDIT_NEEDS_CUSTOMER" | "LINE_DISCOUNT_EXCEEDS_LINE" | "TOO_LARGE";
+export type Problem = "EMPTY" | "OVERPAID" | "DISCOUNT_EXCEEDS_SALE" | "CREDIT_NEEDS_CUSTOMER" | "LINE_DISCOUNT_EXCEEDS_LINE" | "INVALID_AMOUNT" | "TOO_LARGE";
 ```
 
 What the till shows while the cart is being filled.
@@ -6829,6 +7102,17 @@ Adapter instances own no database/network and expose no private-key read API.
 
 ```ts
 protectedCredentials(store: SecretStore, crypto: CredentialCrypto): CredentialPort;
+```
+
+## [packages/core/src/identity/device-reset.ts](../../packages/core/src/identity/device-reset.ts)
+
+Every protected-store key a shop database refers to on this device: each member's local
+credential, the installation key and its manifest, and a pending setup's installation manifest.
+A device reset forgets these before deleting the database files, so no secret outlives its shop.
+References that belong to another device (`remote.*`, after a restore or pairing) are skipped.
+
+```ts
+localSecretKeys(tx: Queryable): string[];
 ```
 
 ## [packages/core/src/identity/members.ts](../../packages/core/src/identity/members.ts)
