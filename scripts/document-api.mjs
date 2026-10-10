@@ -56,8 +56,10 @@ for (const path of files) {
     chunks.push(`\n\`\`\`ts\n${text}\n\`\`\`\n`);
   }
 }
-const output = chunks.join("");
+// Windows checkouts may use CRLF; the reference is always LF.
+const lf = text => text.replace(/\r\n?/g, "\n");
+const output = lf(chunks.join(""));
 const destination = "docs/reference/typescript-api.md";
 if (process.argv.includes("--check")) {
-  if (readFileSync(destination, "utf8") !== output) { process.stderr.write("API reference is stale; run npm run docs:api\n"); process.exit(1); }
+  if (lf(readFileSync(destination, "utf8")) !== output) { process.stderr.write("API reference is stale; run npm run docs:api\n"); process.exit(1); }
 } else { mkdirSync("docs/reference", { recursive: true }); writeFileSync(destination, output); }
