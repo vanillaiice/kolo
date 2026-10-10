@@ -196,7 +196,8 @@
 .entry-shop>div{display:flex;flex-direction:column;gap:5px;min-width:0}
 .entry-shop strong{font-size:18px;overflow-wrap:anywhere}
 .entry-shop>div>span{font-size:12px;color:var(--muted)}
-.entry-panel .transfer-step form{display:flex;flex-direction:column;gap:18px}
+.entry-panel .transfer-step form,.devices-grid .panel>form{display:flex;flex-direction:column;gap:18px}
+.devices-grid .panel>form>button{align-self:flex-start}
 .entry-panel .transfer-step>h2{margin-bottom:8px}
 .recovery-dialog{max-width:700px;padding:36px 40px}
 .recovery-dialog .hint{margin-bottom:24px}
