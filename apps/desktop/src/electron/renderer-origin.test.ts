@@ -19,16 +19,16 @@ test("spaces and non-ASCII names match on both platforms", () => {
   const windows = "C:\\Users\\Amina Ngo Bé\\AppData\\Local\\Programs\\KOLO\\resources\\app.asar\\dist\\renderer\\index.html";
   assert.equal(isRendererUrl("file:///C:/Users/Amina%20Ngo%20B%C3%A9/AppData/Local/Programs/KOLO/resources/app.asar/dist/renderer/index.html", windows, true), true);
   const posix = "/home/amina bé/KOLO/index.html";
-  assert.equal(isRendererUrl(pathToFileURL(posix).href, posix, false), true);
+  assert.equal(isRendererUrl(pathToFileURL(posix, { windows: false }).href, posix, false), true);
 });
 
 test("posix paths stay case-sensitive", () => {
-  assert.equal(isRendererUrl(pathToFileURL(posixRenderer).href, posixRenderer, false), true);
-  assert.equal(isRendererUrl(pathToFileURL(posixRenderer.toUpperCase()).href, posixRenderer, false), false);
+  assert.equal(isRendererUrl(pathToFileURL(posixRenderer, { windows: false }).href, posixRenderer, false), true);
+  assert.equal(isRendererUrl(pathToFileURL(posixRenderer.toUpperCase(), { windows: false }).href, posixRenderer, false), false);
 });
 
 test("other files, schemes, queries, fragments and malformed input are refused", () => {
-  const good = pathToFileURL(posixRenderer).href;
+  const good = pathToFileURL(posixRenderer, { windows: false }).href;
   for (const url of [
     undefined, "", "not a url", "about:blank", "https://example.com/index.html",
     "file:///opt/KOLO/resources/app.asar/dist/renderer/other.html",
