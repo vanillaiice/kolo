@@ -218,6 +218,27 @@ describe("what stands between a cart and a sale", () => {
     assert.equal(shown.totalMinor, 0);
   });
 
+  it("reports amounts the sale could never be recorded at, and shows no total from them", () => {
+    const cart = scan(emptyCart, aProduct());
+    const line = cart.lines[0]?.id ?? "";
+    for (const bad of [
+      setDiscount(cart, -500),
+      setDiscount(cart, 0.5),
+      setLineDiscount(cart, line, -1),
+      setLinePrice(cart, line, -6_500),
+      setLinePrice(cart, line, 99.5),
+      setQuantity(cart, line, 0.5),
+      addPayment(cart, paidWith(-100)),
+      addPayment(cart, paidWith(0)),
+      addPayment(cart, paidWith(Number.NaN)),
+    ]) {
+      const shown = view(bad);
+      assert.deepEqual([shown.problems.includes("INVALID_AMOUNT"), isComplete(shown), shown.totalMinor, shown.paidMinor], [true, false, 0, 0]);
+    }
+    // A negative bill discount used to raise the total it was taken off.
+    assert.equal(view(setDiscount(cart, -500)).totalMinor <= 6_500, true);
+  });
+
   it("reports arithmetic too large to be exact", () => {
     // Beyond a safe integer money stops being exact (ADR-010).
     const cart = scan(emptyCart, aProduct({ sellingPriceMinor: Number.MAX_SAFE_INTEGER }), 2_000);

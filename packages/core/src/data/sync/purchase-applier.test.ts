@@ -366,3 +366,14 @@ describe("a delivery this device cannot use", () => {
     );
   });
 });
+
+describe("a delivery whose numbers do not add up", () => {
+  it("is refused when more was paid at the door than the delivery came to", () => {
+    const payload = structuredClone(queued(aDelivery({
+      payments: [{ id: nextId("payment"), accountId: ACCOUNT, amountMinor: 100_000, reason: "comptant" }],
+    }))) as { payments: { amount_minor: number }[] };
+    payload.payments[0]!.amount_minor = -100_001;
+    assert.throws(() => apply(payload), UnusableEvent);
+    assert.equal(stock(), 0);
+  });
+});

@@ -23,11 +23,11 @@ function translated<T>(work: () => T): T {
     throw new WorkspaceError("invalid_input");
   }
 }
-/** Returnable lines and remaining quantities at original net values. */
+/** Returnable lines and remaining quantities at original net values, and how much may still be refunded. */
 export function returnSource(host: Host, input: unknown): ReturnSourceView {
   const data = object(input, ["sessionId", "kind", "originalId"]), context = host.actor(data), returnKind = kind(data["kind"]), originalId = uuid(data["originalId"]);
   const source = translated(() => returnableItems(context, returnKind, originalId));
-  return { kind: returnKind, originalId, hasCounterparty: source.counterpartyId !== undefined, ...(source.priorId === undefined ? {} : { priorId: source.priorId }),
+  return { kind: returnKind, originalId, hasCounterparty: source.counterpartyId !== undefined, refundableMinor: source.refundableMinor, ...(source.priorId === undefined ? {} : { priorId: source.priorId }),
     items: source.items.map(({ id, name, originalQuantity, returnedQuantity }) => ({ id, name, originalQuantity, returnedQuantity })) };
 }
 /** Exact return value against the current predecessor; nothing is written. */
@@ -58,7 +58,7 @@ export function recordReturn(host: Host, input: unknown): { readonly returnId: s
     const preview = translated(() => plan(context, returnKind, originalId, items));
     if ((preview.source.priorId ?? undefined) !== priorId) throw new CommandError("stale_return");
     const refunded = refund?.amountMinor ?? 0;
-    if (refunded > preview.totalMinor) throw new WorkspaceError("invalid_input");
+    if (refunded > preview.totalMinor || refunded > preview.source.refundableMinor) throw new WorkspaceError("invalid_input");
     const command = { id, eventId: host.ports.newId(), originalId, ...(priorId === undefined ? {} : { priorId }), reason,
       items: preview.lines.map(line => ({ id: host.ports.newId(), movementId: host.ports.newId(), originalItemId: line.originalItemId, quantity: line.quantity })),
       refunds: refunds.map(item => ({ id: host.ports.newId(), ...item })),

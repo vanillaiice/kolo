@@ -118,6 +118,14 @@ describe("reading an amount a cashier typed", () => {
     assert.deepEqual(parseAmount("1,0000"), { ok: false, failure: "FRACTIONAL" });
   });
 
+  it("refuses grouping that mixes a dot and a comma rather than guessing", () => {
+    // "1.000,500" is a European one thousand and a half, not 1,000,500 francs.
+    assert.deepEqual(parseAmount("1.000,500"), { ok: false, failure: "NOT_A_NUMBER" });
+    assert.deepEqual(parseAmount("1,000.000"), { ok: false, failure: "NOT_A_NUMBER" });
+    assert.deepEqual(parseAmount("1.000.000"), { ok: true, minor: 1_000_000 });
+    assert.deepEqual(parseAmount("1,000,000"), { ok: true, minor: 1_000_000 });
+  });
+
   it("refuses a fraction rather than rounding it", () => {
     // There is no half franc, and a till that rounded would be deciding which
     // way the shopkeeper's money went.
@@ -229,6 +237,25 @@ describe("units follow the quantity's grammatical number", () => {
   it("only the first word of a descriptive unit changes", () => {
     assert.equal(pluralUnit("sac de 50 kg"), "sacs de 50 kg");
     assert.equal(pluralUnit("bag of rice", "en"), "bags of rice");
+  });
+  it("matches Intl plural categories at every thousandth around the boundaries", () => {
+    for (let thousandths = -3_000; thousandths <= 3_000; thousandths++)
+      for (const language of ["fr", "en"] as const) {
+        const one = new Intl.PluralRules(language).select(Math.abs(thousandths) / 1000) === "one";
+        assert.equal(formatQuantityWithUnit(thousandths, "sachet", language).endsWith(one ? "sachet" : "sachets"), true, `${language} ${thousandths}`);
+      }
+  });
+  it("does not need Intl.PluralRules, which a phone's JavaScript engine may lack", () => {
+    const original = Intl.PluralRules;
+    Object.defineProperty(Intl, "PluralRules", { value: undefined, configurable: true, writable: true });
+    try {
+      assert.equal(formatQuantityWithUnit(1_500, "sac"), "1,5 sac");
+      assert.equal(formatQuantityWithUnit(2_000, "sac"), "2 sacs");
+      assert.equal(formatQuantityWithUnit(1_000, "bag", "en"), "1 bag");
+      assert.equal(formatQuantityWithUnit(1_500, "bag", "en"), "1.5 bags");
+    } finally {
+      Object.defineProperty(Intl, "PluralRules", { value: original, configurable: true, writable: true });
+    }
   });
   it("matches Intl plural categories for many quantities", () => {
     for (let thousandths = -5_000; thousandths <= 5_000; thousandths += 250)

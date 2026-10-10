@@ -133,14 +133,24 @@ export function pluralUnit(unit: string, language: Language = "fr"): string {
 }
 
 /**
- * A quantity followed by its unit, singular or plural by the language's own rules
- * (`Intl.PluralRules`): French keeps 0, 1 and 1,5 singular, English only 1.
+ * Whether a count of units takes the singular, by the language's own rules: French
+ * keeps 0, 1 and 1,5 singular (below two), English only exactly 1.
+ *
+ * Written out rather than asked of `Intl.PluralRules`, for the reason grouping is
+ * done by hand above: the JavaScript engine on a cheap Android phone may ship
+ * without it, and a missing constructor would take the screen down with it. For
+ * these two languages and quantities in thousandths the CLDR rules are exactly this.
  */
+function singular(thousandths: number, language: Language): boolean {
+  const absolute = Math.abs(thousandths);
+  return language === "fr" ? absolute < 2000 : absolute === 1000;
+}
+
+/** A quantity followed by its unit, singular or plural by the language's own rules. */
 export function formatQuantityWithUnit(thousandths: number, unit: string, language: Language = "fr"): string {
   const shown = formatQuantity(thousandths, language);
   if (!Number.isFinite(thousandths) || unit.trim() === "") return `${shown} ${unit}`.trim();
-  const count = new Intl.PluralRules(language).select(Math.abs(thousandths) / 1000);
-  return `${shown} ${count === "one" ? unit.trim() : pluralUnit(unit, language)}`;
+  return `${shown} ${singular(thousandths, language) ? unit.trim() : pluralUnit(unit, language)}`;
 }
 
 /** What went wrong with something a cashier typed. */
@@ -190,7 +200,9 @@ export function parseAmount(text: string): ParsedAmount {
   let digits: string;
   if (/^\d+$/.test(stripped)) {
     digits = stripped;
-  } else if (/^\d{1,3}([.,]\d{3})+$/.test(stripped)) {
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(stripped) || /^\d{1,3}(,\d{3})+$/.test(stripped)) {
+    // One separator, used throughout. "1.000,500" mixes a grouping dot with a
+    // decimal comma; it is refused rather than read as a million and five hundred.
     digits = stripped.replace(/[.,]/g, "");
   } else if (/^\d+[.,]\d+$/.test(stripped)) {
     // Somebody meaning half a franc. Refused rather than read as 1,005.

@@ -1,5 +1,7 @@
 import { sqlInteger } from "../database/safe-values.ts";
 import { multiplyRatio, sumAmounts } from "../../rules/amounts.ts";
+import { lineTotal } from "../../rules/pricing.ts";
+import { discountedLineTotals } from "../../rules/returns.ts";
 /**
  * What the shop did, worked out from what it recorded (§21, §22).
  *
@@ -106,9 +108,9 @@ export interface Valuation {
 export interface ProductMovement {
   readonly productId: string;
   readonly name: string;
-  /** How much left the shop, in thousandths. Zero is the interesting case. */
+  /** How much left the shop net of returns, in thousandths. Zero is the interesting case. */
   readonly soldThousandths: number;
-  /** What those sales came to, after their line discounts. */
+  /** What those sales came to, after line and whole-bill discounts and less returns. */
   readonly revenueMinor: number;
   /** What is left on the shelf, the sum of the ledger as always. */
   readonly onHandThousandths: number;
@@ -210,6 +212,125 @@ export const LINE_TOTAL = `((i.unit_price_minor * i.quantity + ${QUANTITY_SCALE 
 const PURCHASE_LINE_TOTAL = `((i.unit_cost_minor * i.quantity + ${QUANTITY_SCALE / 2})
                               / ${QUANTITY_SCALE})`;
 
+/**
+ * One sale line or sale-return line as it counts toward a period, for breakdowns.
+ *
+ * A sale line counts at its *net* value: its line total less its share of the
+ * sale's whole-bill discount, allocated by {@link discountedLineTotals} — the
+ * same allocation a return refunds against. A return line counts negative, at
+ * the value it refunded, in the period the return happened. So any grouping of
+ * these facts sums to exactly {@link salesBetween}'s total, and a fully returned
+ * line nets to zero rather than leaving its discount share behind.
+ *
+ * Grouping keys are those of the original sale: its cashier, its customer, and
+ * the product's current category (a category is a way of grouping products, so
+ * moving a product moves its history).
+ *
+ * @internal
+ */
+export interface NetSaleFact {
+  readonly productId: string;
+  /** The name the line was sold under. */
+  readonly name: string;
+  /** The product's current name, when the product still exists. */
+  readonly productName: string | undefined;
+  /** Empty when the product is in no category. */
+  readonly categoryId: string;
+  readonly categoryName: string | undefined;
+  readonly saleId: string;
+  readonly userId: string;
+  readonly userName: string | undefined;
+  /** Thousandths; negative for a return. */
+  readonly quantity: number;
+  /** Net XAF; negative for a return. */
+  readonly revenueMinor: number;
+  /** XAF cost of the goods; negative for a return; zero when the line recorded none. */
+  readonly costMinor: number;
+  /** A sale line with no recorded cost. Returns are never counted here. */
+  readonly uncosted: boolean;
+  /** Whether this fact is a return. */
+  readonly returned: boolean;
+}
+
+/** @internal Net sale and return lines for a period, optionally for one customer; see {@link NetSaleFact}. */
+export function netSaleFacts(tx: Queryable, businessId: string, from: string, to: string, customerId?: string): NetSaleFact[] {
+  const forCustomer = customerId === undefined ? "" : " AND s.customer_id = ?4";
+  const parameters = customerId === undefined ? [businessId, from, to] : [businessId, from, to, customerId];
+  const text = (value: unknown): string | undefined => typeof value === "string" ? value : undefined;
+  const sold = tx.all(
+    `SELECT i.id, i.sale_id, i.product_id, i.name, i.unit_price_minor, i.quantity, i.discount_minor, i.unit_cost_minor,
+            s.discount_minor AS sale_discount, s.user_id, u.name AS user_name,
+            p.name AS product_name, coalesce(p.category_id, '') AS category_id, c.name AS category_name
+       FROM sale_items i
+       JOIN sales s ON s.id = i.sale_id
+       LEFT JOIN users u ON u.id = s.user_id
+       LEFT JOIN products p ON p.id = i.product_id AND p.business_id = s.business_id
+       LEFT JOIN categories c ON c.id = p.category_id
+      WHERE s.business_id = ?1 AND s.occurred_at >= ?2 AND s.occurred_at < ?3${forCustomer}
+      ORDER BY i.sale_id, i.id`,
+    parameters,
+  );
+  const bySale = new Map<string, typeof sold>();
+  for (const row of sold) {
+    const sale = String(row["sale_id"]), lines = bySale.get(sale);
+    if (lines === undefined) bySale.set(sale, [row]); else lines.push(row);
+  }
+  const facts: NetSaleFact[] = [];
+  for (const lines of bySale.values()) {
+    const priced = lines.map(row => ({ id: String(row["id"]), unitPriceMinor: sqlInteger(row["unit_price_minor"]), quantity: sqlInteger(row["quantity"]), discountMinor: sqlInteger(row["discount_minor"]) }));
+    const discount = sqlInteger(lines[0]!["sale_discount"]);
+    const net = discount === 0 ? undefined : discountedLineTotals(priced, discount);
+    for (const [index, row] of lines.entries()) {
+      const line = priced[index]!, cost = row["unit_cost_minor"];
+      facts.push({ productId: String(row["product_id"]), name: String(row["name"]), productName: text(row["product_name"]),
+        categoryId: String(row["category_id"]), categoryName: text(row["category_name"]), saleId: String(row["sale_id"]),
+        userId: String(row["user_id"]), userName: text(row["user_name"]), quantity: line.quantity,
+        revenueMinor: net?.get(line.id) ?? lineTotal(line), costMinor: cost === null || cost === undefined ? 0 : multiplyRatio(sqlInteger(cost), line.quantity, QUANTITY_SCALE),
+        uncosted: cost === null || cost === undefined, returned: false });
+    }
+  }
+  const returned = tx.all(
+    `SELECT ri.product_id, ri.quantity, ri.amount_minor, ri.cost_minor, si.name, s.id AS sale_id, s.user_id, u.name AS user_name,
+            p.name AS product_name, coalesce(p.category_id, '') AS category_id, c.name AS category_name
+       FROM business_return_items ri
+       JOIN business_returns r ON r.business_id = ri.business_id AND r.id = ri.return_id
+       JOIN sales s ON s.business_id = r.business_id AND s.id = r.original_id
+       JOIN sale_items si ON si.id = ri.original_item_id AND si.sale_id = s.id
+       LEFT JOIN users u ON u.id = s.user_id
+       LEFT JOIN products p ON p.id = ri.product_id AND p.business_id = r.business_id
+       LEFT JOIN categories c ON c.id = p.category_id
+      WHERE r.business_id = ?1 AND r.kind = 'SALE' AND r.occurred_at >= ?2 AND r.occurred_at < ?3${forCustomer}
+      ORDER BY r.occurred_at, ri.id`,
+    parameters,
+  );
+  for (const row of returned) {
+    facts.push({ productId: String(row["product_id"]), name: String(row["name"]), productName: text(row["product_name"]),
+      categoryId: String(row["category_id"]), categoryName: text(row["category_name"]), saleId: String(row["sale_id"]),
+      userId: String(row["user_id"]), userName: text(row["user_name"]), quantity: -sqlInteger(row["quantity"]),
+      revenueMinor: -sqlInteger(row["amount_minor"]), costMinor: -sqlInteger(row["cost_minor"]), uncosted: false, returned: true });
+  }
+  return facts;
+}
+
+/** Groups net facts into report lines, best first; `count` is sale lines, or distinct sales when `countSales`. */
+function linesOf(facts: readonly NetSaleFact[], group: (fact: NetSaleFact) => readonly [key: string, label: string], countSales = false): Line[] {
+  const groups = new Map<string, { key: string; label: string; total: number; count: number; sales: Set<string> }>();
+  for (const fact of facts) {
+    const [key, label] = group(fact), id = `${key}\u0000${label}`;
+    const current = groups.get(id) ?? { key, label, total: 0, count: 0, sales: new Set<string>() };
+    current.total = sumAmounts([current.total, fact.revenueMinor]);
+    if (!fact.returned) { current.count++; current.sales.add(fact.saleId); }
+    groups.set(id, current);
+  }
+  return [...groups.values()].map(({ key, label, total, count, sales }) => ({ key, label, totalMinor: total, count: countSales ? sales.size : count }))
+    .sort((a, b) => b.totalMinor - a.totalMinor || binary(a.label, b.label));
+}
+
+/** SQLite's default BINARY collation, so JavaScript ordering matches the queries it replaced. */
+function binary(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** What a period sold (§21). */
 export function salesBetween(
   tx: Queryable,
@@ -279,24 +400,21 @@ export function profitBetween(
   };
 }
 
-/** What sold, by product, best first (§21). */
+/**
+ * What sold, by product, best first (§21).
+ *
+ * Net, like every sales breakdown here: after line and whole-bill discounts and
+ * less returns made in the period (see {@link NetSaleFact}), so the lines sum to
+ * {@link salesBetween}'s total. A product only returned in the period shows a
+ * negative total and a count of zero.
+ */
 export function salesByProduct(
   tx: Queryable,
   businessId: string,
   from: string,
   to: string,
 ): Line[] {
-  const rows = tx.all(
-    `SELECT i.product_id AS key, i.name AS label,
-            sum(${LINE_TOTAL}) AS total, count(*) AS entries
-       FROM sale_items i
-       JOIN sales s ON s.id = i.sale_id
-      WHERE s.business_id = ? AND s.occurred_at >= ? AND s.occurred_at < ?
-      GROUP BY i.product_id, i.name
-      ORDER BY total DESC, i.name`,
-    [businessId, from, to],
-  );
-  return rows.map(toLine);
+  return linesOf(netSaleFacts(tx, businessId, from, to), fact => [fact.productId, fact.name]);
 }
 
 /**
@@ -311,7 +429,8 @@ export function salesByProduct(
  *
  * Products in no category are grouped under an empty key rather than dropped: a
  * breakdown of takings that did not add up to the takings would be worse than
- * an "uncategorised" line.
+ * an "uncategorised" line. For the same reason the lines are net of discounts
+ * and the period's returns, and sum to {@link salesBetween}'s total.
  */
 export function salesByCategory(
   tx: Queryable,
@@ -319,20 +438,7 @@ export function salesByCategory(
   from: string,
   to: string,
 ): Line[] {
-  const rows = tx.all(
-    `SELECT coalesce(p.category_id, '') AS key,
-            coalesce(c.name, 'Sans catégorie') AS label,
-            sum(${LINE_TOTAL}) AS total, count(*) AS entries
-       FROM sale_items i
-       JOIN sales s ON s.id = i.sale_id
-       LEFT JOIN products p ON p.id = i.product_id AND p.business_id = s.business_id
-       LEFT JOIN categories c ON c.id = p.category_id
-      WHERE s.business_id = ? AND s.occurred_at >= ? AND s.occurred_at < ?
-      GROUP BY key, label
-      ORDER BY total DESC, label`,
-    [businessId, from, to],
-  );
-  return rows.map(toLine);
+  return linesOf(netSaleFacts(tx, businessId, from, to), fact => [fact.categoryId, fact.categoryName ?? "Sans catégorie"]);
 }
 
 /**
@@ -341,6 +447,10 @@ export function salesByCategory(
  * By account and never by "payment method": which provider took the money is
  * the account's name, which is what makes adding one a row rather than a
  * release (§10).
+ *
+ * Net of sale refunds paid out of each account in the period; `count` is the
+ * number of sale payments. Credit left owing reaches no account, so these sum to
+ * the period's sales only when nothing was sold on credit.
  */
 export function salesByAccount(
   tx: Queryable,
@@ -349,41 +459,42 @@ export function salesByAccount(
   to: string,
 ): Line[] {
   const rows = tx.all(
-    `SELECT p.account_id AS key,
-            coalesce(a.name, p.account_id) AS label,
-            sum(p.amount_minor) AS total,
-            count(*) AS entries
-       FROM sale_payments p
-       LEFT JOIN financial_accounts a ON a.id = p.account_id
-      WHERE p.business_id = ? AND p.occurred_at >= ? AND p.occurred_at < ?
-      GROUP BY p.account_id, label
+    `WITH moved AS (
+       SELECT p.account_id, p.amount_minor, 1 AS entry
+         FROM sale_payments p
+        WHERE p.business_id = ?1 AND p.occurred_at >= ?2 AND p.occurred_at < ?3
+       UNION ALL
+       SELECT f.account_id, -f.amount_minor, 0
+         FROM business_return_refunds f
+         JOIN business_returns r ON r.business_id = f.business_id AND r.id = f.return_id
+        WHERE r.business_id = ?1 AND r.kind = 'SALE' AND r.occurred_at >= ?2 AND r.occurred_at < ?3)
+     SELECT m.account_id AS key,
+            coalesce(a.name, m.account_id) AS label,
+            sum(m.amount_minor) AS total,
+            sum(m.entry) AS entries
+       FROM moved m
+       LEFT JOIN financial_accounts a ON a.id = m.account_id
+      GROUP BY m.account_id, label
       ORDER BY total DESC, label`,
     [businessId, from, to],
   );
   return rows.map(toLine);
 }
 
-/** Who sold what, best first — §21's sales by employee. */
+/**
+ * Who sold what, best first — §21's sales by employee.
+ *
+ * Net of discounts; a return counts against the cashier who made the original
+ * sale, in the period it happened. `count` is distinct sales. Sums to
+ * {@link salesBetween}'s total.
+ */
 export function salesByUser(
   tx: Queryable,
   businessId: string,
   from: string,
   to: string,
 ): Line[] {
-  const rows = tx.all(
-    `SELECT s.user_id AS key,
-            coalesce(u.name, s.user_id) AS label,
-            sum(${LINE_TOTAL}) AS total,
-            count(DISTINCT s.id) AS entries
-       FROM sale_items i
-       JOIN sales s ON s.id = i.sale_id
-       LEFT JOIN users u ON u.id = s.user_id
-      WHERE s.business_id = ? AND s.occurred_at >= ? AND s.occurred_at < ?
-      GROUP BY s.user_id, label
-      ORDER BY total DESC, label`,
-    [businessId, from, to],
-  );
-  return rows.map(toLine);
+  return linesOf(netSaleFacts(tx, businessId, from, to), fact => [fact.userId, fact.userName ?? fact.userId], true);
 }
 
 /**
@@ -448,6 +559,10 @@ export function supplierDebt(tx: Queryable, businessId: string): Line[] {
  * A delivery that named nobody — a crate from the market — is grouped under an
  * empty key rather than dropped. What the shop spent on stock is the question,
  * and leaving those out would answer a different one.
+ *
+ * Less the value of purchase returns made in the period, against the original
+ * delivery's wholesaler, so the lines sum to {@link purchasesBetween}'s total.
+ * `count` is deliveries received in the period.
  */
 export function purchasesBySupplier(
   tx: Queryable,
@@ -456,14 +571,22 @@ export function purchasesBySupplier(
   to: string,
 ): Line[] {
   const rows = tx.all(
-    `SELECT coalesce(p.supplier_id, '') AS key,
+    `WITH facts AS (
+       SELECT p.supplier_id AS supplier, ${PURCHASE_LINE_TOTAL} AS total, p.id AS delivery
+         FROM purchases p
+         JOIN purchase_items i ON i.purchase_id = p.id
+        WHERE p.business_id = ?1 AND p.occurred_at >= ?2 AND p.occurred_at < ?3
+       UNION ALL
+       SELECT p.supplier_id, -r.total_minor, NULL
+         FROM business_returns r
+         JOIN purchases p ON p.business_id = r.business_id AND p.id = r.original_id
+        WHERE r.business_id = ?1 AND r.kind = 'PURCHASE' AND r.occurred_at >= ?2 AND r.occurred_at < ?3)
+     SELECT coalesce(f.supplier, '') AS key,
             coalesce(s.name, 'Sans fournisseur') AS label,
-            coalesce(sum(${PURCHASE_LINE_TOTAL}), 0) AS total,
-            count(DISTINCT p.id) AS entries
-       FROM purchases p
-       JOIN purchase_items i ON i.purchase_id = p.id
-       LEFT JOIN suppliers s ON s.id = p.supplier_id
-      WHERE p.business_id = ? AND p.occurred_at >= ? AND p.occurred_at < ?
+            coalesce(sum(f.total), 0) AS total,
+            count(DISTINCT f.delivery) AS entries
+       FROM facts f
+       LEFT JOIN suppliers s ON s.id = f.supplier
       GROUP BY key, label
       ORDER BY total DESC, label`,
     [businessId, from, to],
@@ -636,6 +759,9 @@ function valueOf(unitCostMinor: number, thousandths: number): number {
  * Ranked by quantity rather than by takings: a cheap thing that shifts every day
  * is fast-moving even though a single generator outsells a year of it. What it
  * earned is reported alongside, so a caller can see both without a second query.
+ *
+ * Both are net of the period's returns, and takings are net of whole-bill
+ * discounts, so a sale that came back does not make a product look fast.
  */
 export function productMovement(
   tx: Queryable,
@@ -643,33 +769,30 @@ export function productMovement(
   from: string,
   to: string,
 ): ProductMovement[] {
+  const moved = new Map<string, { sold: number; revenue: number }>();
+  for (const fact of netSaleFacts(tx, businessId, from, to)) {
+    const current = moved.get(fact.productId) ?? { sold: 0, revenue: 0 };
+    moved.set(fact.productId, { sold: sumAmounts([current.sold, fact.quantity]), revenue: sumAmounts([current.revenue, fact.revenueMinor]) });
+  }
   const rows = tx.all(
     `SELECT p.id AS product_id, p.name AS name,
-            coalesce((SELECT sum(i.quantity)
-                        FROM sale_items i
-                        JOIN sales s ON s.id = i.sale_id
-                       WHERE i.product_id = p.id AND s.business_id = p.business_id
-                         AND s.occurred_at >= ?2 AND s.occurred_at < ?3), 0) AS sold,
-            coalesce((SELECT sum(${LINE_TOTAL})
-                        FROM sale_items i
-                        JOIN sales s ON s.id = i.sale_id
-                       WHERE i.product_id = p.id AND s.business_id = p.business_id
-                         AND s.occurred_at >= ?2 AND s.occurred_at < ?3), 0) AS revenue,
             coalesce((SELECT sum(m.quantity)
                         FROM inventory_movements m
                        WHERE m.product_id = p.id AND m.business_id = p.business_id), 0) AS on_hand
        FROM products p
-      WHERE p.business_id = ?1 AND p.active = 1
-      ORDER BY sold DESC, revenue DESC, p.name`,
-    [businessId, from, to],
+      WHERE p.business_id = ? AND p.active = 1`,
+    [businessId],
   );
-  return rows.map((row) => ({
-    productId: String(row["product_id"]),
-    name: String(row["name"]),
-    soldThousandths: sqlInteger(row["sold"] ?? 0),
-    revenueMinor: sqlInteger(row["revenue"] ?? 0),
-    onHandThousandths: sqlInteger(row["on_hand"] ?? 0),
-  }));
+  return rows.map((row) => {
+    const productId = String(row["product_id"]), sold = moved.get(productId);
+    return {
+      productId,
+      name: String(row["name"]),
+      soldThousandths: sold?.sold ?? 0,
+      revenueMinor: sold?.revenue ?? 0,
+      onHandThousandths: sqlInteger(row["on_hand"] ?? 0),
+    };
+  }).sort((a, b) => b.soldThousandths - a.soldThousandths || b.revenueMinor - a.revenueMinor || binary(a.name, b.name));
 }
 
 /** What shifted most over a period (§21). */
@@ -895,6 +1018,8 @@ export function customerStatement(
  * Every sale to them, not only the ones on credit: "what does this person buy"
  * is a question about a regular, and answering it from the credit ledger alone
  * would describe only the days they happened to be short.
+ *
+ * Net of discounts and of the returns they made in the period.
  */
 export function customerPurchases(
   tx: Queryable,
@@ -903,18 +1028,7 @@ export function customerPurchases(
   from: string,
   to: string,
 ): Line[] {
-  const rows = tx.all(
-    `SELECT i.product_id AS key, i.name AS label,
-            sum(${LINE_TOTAL}) AS total, count(*) AS entries
-       FROM sale_items i
-       JOIN sales s ON s.id = i.sale_id
-      WHERE s.business_id = ? AND s.customer_id = ?
-        AND s.occurred_at >= ? AND s.occurred_at < ?
-      GROUP BY i.product_id, i.name
-      ORDER BY total DESC, i.name`,
-    [businessId, customerId, from, to],
-  );
-  return rows.map(toLine);
+  return linesOf(netSaleFacts(tx, businessId, from, to, customerId), fact => [fact.productId, fact.name]);
 }
 
 /**

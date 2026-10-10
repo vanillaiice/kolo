@@ -12,7 +12,15 @@ export type ReturnKind = "SALE" | "PURCHASE";
 export interface ReturnSelection { readonly originalItemId: string; readonly quantity: number; }
 /** Source facts and currently remaining quantities; mutable product prices are never used. */
 export interface ReturnSource { readonly originalId: string; readonly priorId?: string | undefined; readonly branchId?: string | undefined;
-  readonly counterpartyId?: string | undefined; readonly items: readonly { id: string; productId: string; name: string; originalQuantity: number; returnedQuantity: number; netMinor: number; unitCostMinor?: number | undefined }[]; }
+  readonly counterpartyId?: string | undefined;
+  /**
+   * Money that may still change hands for this original: what it settled when it was recorded (sale payments,
+   * or a delivery's total less what it left owing) less the refunds of earlier returns. Value beyond this goes to
+   * the counterparty's ledger, so cash never leaves (or arrives) for goods that were never paid for. It is derived
+   * from the original's own immutable facts and the serialized return chain, so every replica agrees on it.
+   */
+  readonly refundableMinor: number;
+  readonly items: readonly { id: string; productId: string; name: string; originalQuantity: number; returnedQuantity: number; netMinor: number; unitCostMinor?: number | undefined }[]; }
 /** Reads immutable source/return facts within the caller's scoped transaction; missing prerequisites are retriable. */
 export function returnSource(tx: Queryable, shop: string, kind: ReturnKind, originalId: string): ReturnSource {
   if (kind !== "SALE" && kind !== "PURCHASE") throw new ExchangeError("invalid_payload");
@@ -28,7 +36,14 @@ export function returnSource(tx: Queryable, shop: string, kind: ReturnKind, orig
       WHERE i.business_id=? AND r.kind=? AND r.original_id=? AND i.original_item_id=?`, [shop, kind, originalId, row["id"]!])!["quantity"]!), netMinor: net.get(String(row["id"]))!,
     unitCostMinor: typeof row["unit_cost_minor"] === "number" ? sqlInteger(row["unit_cost_minor"]) : undefined }));
   const counterparty = header[sale ? "customer_id" : "supplier_id"];
-  return { originalId, priorId: typeof prior?.["id"] === "string" ? prior["id"] : undefined, branchId: typeof header["branch_id"] === "string" ? header["branch_id"] : undefined, counterpartyId: typeof counterparty === "string" ? counterparty : undefined, items };
+  const settled = sale
+    ? sqlInteger(tx.get(`SELECT coalesce(sum(amount_minor),0) AS paid FROM sale_payments WHERE business_id=? AND sale_id=?`, [shop, originalId])!["paid"]!)
+    : sumAmounts([...net.values(), -sqlInteger(tx.get(`SELECT coalesce(sum(amount_minor),0) AS owed FROM supplier_transactions
+        WHERE business_id=? AND type='PURCHASE' AND reference_kind='PURCHASE' AND reference_id=?`, [shop, originalId])!["owed"]!)]);
+  const refunded = sqlInteger(tx.get(`SELECT coalesce(sum(f.amount_minor),0) AS refunded FROM business_return_refunds f JOIN business_returns r ON r.business_id=f.business_id AND r.id=f.return_id
+    WHERE r.business_id=? AND r.kind=? AND r.original_id=?`, [shop, kind, originalId])!["refunded"]!);
+  return { originalId, priorId: typeof prior?.["id"] === "string" ? prior["id"] : undefined, branchId: typeof header["branch_id"] === "string" ? header["branch_id"] : undefined, counterpartyId: typeof counterparty === "string" ? counterparty : undefined,
+    refundableMinor: Math.max(0, sumAmounts([settled, -refunded])), items };
 }
 /** Exact cumulative entitlement and stock quantities for a partial/full return; over-return is refused. */
 export function planReturn(source: ReturnSource, selection: readonly ReturnSelection[]): { totalMinor: number; costMinor: number; lines: readonly { originalItemId: string; productId: string; quantity: number; amountMinor: number; costMinor: number }[] } {
@@ -55,7 +70,7 @@ export function applyReturn(tx: Queryable, event: Pick<JournalEnvelope, "event_t
     if (counterparty === undefined) throw new ExchangeError("missing_dependency");
     if (counterparty["business_id"] !== event.business_id) throw new ExchangeError("scope_mismatch");
   }
-  if (debt < 0 || (debt > 0) !== (returned.debt_transaction_id !== undefined) || debt > 0 && source.counterpartyId === undefined) throw new ExchangeError("invalid_payload");
+  if (debt < 0 || paid > source.refundableMinor || (debt > 0) !== (returned.debt_transaction_id !== undefined) || debt > 0 && source.counterpartyId === undefined) throw new ExchangeError("invalid_payload");
   for (const refund of returned.refunds) if (tx.get(`SELECT id FROM financial_accounts WHERE business_id=? AND id=?`,[event.business_id,refund.account_id])===undefined) throw new ExchangeError("missing_dependency");
   tx.run(`INSERT INTO business_returns(id,business_id,branch_id,kind,original_id,prior_id,prior_key,reason,total_minor,cost_minor,debt_minor,debt_transaction_id,user_id,device_id,occurred_at,recorded_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [returned.id,event.business_id,event.branch_id,kind,returned.original_id,returned.prior_id ?? null,returned.prior_id ?? "",returned.reason,plan.totalMinor,plan.costMinor,debt,returned.debt_transaction_id ?? null,event.actor_id,event.origin_device_id,event.occurred_at,recordedAt]);

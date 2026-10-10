@@ -11,7 +11,8 @@
  */
 
 import type { Queryable } from "../database/driver.ts";
-import { QUANTITY_SCALE, multiplyRatio, sumAmounts } from "../../rules/amounts.ts";
+import { RuleError } from "../../rules/amounts.ts";
+import { purchaseTotals } from "../../rules/pricing.ts";
 import { UnusableEvent, type EventApplier } from "./engine.ts";
 import type { InboxEvent } from "./inbox.ts";
 
@@ -156,16 +157,21 @@ function applyOwed(
   purchase: Wire,
   purchaseId: string,
 ): void {
+  // The shared rule, so paying more at the door than the delivery came to is
+  // refused here exactly as the device that received it would have refused it.
   let outstandingMinor: number;
   try {
-    const total = sumAmounts(listOf(purchase["items"], "a delivery's items").map(line => {
-      const item = objectOf(line, "a delivery item");
-      return multiplyRatio(wholeNumber(item, "unit_cost_minor") ?? 0, wholeNumber(item, "quantity") ?? 0, QUANTITY_SCALE);
-    }));
-    const paid = sumAmounts(listOf(body["payments"], "a delivery's payments").map(line =>
-      Math.abs(wholeNumber(objectOf(line, "a delivery payment"), "amount_minor") ?? 0)));
-    outstandingMinor = sumAmounts([total, -paid]);
-  } catch (cause) { throw new UnusableEvent("a delivery's total cannot be worked out", { cause }); }
+    outstandingMinor = purchaseTotals({ supplierId: optional(purchase, "supplier_id") ?? undefined,
+      lines: listOf(purchase["items"], "a delivery's items").map(line => {
+        const item = objectOf(line, "a delivery item");
+        return { unitCostMinor: wholeNumber(item, "unit_cost_minor") ?? 0, quantity: wholeNumber(item, "quantity") ?? 0 };
+      }),
+      payments: listOf(body["payments"], "a delivery's payments").map(line =>
+        ({ amountMinor: Math.abs(wholeNumber(objectOf(line, "a delivery payment"), "amount_minor") ?? 0) })) }).outstandingMinor;
+  } catch (cause) {
+    if (cause instanceof RuleError && cause.code === "counterparty") throw new UnusableEvent(cause.message, { cause });
+    throw new UnusableEvent("a delivery's total cannot be worked out", { cause });
+  }
   const transactionId = optional(purchase, "supplier_transaction_id");
 
   if (outstandingMinor <= 0) {

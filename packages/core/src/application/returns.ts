@@ -44,7 +44,7 @@ function record(context: OperationContext, kind: ReturnKind, input: ReturnComman
     appendLocalAudit(tx,context,ports,revision,type,input.id,{ originalId: input.originalId, eventId: input.eventId });
   });
 }
-/** Partial/full sale return under sales.refund: stock in, cash refund out, remainder as customer credit; stale predecessor commits nothing. */
+/** Partial/full sale return under sales.refund: stock in, cash refund out (at most `refundableMinor`, what the sale collected less earlier refunds), remainder as customer credit; stale predecessor commits nothing. */
 export function returnSale(context: OperationContext, input: ReturnCommand): void { record(context,"SALE",input); }
-/** Partial/full purchase return under purchases.create/pay: stock out, refund cash in, remainder reduces supplier debt; no original facts are edited. */
+/** Partial/full purchase return under purchases.create/pay: stock out, refund cash in (at most `refundableMinor`, what was paid at the door less earlier refunds), remainder reduces supplier debt; no original facts are edited. */
 export function returnPurchase(context: OperationContext, input: ReturnCommand): void { record(context,"PURCHASE",input); }

@@ -10,8 +10,8 @@
  */
 
 import type { Queryable } from "../database/driver.ts";
-import { sumAmounts } from "../../rules/amounts.ts";
-import { subtotalOf } from "../sales/sales.ts";
+import { RuleError } from "../../rules/amounts.ts";
+import { saleTotals } from "../../rules/pricing.ts";
 import { UnusableEvent, type EventApplier } from "./engine.ts";
 import type { InboxEvent } from "./inbox.ts";
 
@@ -162,11 +162,16 @@ function applyCredit(
     };
   });
 
+  // The shared rule, so a discount beyond the sale or a payment beyond its total
+  // is refused here exactly as the till that sold it would have refused it.
   let outstandingMinor: number;
   try {
-    const paidMinor = sumAmounts(listOf(body["payments"], "a sale's payments").map(line => wholeNumber(objectOf(line, "a payment"), "amount_minor") ?? 0));
-    outstandingMinor = sumAmounts([subtotalOf(lines), -(wholeNumber(sale, "discount_minor") ?? 0), -paidMinor]);
-  } catch (cause) { throw new UnusableEvent("a sale's total cannot be worked out", { cause }); }
+    outstandingMinor = saleTotals({ lines, discountMinor: wholeNumber(sale, "discount_minor") ?? 0, customerId: optional(sale, "customer_id") ?? undefined,
+      payments: listOf(body["payments"], "a sale's payments").map(line => ({ amountMinor: wholeNumber(objectOf(line, "a payment"), "amount_minor") ?? 0 })) }).outstandingMinor;
+  } catch (cause) {
+    if (cause instanceof RuleError && cause.code === "counterparty") throw new UnusableEvent(cause.message, { cause });
+    throw new UnusableEvent("a sale's total cannot be worked out", { cause });
+  }
 
   const transactionId = optional(sale, "credit_transaction_id");
   if (outstandingMinor <= 0) {

@@ -17,7 +17,7 @@ import type { Queryable } from "../database/driver.ts";
 import { sqlInteger } from "../database/safe-values.ts";
 import { sumAmounts } from "../../rules/amounts.ts";
 import { QUANTITY_SCALE } from "../inventory/movements.ts";
-import { LINE_TOTAL } from "./reports.ts";
+import { LINE_TOTAL, netSaleFacts } from "./reports.ts";
 
 /** How a trend is sliced. Weeks start on Monday. */
 export type Bucket = "hour" | "day" | "week" | "month";
@@ -203,38 +203,16 @@ export function salesActivity(tx: Queryable, businessId: string, from: string, t
  * Net of the returns made in the period, product by product, so a product
  * returned but not sold in the period appears with negative figures rather than
  * vanishing. Named by the product's current name, so a renamed product is one
- * row. Bill-level discounts belong to no product and are not spread over them.
+ * row. Revenue is net of each sale's whole-bill discount, allocated across its
+ * lines exactly as a return refunds it, so a fully returned line nets to zero and
+ * the products sum to {@link profitTrend}'s period revenue.
  */
 export function productProfit(tx: Queryable, businessId: string, from: string, to: string): ProductProfit[] {
-  const sold = tx.all(
-    `SELECT i.product_id AS product_id, coalesce(p.name, max(i.name)) AS name,
-            sum(i.quantity) AS quantity, sum(${LINE_TOTAL}) AS revenue,
-            sum(CASE WHEN i.unit_cost_minor IS NULL THEN 0
-                     ELSE (i.unit_cost_minor * i.quantity + ${QUANTITY_SCALE / 2}) / ${QUANTITY_SCALE} END) AS cost,
-            sum(CASE WHEN i.unit_cost_minor IS NULL THEN 1 ELSE 0 END) AS blind
-       FROM sale_items i
-       JOIN sales s ON s.id = i.sale_id
-       LEFT JOIN products p ON p.id = i.product_id AND p.business_id = s.business_id
-      WHERE s.business_id = ?1 AND s.occurred_at >= ?2 AND s.occurred_at < ?3
-      GROUP BY i.product_id`,
-    [businessId, from, to],
-  );
-  const returned = tx.all(
-    `SELECT ri.product_id AS product_id, coalesce(p.name, ri.product_id) AS name,
-            sum(ri.quantity) AS quantity, sum(ri.amount_minor) AS revenue, sum(ri.cost_minor) AS cost
-       FROM business_return_items ri
-       JOIN business_returns r ON r.business_id = ri.business_id AND r.id = ri.return_id
-       LEFT JOIN products p ON p.id = ri.product_id AND p.business_id = r.business_id
-      WHERE r.business_id = ?1 AND r.kind = 'SALE' AND r.occurred_at >= ?2 AND r.occurred_at < ?3
-      GROUP BY ri.product_id`,
-    [businessId, from, to],
-  );
   const products = new Map<string, { name: string; quantity: number; revenue: number; cost: number; blind: number }>();
-  for (const row of sold) products.set(String(row["product_id"]), { name: String(row["name"]), quantity: sqlInteger(row["quantity"]), revenue: sqlInteger(row["revenue"]), cost: sqlInteger(row["cost"]), blind: sqlInteger(row["blind"]) });
-  for (const row of returned) {
-    const id = String(row["product_id"]), current = products.get(id) ?? { name: String(row["name"]), quantity: 0, revenue: 0, cost: 0, blind: 0 };
-    products.set(id, { ...current, quantity: sumAmounts([current.quantity, -sqlInteger(row["quantity"])]),
-      revenue: sumAmounts([current.revenue, -sqlInteger(row["revenue"])]), cost: sumAmounts([current.cost, -sqlInteger(row["cost"])]) });
+  for (const fact of netSaleFacts(tx, businessId, from, to)) {
+    const current = products.get(fact.productId) ?? { name: fact.productName ?? (fact.returned ? fact.productId : fact.name), quantity: 0, revenue: 0, cost: 0, blind: 0 };
+    products.set(fact.productId, { name: current.name, quantity: sumAmounts([current.quantity, fact.quantity]), revenue: sumAmounts([current.revenue, fact.revenueMinor]),
+      cost: sumAmounts([current.cost, fact.costMinor]), blind: current.blind + (fact.uncosted ? 1 : 0) });
   }
   return [...products].map(([productId, value]) => ({
     productId, name: value.name, soldThousandths: value.quantity, revenueMinor: value.revenue, costMinor: value.cost,

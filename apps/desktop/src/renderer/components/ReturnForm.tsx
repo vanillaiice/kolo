@@ -19,10 +19,10 @@ export function ReturnForm({service,sessionId,revision,kind,originalId,onDone}:{
   try{items=(source.data?.items??[]).map(item=>({originalItemId:item.id,quantity:quantityEntry(quantities[item.id]??"0")})).filter(item=>item.quantity>0);}catch{valid=false;}
   const key=JSON.stringify(items);
   const preview=useRead(()=>items.length===0||!valid?Promise.resolve({ok:true as const,value:null}):service.previewReturn({sessionId,kind,originalId,items}),[service,sessionId,kind,originalId,key,reload]);
-  const total=preview.data?.totalMinor??0,counterparty=source.data?.hasCounterparty===true;
+  const total=preview.data?.totalMinor??0,counterparty=source.data?.hasCounterparty===true,refundable=source.data?.refundableMinor??0;
   let refund=0;try{refund=refundText===null?(counterparty?0:total):refundText.trim()===""?0:moneyEntry(refundText);}catch{valid=false;}
   const account=accountId||accounts.data?.items[0]?.id||"",remainder=total-refund;
-  const blocker=refund>total?"refundTooLarge":remainder>0&&!counterparty?"needsFullRefund":undefined;
+  const blocker=refund>total?"refundTooLarge":refund>refundable?"refundExceedsPaid":remainder>0&&!counterparty?"needsFullRefund":undefined;
   const change=(next:()=>void):void=>{pending.current=undefined;next();action.setError(undefined);};
   const submit=async():Promise<void>=>{
     const saved=await action.run(async()=>{
@@ -44,6 +44,7 @@ export function ReturnForm({service,sessionId,revision,kind,originalId,onDone}:{
         </tbody></table></div>
         <div className="total-line"><span>{t("returnValue")}</span><strong>{preview.data?formatMoney(total,language):"—"}</strong></div>
         {preview.data&&<><div className="two-fields"><label className="field" htmlFor="return-refund"><span>{t(kind==="SALE"?"refundSale":"refundPurchase")}</span><input id="return-refund" inputMode="decimal" autoComplete="off" value={refundText??String(refund)} onChange={event=>change(()=>setRefundText(event.target.value))}/></label>
+          {counterparty&&<p className="hint">{t("refundableUpTo")} {formatMoney(Math.min(total,refundable),language)}</p>}
           {refund>0&&<Select id="return-account" label={t("refundAccount")} value={account} onChange={value=>change(()=>setAccountId(value))} options={(accounts.data?.items??[]).map(item=>({value:item.id,label:item.name}))}/>}</div>
           {remainder>0&&counterparty&&<div className="settlement-line"><span>{t(kind==="SALE"?"toCustomerAccount":"toSupplierAccount")}</span><strong>{formatMoney(remainder,language)}</strong></div>}</>}
         <label className="field" htmlFor="return-reason"><span>{t("reason")}</span><input id="return-reason" value={reason} maxLength={200} required onChange={event=>change(()=>setReason(event.target.value))}/></label>

@@ -185,15 +185,18 @@ export function recordMovements(
  * A product sold for a year has thousands of movements, and a till asking how
  * many are left must not load them all (§46). The answer is the same addition
  * either way.
+ *
+ * With `branchId`, only that branch's movements count — what a count taken on
+ * that branch's shelves is compared against. Without it, the whole business.
  */
-export function stockOf(database: Queryable, businessId: string, productId: string): StockLevel {
+export function stockOf(database: Queryable, businessId: string, productId: string, branchId?: string): StockLevel {
   const row = database.get(
     `SELECT coalesce(sum(quantity), 0) AS on_hand,
             count(*) AS movements,
             max(occurred_at) AS last_moved_at
        FROM inventory_movements
-      WHERE business_id = ? AND product_id = ?`,
-    [businessId, productId],
+      WHERE business_id = ? AND product_id = ?${branchId === undefined ? "" : " AND branch_id = ?"}`,
+    branchId === undefined ? [businessId, productId] : [businessId, productId, branchId],
   );
 
   return {

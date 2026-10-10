@@ -97,7 +97,7 @@ function Dashboard({ value }: { value: AnalyticsResult }): React.JSX.Element {
     <div className="analytics-grid">
       <Card title={t("salesOverTime")} wide><Trend value={value}/></Card>
       <Card title={t("busyTimes")} hint={t("busyTimesHelp")} wide><Heatmap cells={value.activity}/></Card>
-      <Card title={t("rep_fastMoving")} hint={t("beforeBillDiscounts")} wide><BestSellers products={value.products} truncated={value.productsTruncated}/></Card>
+      <Card title={t("rep_fastMoving")} hint={t("netOfDiscountsAndReturns")} wide><BestSellers products={value.products} truncated={value.productsTruncated}/></Card>
       <Card title={t("rep_salesByCategory")}><Share lines={value.categories} id="categories"/></Card>
       <Card title={t("paymentMethods")}><Share lines={value.accounts} id="accounts"/></Card>
       {value.customers !== undefined && <Card title={t("topCustomers")} hint={t("namedCustomersOnly")} wide><Customers rows={value.customers} total={value.sales.revenueMinor}/></Card>}

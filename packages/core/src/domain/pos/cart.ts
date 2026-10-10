@@ -51,6 +51,12 @@ export type Problem =
   | "DISCOUNT_EXCEEDS_SALE"
   | "CREDIT_NEEDS_CUSTOMER"
   | "LINE_DISCOUNT_EXCEEDS_LINE"
+  /**
+   * A price, quantity, discount or payment that is not a whole amount at or above
+   * zero (above zero for a quantity or payment). `completeSale` refuses these; the
+   * screen says so rather than showing a total worked out from them.
+   */
+  | "INVALID_AMOUNT"
   | "TOO_LARGE";
 
 /** What the till shows while the cart is being filled. */
@@ -198,10 +204,21 @@ export function setNote(state: CartState, note?: string): CartState {
  */
 export function view(state: CartState): CartView {
   const problems: Problem[] = [];
+  const whole = (value: number | undefined, above = false): boolean =>
+    value === undefined || (Number.isSafeInteger(value) && (above ? value > 0 : value >= 0));
+  const invalid =
+    !whole(state.discountMinor) ||
+    state.lines.some(line => !whole(line.unitPriceMinor) || !whole(line.quantity, true) || !whole(line.discountMinor)) ||
+    state.payments.some(payment => !whole(payment.amountMinor, true));
+  if (invalid) {
+    // Arithmetic on these would show a figure the sale could never be recorded
+    // at — a negative discount reads as a larger total — so none is shown.
+    problems.push("INVALID_AMOUNT");
+  }
 
   let subtotalMinor = 0;
   try {
-    subtotalMinor = subtotalOf(state.lines);
+    if (!invalid) subtotalMinor = subtotalOf(state.lines);
   } catch (error) {
     // Either a line discount larger than its line, or arithmetic too big to be
     // exact. Both are real and neither should stop the screen drawing.
@@ -209,14 +226,14 @@ export function view(state: CartState): CartView {
     problems.push(error instanceof RuleError && error.code === "discount" ? "LINE_DISCOUNT_EXCEEDS_LINE" : "TOO_LARGE");
   }
 
-  const discountMinor = state.discountMinor;
+  const discountMinor = invalid ? 0 : state.discountMinor;
   if (discountMinor > subtotalMinor) {
     problems.push("DISCOUNT_EXCEEDS_SALE");
   }
   const totalMinor = Math.max(0, subtotalMinor - discountMinor);
 
   let paidMinor = 0;
-  try { paidMinor = sumAmounts(state.payments.map(payment => payment.amountMinor)); }
+  try { if (!invalid) paidMinor = sumAmounts(state.payments.map(payment => payment.amountMinor)); }
   catch { problems.push("TOO_LARGE"); }
   // Paying more than the bill is not change owed — change comes from the cash
   // tendered, which is a different number from the payment recorded.
@@ -235,7 +252,7 @@ export function view(state: CartState): CartView {
   }
 
   let itemsThousandths = 0;
-  try { itemsThousandths = sumAmounts(state.lines.map(line => line.quantity)); }
+  try { if (!invalid) itemsThousandths = sumAmounts(state.lines.map(line => line.quantity)); }
   catch { problems.push("TOO_LARGE"); }
 
   return { subtotalMinor, totalMinor, paidMinor, outstandingMinor, itemsThousandths, problems };
