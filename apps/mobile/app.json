@@ -2,14 +2,14 @@
   "expo": {
     "name": "KOLO",
     "slug": "kolo",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "orientation": "portrait",
     "scheme": "kolo",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "android": {
       "package": "cm.kolo.app",
-      "versionCode": 2
+      "versionCode": 3
     },
     "plugins": [
       "expo-sqlite",

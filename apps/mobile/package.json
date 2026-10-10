@@ -1,6 +1,6 @@
 {
   "name": "@kolo/mobile",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "GPL-3.0-only",
   "private": true,
   "description": "KOLO mobile client \u2014 React Native, Android first",
