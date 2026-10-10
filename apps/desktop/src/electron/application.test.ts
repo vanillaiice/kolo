@@ -187,6 +187,25 @@ it("dispatcher allowlist rejects untrusted frames and argument smuggling before 
     assert.throws(()=>handlers["kolo:installation-status"]!({},),/invalid status caller/);
   }finally{await f.dispose();}
 });
+it("products keep one main category and up to 20 others; the till filter finds both and identical retries write nothing",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:0})));
+    const [grain,promo,local]=await Promise.all(["Grain","Promo","Local"].map(async name=>value(await f.application.createCategory({sessionId,requestId:randomUUID(),name}))));
+    const edit={sessionId,productId:item.id,version:item.version,name:item.name,unit:item.unit,sellingPriceMinor:item.sellingPriceMinor,categoryId:grain!.id,minimumStockThousandths:0,otherCategoryIds:[promo!.id,grain!.id,local!.id,promo!.id]};
+    const saved=value(await f.application.updateProduct(edit));
+    assert.equal(saved.categoryId,grain!.id); assert.deepEqual([...saved.otherCategoryIds!].sort(),[promo!.id,local!.id].sort(),"the main category and duplicates are not repeated");
+    assert.deepEqual([...value(await f.application.getProduct({sessionId,productId:item.id})).otherCategoryIds!].sort(),[promo!.id,local!.id].sort());
+    for(const group of [grain!,promo!,local!])assert.deepEqual(value(await f.application.listProducts({sessionId,categoryId:group.id})).items.map(row=>row.id),[item.id]);
+    const events=():unknown=>f.database.get("SELECT count(*) AS n FROM event_journal")!["n"],before=events();
+    assert.equal(value(await f.application.updateProduct({...edit,version:saved.version})).version,saved.version);assert.equal(events(),before,"an identical retry writes nothing");
+    const only=value(await f.application.updateProduct({...edit,version:saved.version,otherCategoryIds:[local!.id]}));
+    assert.deepEqual(only.otherCategoryIds,[local!.id]);assert.equal(only.version,saved.version,"changing only the other categories keeps the product version");
+    assert.deepEqual(value(await f.application.listProducts({sessionId,categoryId:promo!.id})).items,[]);
+    failure(await f.application.updateProduct({...edit,version:saved.version,otherCategoryIds:Array.from({length:21},()=>randomUUID())}),"invalid_input");
+    failure(await f.application.updateProduct({...edit,version:saved.version,otherCategoryIds:[randomUUID()]}),"scope_mismatch");
+    failure(await f.application.listProducts({sessionId,categoryId:"x"}),"invalid_input");
+  }finally{await f.dispose();}
+});
 it("product edits name their version: identical retries are no-ops, stale edits are refused, and price/category rules hold",async()=>{
   const f=fixture();try{
     const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:0})));
@@ -356,6 +375,9 @@ it("customer details, archive and payments are versioned, retry-safe, scoped and
     f.database.run("DROP TRIGGER fail_payment");assert.equal(value(await f.application.receiveCustomerPayment(failed)).outstandingMinor,-600);
     const page=value(await f.application.customerStatement({sessionId,customerId:created.id,limit:2})),rest=value(await f.application.customerStatement({sessionId,customerId:created.id,after:page.next!}));
     assert.deepEqual([...page.items,...rest.items].map(entry=>entry.amountMinor).reduce((sum,amount)=>sum+amount,0),-600);
+    // Newest first: each balance is the previous (older) balance plus this entry; the newest equals the total.
+    const entries=[...page.items,...rest.items];assert.equal(entries[0]!.balanceMinor,-600);
+    for(let index=0;index<entries.length-1;index++)assert.equal(entries[index]!.balanceMinor,entries[index+1]!.balanceMinor+entries[index]!.amountMinor);
     assert.ok([...page.items,...rest.items].some(entry=>entry.note==="Friday"));
     const archived=value(await f.application.updateCustomer({...edit,version:edited.version,active:false}));assert.equal(archived.active,false);
     assert.equal(value(await f.application.listCustomers({sessionId})).items.length,0);assert.equal(value(await f.application.listCustomers({sessionId,includeInactive:true})).items[0]!.outstandingMinor,-600);
@@ -611,7 +633,7 @@ it("sale and purchase returns compensate stock, money and ledgers, retry by cont
     const sale=value(await f.application.checkout({sessionId,requestId:randomUUID(),customerId:customer.id,lines:[{productId:item.id,quantity:4000,unitPriceMinor:500}],payments:[{accountId:cash,amountMinor:1500}]}));
     value(await f.application.moveMoney({sessionId,requestId:randomUUID(),accountId:cash,direction:"in",amountMinor:1000,reason:"Float"}));
     const source=value(await f.application.returnSource({sessionId,kind:"SALE",originalId:sale.saleId}));
-    assert.deepEqual([source.hasCounterparty,source.items.length,source.items[0]!.originalQuantity,source.priorId],[true,1,4000,undefined]);
+    assert.deepEqual([source.hasCounterparty,source.items.length,source.items[0]!.originalQuantity,source.priorId,source.refundableMinor],[true,1,4000,undefined,1500]);
     const items=[{originalItemId:source.items[0]!.id,quantity:2000}];
     assert.equal(value(await f.application.previewReturn({sessionId,kind:"SALE",originalId:sale.saleId,items})).totalMinor,1000);
     const request={sessionId,requestId:randomUUID(),kind:"SALE" as const,originalId:sale.saleId,reason:"Damaged",items,refund:{accountId:cash,amountMinor:600}};
@@ -622,8 +644,8 @@ it("sale and purchase returns compensate stock, money and ledgers, retry by cont
     assert.equal(value(await f.application.listAccounts({sessionId})).items[0]!.onHandMinor,1900);
     assert.equal(value(await f.application.getReceipt({sessionId,saleId:sale.saleId})).returnedMinor,1000);
     failure(await f.application.recordReturn({...request,requestId:randomUUID()}),"stale_return");
-    const next=value(await f.application.returnSource({sessionId,kind:"SALE",originalId:sale.saleId}));assert.equal(next.priorId,first.returnId);assert.equal(next.items[0]!.returnedQuantity,2000);
-    for(const bad of [{items:[{...items[0]!,quantity:3000}]},{refund:{accountId:cash,amountMinor:1001}},{items:[]},{reason:""},{kind:"GIFT"}])
+    const next=value(await f.application.returnSource({sessionId,kind:"SALE",originalId:sale.saleId}));assert.equal(next.priorId,first.returnId);assert.equal(next.items[0]!.returnedQuantity,2000);assert.equal(next.refundableMinor,900);
+    for(const bad of [{items:[{...items[0]!,quantity:3000}]},{refund:{accountId:cash,amountMinor:1001}},{refund:{accountId:cash,amountMinor:901}},{items:[]},{reason:""},{kind:"GIFT"}])
       failure(await f.application.recordReturn({...request,requestId:randomUUID(),priorId:next.priorId,...bad}),"invalid_input");
     value(await f.application.recordReturn({...request,requestId:randomUUID(),priorId:next.priorId,refund:undefined}));
     assert.equal(value(await f.application.getCustomer({sessionId,customerId:customer.id})).outstandingMinor,-900);
@@ -757,4 +779,23 @@ it("session memory keeps the remembered user encrypted, defaults on and treats d
     writeFileSync(join(directory,"kolo.session.remembered"),"not encrypted");assert.equal(await memory.read(),undefined);
     await memory.write(undefined);await memory.write(undefined);assert.equal(await memory.read(),undefined);
   }finally{rmSync(directory,{recursive:true,force:true});}
+});
+it("a computer reset needs the owner, the exact shop name and the owner's code, then locks before the host erases",async()=>{
+  const f=fixture();let resets=0;
+  const application=new DesktopApplication(f.ports,desktopExchangeCrypto,{files:{} as never,dialogs:{} as never,crypto:{} as never,onActivated:async()=>undefined,onReset:()=>{resets++;}});
+  try{
+    await application.initialize();
+    const setup=value(await application.createShop({businessName:"Shop",ownerName:"Owner",deviceLabel:"PC",cashAccountName:"Cash",secret:"654321"}));
+    const owner=value(await application.unlock({userId:setup.members[0]!.id,secret:"654321"})),sessionId=owner.sessionId!;
+    failure(await application.resetComputer({sessionId,confirmedName:"shop",secret:"654321"}),"confirmation_required");
+    failure(await application.resetComputer({sessionId,confirmedName:"Shop",secret:"000000"}),"invalid_credential");
+    assert.equal(resets,0,"nothing is erased before both checks pass");
+    const context=await unlockWorkspace({userId:setup.members[0]!.id,secret:"654321"},f.ports);
+    const cashier=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"765432"});
+    const staff=value(await application.unlock({userId:cashier,secret:"765432"})).sessionId!;
+    assert.equal((await application.resetComputer({sessionId:staff,confirmedName:"Shop",secret:"765432"})).ok,false,"staff cannot reset");
+    const again=value(await application.unlock({userId:setup.members[0]!.id,secret:"654321"})).sessionId!;
+    assert.equal(value(await application.resetComputer({sessionId:again,confirmedName:"Shop",secret:"654321"})),null);
+    assert.equal(resets,1); assert.equal(value(await application.getWorkspace()).state,"locked","the session is locked before files go");
+  }finally{await application.dispose();await f.dispose();}
 });

@@ -129,9 +129,10 @@ export function Statement({service,sessionId,revision,kind,id}:{service:ShopServ
   const label=(type:string):string=>["CREDIT_SALE","PURCHASE","PAYMENT","RETURN","ADJUSTMENT","OPENING_BALANCE","WRITE_OFF"].includes(type)?t(`ledger${type}` as TextKey):type;
   return <div className="panel"><h2>{t("statement")}</h2>
     <ReadState loading={list.loading} error={list.error} empty={list.data?.items.length===0} emptyText={t("noStatement")} retry={list.retry}>
-      <div className="table-wrap"><table><thead><tr><th>{t("date")}</th><th>{t("movementType")}</th><th>{t("amount")}</th><th>{t("notesLabel")}</th></tr></thead><tbody>
+      <div className="table-wrap"><table><thead><tr><th>{t("date")}</th><th>{t("movementType")}</th><th>{t("amount")}</th><th>{t("balanceAfter")}</th><th>{t("notesLabel")}</th></tr></thead><tbody>
         {list.data?.items.map(entry=><tr key={entry.id}><td>{new Date(entry.occurredAt).toLocaleString(language==="fr"?"fr-FR":"en-GB")}</td><td>{label(entry.type)}</td>
-          <td className={entry.amountMinor>0?"money negative":"money"}>{entry.amountMinor>0?"+":"−"}{formatMoney(Math.abs(entry.amountMinor),language)}</td><td>{entry.note??"—"}</td></tr>)}
+          <td className={entry.amountMinor>0?"money negative":"money"}>{entry.amountMinor>0?"+":"−"}{formatMoney(Math.abs(entry.amountMinor),language)}</td>
+          <td className={entry.balanceMinor>0?"money negative":"money"}>{formatMoney(entry.balanceMinor,language)}</td><td>{entry.note??"—"}</td></tr>)}
       </tbody></table></div>
     </ReadState>
     <Pager hasFirst={cursor!==undefined} hasNext={list.data?.next!==undefined} onFirst={()=>setCursor(undefined)} onNext={()=>{if(list.data?.next)setCursor({after:list.data.next,revision});}}/>

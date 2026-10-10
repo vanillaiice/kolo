@@ -89,7 +89,7 @@ export function paySupplier(host: Host, input: unknown): SupplierView {
 export function supplierStatement(host: Host, input: unknown): Page<StatementEntryView> {
   const data = object(input, ["sessionId", "supplierId", "after", "limit"]), context = host.actor(data);
   const result = statement(context, "supplier", uuid(data["supplierId"]), page(data));
-  return { ...result, items: result.items.map(row => ({ id: String(row["id"]), occurredAt: String(row["occurred_at"]), type: String(row["type"]), amountMinor: Number(row["amount_minor"]),
+  return { ...result, items: result.items.map(row => ({ id: String(row["id"]), occurredAt: String(row["occurred_at"]), type: String(row["type"]), amountMinor: Number(row["amount_minor"]), balanceMinor: Number(row["balance_minor"]),
     ...(row["reference_kind"] === "PURCHASE" && typeof row["reference_id"] === "string" ? { purchaseId: row["reference_id"] } : {}),
     ...(typeof row["reason"] === "string" && row["reason"] !== "" ? { note: row["reason"] } : {}) })) };
 }

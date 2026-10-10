@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, powerMonitor, safeStorage, nativeTheme, type IpcMainInvokeEvent } from "electron";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { randomUUIDv7 } from "node:crypto";
 import { desktopStatus } from "./database.js";
 import { DesktopApplication } from "./application.js";
@@ -61,15 +61,28 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
       // Per-computer settings live beside, never inside, the business database.
       const preferences = devicePreferences(join(app.getPath("userData"), "preferences.json"));
       fileSlots = nodeWorkspaceFiles(app.getPath("userData"), { limits: preferences.limits }); database = fileSlots.openActive(); migrate(database);
-      const slots = fileSlots, credentials = localCredentialsOnDesktop(join(app.getPath("userData"), "credentials"), safeStorage);
+      const credentials = localCredentialsOnDesktop(join(app.getPath("userData"), "credentials"), safeStorage);
       const memory = desktopSessionMemory(join(app.getPath("userData"), "session"), safeStorage);
       const dialogs: TransferDialogs = workflowSmoke ? (await import("./workflow-smoke.js")).smokeDialogs() : {
         open: () => pickDesktopTransferFile(dialog, preferences.limits().fileBytes), save: document => saveDesktopTransferFile(document, dialog, preferences.limits().fileBytes) };
       // Restore and pairing activate a new database: a new application serves it, and the old one
       // is disposed after its in-flight command (the activation itself) has answered.
+      // Computer reset: after the command answered, retire the application, delete every shop file,
+      // credential and remembered session in user data (preferences stay), then serve a fresh empty shop.
+      const resetComputer = async (): Promise<void> => {
+        const previous = application, previousDatabase = database;
+        await previous?.dispose(); previousDatabase?.close(); fileSlots?.close();
+        const data = app.getPath("userData");
+        for (const entry of readdirSync(data)) if (/^(kolo\.db|workspace-[0-9a-f-]+\.db|stage-[0-9a-f-]+\.db|workspace-slots\.db)(?:-wal|-shm|-journal)?$/.test(entry)) rmSync(join(data, entry), { force: true });
+        for (const directory of ["credentials", "session"]) rmSync(join(data, directory), { recursive: true, force: true });
+        fileSlots = nodeWorkspaceFiles(data, { limits: preferences.limits });
+        const fresh = fileSlots.openActive(); migrate(fresh);
+        application = await serve(fresh); database = fresh;
+        if (window !== undefined && !window.isDestroyed()) window.webContents.send("kolo:changed");
+      };
       const serve = async (next: Database): Promise<DesktopApplication> => {
         const created = new DesktopApplication({ database: next, credentials, newId: randomUUIDv7, now: () => new Date().toISOString() }, desktopExchangeCrypto,
-          { files: slots, dialogs, crypto: desktopTransferCrypto, onActivated: async activated => {
+          { files: fileSlots!, dialogs, crypto: desktopTransferCrypto, onReset: () => { setImmediate(() => { void resetComputer(); }); }, onActivated: async activated => {
             migrate(activated); const previous = application, previousDatabase = database;
             application = await serve(activated); database = activated;
             void previous?.dispose().finally(() => previousDatabase?.close());

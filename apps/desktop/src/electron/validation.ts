@@ -34,8 +34,9 @@ export function optional<T>(value: unknown, parse: (value: unknown) => T): T | u
 }
 /** Bounded pagination/search, with no renderer-selected tenant or SQL. */
 export function page(input: Record<string, unknown>): PageQuery {
-  const result: { term?: string; after?: { name: string; id: string }; limit?: number; includeInactive?: boolean } = {};
+  const result: { term?: string; after?: { name: string; id: string }; limit?: number; includeInactive?: boolean; categoryId?: string } = {};
   if (input["includeInactive"] !== undefined) result.includeInactive = boolean(input["includeInactive"]);
+  if (input["categoryId"] !== undefined) result.categoryId = uuid(input["categoryId"]);
   if (input["term"] !== undefined) {
     if (typeof input["term"] !== "string" || input["term"].length > 120) throw new WorkspaceError("invalid_input");
     result.term = input["term"];

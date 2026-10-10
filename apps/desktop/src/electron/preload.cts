@@ -16,6 +16,7 @@ const bridge: DesktopBridge = {
   sessionPreferences: input => ipcRenderer.invoke("kolo:session-preferences", input),
   setRememberSession: input => ipcRenderer.invoke("kolo:remember-session", input),
   setLargeFiles: input => ipcRenderer.invoke("kolo:large-files", input),
+  resetComputer: input => ipcRenderer.invoke("kolo:reset-computer", input),
   recoveryKey: input => ipcRenderer.invoke("kolo:recovery-key", input),
   listProducts: input => ipcRenderer.invoke("kolo:products", input),
   getProduct: input => ipcRenderer.invoke("kolo:product", input),

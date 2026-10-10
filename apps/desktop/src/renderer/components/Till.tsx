@@ -7,7 +7,7 @@ import { moneyEntry } from "@kolo/core/domain/entry";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { CheckoutRequest, CustomerView, ProductView, ShopService } from "../../shared/service.ts";
 import { ProductThumb } from "./Photo.tsx";
-import { call, ErrorText, Field, Pager, ReadState, useAction, useRead, useText } from "./ui.tsx";
+import { call, ErrorText, Field, Pager, ReadState, Select, useAction, useRead, useText } from "./ui.tsx";
 
 type DraftLine={readonly product:ProductView;readonly quantityText:string};
 /** A payment row; the first row without typed text takes whatever is left to pay. */
@@ -18,7 +18,10 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
   const [term,setTerm]=useState(""),[barcode,setBarcode]=useState(""),[cursor,setCursor]=useState<{after:Cursor;revision:number}>();
   const [cart,setCart]=useState<readonly DraftLine[]>([]),[rows,setRows]=useState<readonly DraftPayment[]>([{key:"first",accountId:"",amountText:null}]),[customer,setCustomer]=useState<CustomerView>(),[received,setReceived]=useState(""),[discount,setDiscount]=useState(""),[uncertain,setUncertain]=useState(false);
   const pending=useRef<CheckoutRequest | undefined>(undefined), scanner=useRef<HTMLInputElement>(null), focusScanner=useRef(true);
-  const products=useRead(()=>service.listProducts({sessionId,term,...(cursor?.revision===revision?{after:cursor.after}: {})}),[service,sessionId,term,cursor,revision]);
+  const [categoryId,setCategoryId]=useState("");
+  const groups=useRead(()=>service.listCategories({sessionId,limit:100}),[service,sessionId,revision]);
+  // No search and no category lists the whole catalogue; a category keeps products whose main or other category it is.
+  const products=useRead(()=>service.listProducts({sessionId,term,...(categoryId===""?{}:{categoryId}),...(cursor?.revision===revision?{after:cursor.after}: {})}),[service,sessionId,term,categoryId,cursor,revision]);
   const accounts=useRead(()=>service.listPaymentAccounts({sessionId,limit:100}),[service,sessionId,revision]);
   const frozen=action.busy||uncertain,canCredit=permissions.includes("customers.credit"),canCustomers=permissions.includes("customers.view"),canDiscount=permissions.includes("sales.discount");
   useEffect(()=>{if(focusScanner.current&&!frozen){scanner.current?.focus();focusScanner.current=false;}},[frozen,cart]);
@@ -74,8 +77,10 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
     <div className="section-heading"><div><p className="eyebrow">{t("till")}</p><h1>{t("tillHelp")}</h1></div><span className="pill"><span className="status-dot"/>{t("offline")}</span></div>
     <div className="till-layout"><div className="catalogue-column">
       <form className="scanner-form" onSubmit={event=>{event.preventDefault();if(!frozen)void scan();}}><label className="sr-only" htmlFor="barcode-scan">{t("scanner")}</label><input id="barcode-scan" ref={scanner} value={barcode} placeholder={t("scanner")} autoComplete="off" disabled={frozen} maxLength={256} onChange={event=>setBarcode(event.target.value)}/><button className="secondary" disabled={frozen||barcode.trim()===""} type="submit" aria-label={t("scan")}><span aria-hidden="true">↵</span></button></form>
-      <Field id="till-search" label={t("search")} value={term} required={false} disabled={frozen} onChange={value=>{setTerm(value);setCursor(undefined);}}/>
-      <ReadState loading={products.loading} error={products.error} empty={products.data?.items.length===0} emptyText={t(term===""?"noProducts":"noResults")} retry={products.retry}>
+      <div className="two-fields"><Field id="till-search" label={t("search")} value={term} required={false} disabled={frozen} onChange={value=>{setTerm(value);setCursor(undefined);}}/>
+        <Select id="till-category" label={t("category")} value={categoryId} disabled={frozen} onChange={value=>{setCategoryId(value);setCursor(undefined);}}
+          options={[{value:"",label:t("allCategories")},...(groups.data?.items??[]).map(item=>({value:item.id,label:item.name}))]}/></div>
+      <ReadState loading={products.loading} error={products.error} empty={products.data?.items.length===0} emptyText={t(term===""&&categoryId===""?"noProducts":"noResults")} retry={products.retry}>
         <div className="product-grid">{products.data?.items.map(product=><button key={product.id} className="product-tile" disabled={frozen} onClick={()=>add(product)}>
           <ProductThumb service={service} sessionId={sessionId} product={product}/><strong>{product.name}</strong><span className="money">{formatMoney(product.sellingPriceMinor,language)}</span>
           <small className={product.onHandThousandths!==undefined&&product.onHandThousandths<0?"negative":"muted"}>{product.onHandThousandths===undefined?product.unit:`${t("stock")}: ${formatQuantityWithUnit(product.onHandThousandths,product.unit,language)}`}</small>

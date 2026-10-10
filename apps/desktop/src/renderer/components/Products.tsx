@@ -75,13 +75,13 @@ function ProductDetail({service,sessionId,revision,permissions,productId,onBack}
 function EditProduct({service,sessionId,product,onReload,onSaved,onClose}:{service:ShopService;sessionId:string;product:ProductView;onReload:()=>void;onSaved:(value:ProductView)=>void;onClose:()=>void}):React.JSX.Element{
   const {t}=useText(),action=useAction();
   const [name,setName]=useState(product.name),[unit,setUnit]=useState(product.unit),[barcode,setBarcode]=useState(product.barcode??""),[price,setPrice]=useState(String(product.sellingPriceMinor));
-  const [cost,setCost]=useState(product.purchasePriceMinor===undefined?"":String(product.purchasePriceMinor)),[minimum,setMinimum]=useState(quantityInput(product.minimumStockThousandths)),[categoryId,setCategoryId]=useState(product.categoryId??"");
+  const [cost,setCost]=useState(product.purchasePriceMinor===undefined?"":String(product.purchasePriceMinor)),[minimum,setMinimum]=useState(quantityInput(product.minimumStockThousandths)),[categoryId,setCategoryId]=useState(product.categoryId??""),[others,setOthers]=useState<readonly string[]>(product.otherCategoryIds??[]);
   const options=useRead(()=>service.listCategories({sessionId,includeInactive:true,limit:100}),[service,sessionId]);
   const submit=async():Promise<void>=>{
     const value=await action.run(async()=>{
       let input;
       try{input={sessionId,productId:product.id,version:product.version,name,unit,sellingPriceMinor:moneyEntry(price),minimumStockThousandths:quantityEntry(minimum,product.divisible),
-        ...(barcode.trim()===""?{}:{barcode:barcode.trim()}),...(cost.trim()===""?{}:{purchasePriceMinor:moneyEntry(cost)}),...(categoryId===""?{}:{categoryId})};}
+        ...(barcode.trim()===""?{}:{barcode:barcode.trim()}),...(cost.trim()===""?{}:{purchasePriceMinor:moneyEntry(cost)}),...(categoryId===""?{}:{categoryId}),otherCategoryIds:others.filter(id=>id!==categoryId)};}
       catch{return {ok:false,error:{code:"invalid_input"}};}
       return service.updateProduct(input);
     });
@@ -93,6 +93,10 @@ function EditProduct({service,sessionId,product,onReload,onSaved,onClose}:{servi
       <div className="two-fields"><Field id="edit-barcode" label={t("barcode")} value={barcode} onChange={setBarcode} required={false} maxLength={256}/><Select id="edit-category" label={t("category")} value={categoryId} onChange={setCategoryId} options={choices}/></div>
       <div className="two-fields"><Field id="edit-price" label={t("price")} value={price} onChange={setPrice} numeric/><Field id="edit-cost" label={t("cost")} value={cost} onChange={setCost} numeric required={false}/></div>
       <Field id="edit-minimum" label={t("minimumStock")} value={minimum} onChange={setMinimum} numeric/>
+      <fieldset className="permission-group"><legend>{t("otherCategories")}</legend>
+        {(options.data?.items??[]).filter(item=>item.id!==categoryId&&(item.active||others.includes(item.id))).map(item=><label key={item.id} className="check">
+          <input type="checkbox" checked={others.includes(item.id)} onChange={event=>setOthers(current=>event.target.checked?[...current,item.id].slice(0,20):current.filter(id=>id!==item.id))}/>{item.active?item.name:`${item.name} · ${t("archived")}`}</label>)}
+        <p className="hint">{t("otherCategoriesHelp")}</p></fieldset>
     </fieldset>
     <ErrorText message={action.error} conflictMessage="staleVersion"/><div className="actions"><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):t("save")}</button>
       {action.error?.code==="request_conflict"&&<button type="button" className="secondary" onClick={onReload}>{t("reload")}</button>}

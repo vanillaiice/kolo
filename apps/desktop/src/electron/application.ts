@@ -3,7 +3,8 @@ import { ownerRecoveryCode, recoverOwnerAccess, resumeOwnerRecovery } from "@kol
 import { WorkspaceError, type OperationContext, type WorkspacePorts } from "@kolo/core/identity/types";
 import type { Permission } from "@kolo/core/identity/permissions";
 import { capabilities, products, scannedProduct, productStock, paymentAccounts, receipt, receipts, categories, stockHistory, customers, statement } from "@kolo/core/application/queries";
-import { saveProduct, adjustStock, completeSale, countStock, saveCategory, saveCustomer, receiveCustomerPayment } from "@kolo/core/application/operations";
+import { saveProduct, adjustStock, completeSale, countStock, saveCategory, saveCustomer, receiveCustomerPayment, setProductCategories } from "@kolo/core/application/operations";
+import { productCategories } from "@kolo/core/application/records";
 import { customerOf, balanceOf, wouldExceedCreditLimit, type Customer } from "@kolo/core/data/customers/customers";
 import type { Queryable } from "@kolo/core/data/database/driver";
 import { productOf, type Product } from "@kolo/core/data/products/products";
@@ -64,13 +65,13 @@ export class DesktopApplication implements ShopService {
   #sealing = false;
   private readonly ports: WorkspacePorts;
   readonly #host: Host;
-  readonly #transfer: (transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void> }) | undefined;
+  readonly #transfer: (transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void>; readonly onReset?: () => void }) | undefined;
   #staged: transfer.StagedFile | undefined;
   private readonly crypto: ExchangeCrypto | undefined;
   readonly #memory: SessionMemory | undefined;
   readonly #preferences: DevicePreferences;
   #remember = false;
-  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void> }, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences()) {
+  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void>; readonly onReset?: () => void }, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences()) {
     this.#transfer = files; this.#memory = memory; this.#preferences = preferences;
     this.ports = ports; this.crypto = crypto; this.#host = { ports, actor: (data, required) => this.#actor(data, required) };
     lockWorkspace(ports.database);
@@ -209,6 +210,25 @@ export class DesktopApplication implements ShopService {
       return { rememberSession: this.#remember, largeFiles: this.#preferences.largeFiles() };
     });
   }
+  /**
+   * Erases this computer's shops after the typed shop name and the owner's code. The session is locked
+   * and the remembered user forgotten before the host deletes files, after this command has answered.
+   */
+  resetComputer(input: unknown): Promise<Result<null>> {
+    return this.#run(() => this.#identity(async () => {
+      const data = object(input, ["sessionId", "confirmedName", "secret"]), context = this.#actor(data, ["business.settings"]);
+      if (!unlockedActor(context).isOwner) throw new WorkspaceError("permission_denied");
+      const reset = this.#transfer?.onReset;
+      if (reset === undefined) throw new CommandError("unavailable");
+      const shop = this.ports.database.get(`SELECT name FROM businesses WHERE id=?`, [context.businessId]);
+      if (text(data["confirmedName"], 120, false).trim() !== String(shop?.["name"] ?? "")) throw new CommandError("confirmation_required");
+      const member = this.ports.database.get(`SELECT credential_reference FROM local_memberships WHERE business_id=? AND user_id=?`, [context.businessId, context.userId]);
+      if (member === undefined || !await this.ports.credentials.verify(String(member["credential_reference"]), text(data["secret"], 256, false))) throw new WorkspaceError("invalid_credential");
+      this.#invalidate(); await this.#store(undefined);
+      reset();
+      return null;
+    }));
+  }
   /** Owner recovery uses the separate protected key and leaves the installation locked. */
   recoverAccess(input: unknown): Promise<Result<WorkspaceView>> {
     return this.#run(() => this.#identity(async () => {
@@ -230,7 +250,7 @@ export class DesktopApplication implements ShopService {
   /** Bounded catalogue with optional stock according to current view capabilities. */
   listProducts(input: unknown): ReturnType<ShopService["listProducts"]> {
     return this.#run(() => {
-      const data = object(input, ["sessionId", "term", "after", "limit", "includeInactive"]), context = this.#actor(data);
+      const data = object(input, ["sessionId", "term", "after", "limit", "includeInactive", "categoryId"]), context = this.#actor(data);
       const result = products(context, page(data)); return { ...result, items: result.items.map(item => this.#product(context, item)) };
     });
   }
@@ -240,7 +260,7 @@ export class DesktopApplication implements ShopService {
       const data = object(input, ["sessionId", "productId"]), context = this.#actor(data, ["products.view"]);
       const product = productOf(this.ports.database, context.businessId, uuid(data["productId"]));
       if (product === undefined) throw new WorkspaceError("scope_mismatch");
-      return this.#product(context, product);
+      return { ...this.#product(context, product), otherCategoryIds: productCategories(context, product.id).categories.map(item => item.id) };
     });
   }
   /** Exact active/unambiguous barcode lookup; no prefix/name substitution. */
@@ -319,19 +339,31 @@ export class DesktopApplication implements ShopService {
    */
   updateProduct(input: unknown): ReturnType<ShopService["updateProduct"]> {
     return this.#run(() => {
-      const data = object(input, ["sessionId", "productId", "version", "name", "unit", "barcode", "sellingPriceMinor", "purchasePriceMinor", "categoryId", "minimumStockThousandths"]);
+      const data = object(input, ["sessionId", "productId", "version", "name", "unit", "barcode", "sellingPriceMinor", "purchasePriceMinor", "categoryId", "minimumStockThousandths", "otherCategoryIds"]);
       const context = this.#actor(data, ["products.edit"]), id = uuid(data["productId"]), version = text(data["version"], 64);
       const details = { name: text(data["name"]), unit: text(data["unit"]), barcode: optional(data["barcode"], value => text(value, 256)),
         sellingPriceMinor: whole(data["sellingPriceMinor"]), purchasePriceMinor: optional(data["purchasePriceMinor"], value => whole(value)),
         categoryId: optional(data["categoryId"], uuid), minimumStock: whole(data["minimumStockThousandths"]) };
+      const others = optional(data["otherCategoryIds"], value => {
+        if (!Array.isArray(value) || value.length > 20) throw new WorkspaceError("invalid_input");
+        return [...new Set(value.map(uuid))].filter(item => item !== details.categoryId).sort();
+      });
       return this.ports.database.transaction(tx => {
         const stored = productOf(tx, context.businessId, id);
         if (stored?.active !== true) throw new WorkspaceError("scope_mismatch");
         if (!stored.divisible && details.minimumStock % 1000 !== 0) throw new WorkspaceError("invalid_input");
-        if ((Object.keys(details) as (keyof typeof details)[]).every(key => stored[key] === details[key])) return this.#product(context, stored);
+        const set = productCategories(context, id), current = set.categories.map(item => item.id).sort();
+        const sameDetails = (Object.keys(details) as (keyof typeof details)[]).every(key => stored[key] === details[key]);
+        const sameOthers = others === undefined || others.join() === current.filter(item => item !== details.categoryId).join();
+        const view = (): ProductView => ({ ...this.#product(context, productOf(tx, context.businessId, id)!), otherCategoryIds: productCategories(context, id).categories.map(item => item.id) });
+        if (sameDetails && sameOthers) return view();
         if (stored.updatedAt !== version) throw new CommandError("request_conflict");
-        if (!saveProduct(context, { ...stored, ...details, updatedAt: this.#nextVersion(stored.updatedAt) })) throw new CommandError("request_conflict");
-        return this.#product(context, productOf(tx, context.businessId, id)!);
+        if (!sameDetails && !saveProduct(context, { ...stored, ...details, updatedAt: this.#nextVersion(stored.updatedAt) })) throw new CommandError("request_conflict");
+        // Additional categories have their own last-write-wins version; a new main category drops out of them.
+        const wanted = others ?? current.filter(item => item !== details.categoryId);
+        if (wanted.join() !== current.join() && !setProductCategories(context, { productId: id, categoryIds: wanted, updatedAt: set.updatedAt === undefined ? this.ports.now() : this.#nextVersion(set.updatedAt) }))
+          throw new CommandError("request_conflict");
+        return view();
       });
     });
   }
@@ -582,7 +614,7 @@ export class DesktopApplication implements ShopService {
     return this.#run(() => {
       const data = object(input, ["sessionId", "customerId", "after", "limit"]), context = this.#actor(data);
       const result = statement(context, "customer", uuid(data["customerId"]), page(data));
-      return { ...result, items: result.items.map(row => ({ id: String(row["id"]), occurredAt: String(row["occurred_at"]), type: String(row["type"]), amountMinor: Number(row["amount_minor"]),
+      return { ...result, items: result.items.map(row => ({ id: String(row["id"]), occurredAt: String(row["occurred_at"]), type: String(row["type"]), amountMinor: Number(row["amount_minor"]), balanceMinor: Number(row["balance_minor"]),
         ...(row["reference_kind"] === "SALE" && typeof row["reference_id"] === "string" ? { saleId: row["reference_id"] } : {}),
         ...(typeof row["reason"] === "string" && row["reason"] !== "" ? { note: row["reason"] } : {}) })) };
     });
@@ -702,7 +734,7 @@ export class DesktopApplication implements ShopService {
     }
     const configured = state.state === "locked" || state.state === "unlocked";
     const members = configured ? this.ports.database.all(`SELECT u.id,u.name FROM users u JOIN local_memberships m ON m.user_id=u.id AND m.business_id=u.business_id
-      WHERE u.business_id=? AND u.active=1 AND m.active=1 ORDER BY (m.role='OWNER') DESC,u.name,u.id LIMIT 100`, [state.installation.businessId]).map(row=>({id:String(row["id"]),name:String(row["name"])})) : [];
+      WHERE u.business_id=? AND u.active=1 AND m.active=1 AND m.credential_reference NOT LIKE 'remote.%' ORDER BY (m.role='OWNER') DESC,u.name,u.id LIMIT 100`, [state.installation.businessId]).map(row=>({id:String(row["id"]),name:String(row["name"])})) : [];
     return { state: configured ? actor === null ? "locked" : "unlocked" : state.state, shopName: configured ? state.installation.businessName : null,
       members, actor, sessionId: actor === null ? null : this.#sessionId ?? null };
   }

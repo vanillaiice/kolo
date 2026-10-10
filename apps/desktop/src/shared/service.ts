@@ -33,6 +33,8 @@ export interface ProductView {
   readonly version: string;
   /** SHA-256 of the product's photo on this computer, absent when it has none; fetch bytes with productPhoto. */
   readonly photo?: string;
+  /** Additional categories besides the main `categoryId` (browsing only; reports use the main one). Present on single-product reads. */
+  readonly otherCategoryIds?: readonly string[];
 }
 /** Catalogue grouping. Archived categories remain attached to existing products. */
 export interface CategoryView { readonly id: string; readonly name: string; readonly active: boolean; readonly version: string; }
@@ -41,7 +43,8 @@ export interface StockMovementView {
   readonly id: string; readonly occurredAt: string; readonly type: string; readonly quantityThousandths: number; readonly reason?: string;
 }
 /** Catalogue pages may include archived rows for restoring them. */
-export type CatalogueQuery = SessionRequest & PageQuery & { readonly includeInactive?: boolean };
+/** `categoryId` (products only) keeps products whose main or additional category it is. */
+export type CatalogueQuery = SessionRequest & PageQuery & { readonly includeInactive?: boolean; readonly categoryId?: string };
 /** Every protected call binds to the currently displayed actor session, including queued calls. */
 export interface SessionRequest { readonly sessionId: string; }
 /** Fresh shop setup. The host supplies identity, platform, currency and initial account policy. */
@@ -64,6 +67,8 @@ export interface ProductUpdateRequest extends SessionRequest {
   readonly productId: string; readonly version: string; readonly name: string; readonly unit: string;
   readonly barcode?: string; readonly sellingPriceMinor: number; readonly purchasePriceMinor?: number;
   readonly categoryId?: string; readonly minimumStockThousandths: number;
+  /** Replaces the additional categories (at most 20, never the main one); omitted leaves them unchanged. */
+  readonly otherCategoryIds?: readonly string[];
 }
 /** Manual stock received outside a supplier purchase, or stock lost to damage. The request ID names the movement. */
 export interface StockMoveRequest extends SessionRequest {
@@ -103,6 +108,8 @@ export interface CustomerDetails {
 /** One immutable customer ledger entry, newest first; payments are negative. */
 export interface StatementEntryView {
   readonly id: string; readonly occurredAt: string; readonly type: string; readonly amountMinor: number; readonly saleId?: string; readonly purchaseId?: string; readonly note?: string;
+  /** Running balance after this entry (positive: owed), summed oldest first over the whole ledger. */
+  readonly balanceMinor: number;
 }
 /** Supplier details and current payable (positive: the shop owes them). */
 export interface SupplierView {
@@ -145,62 +152,22 @@ export interface ExpenseView {
 }
 /** Expected balance against a counted amount; a correction makes the books match the count. */
 export interface CashCountView { readonly expectedMinor: number; readonly countedMinor: number; readonly differenceMinor: number; }
-/** Report kinds, each under its own core report permission. */
-export type ReportKind = "dashboard" | "sales" | "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "cashFlow" | "valuation" |
-  "fastMoving" | "stockAlerts" | "customerDebt" | "supplierDebt" | "purchases";
-/** A labelled total; `count` is lines, transactions or entries depending on the report. */
-export interface ReportLine { readonly key: string; readonly label: string; readonly totalMinor: number; readonly count: number; }
-/** Serializable report results. Row lists are capped; `truncated` says more rows exist. */
-export type ReportResult =
-  | { readonly kind: "dashboard"; readonly salesMinor: number; readonly transactions: number; readonly grossProfitMinor: number; readonly costMinor: number; readonly linesWithoutCost: number;
-      readonly expensesMinor: number; readonly netResultMinor: number; readonly customerDebtMinor: number; readonly supplierDebtMinor: number; readonly lowStock: number }
-  | { readonly kind: "sales"; readonly totalMinor: number; readonly transactions: number; readonly itemsSoldThousandths: number }
-  | { readonly kind: "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "customerDebt" | "supplierDebt"; readonly lines: readonly ReportLine[]; readonly truncated: boolean }
-  | { readonly kind: "cashFlow"; readonly accounts: readonly { readonly accountId: string; readonly name: string; readonly inMinor: number; readonly outMinor: number; readonly netMinor: number; readonly closingMinor: number }[] }
-  | { readonly kind: "valuation"; readonly totalMinor: number; readonly uncosted: number; readonly truncated: boolean;
-      readonly products: readonly { readonly productId: string; readonly name: string; readonly onHandThousandths: number; readonly unitCostMinor?: number; readonly valueMinor?: number }[] }
-  | { readonly kind: "fastMoving"; readonly products: readonly { readonly productId: string; readonly name: string; readonly soldThousandths: number; readonly revenueMinor: number; readonly onHandThousandths: number }[] }
-  | { readonly kind: "stockAlerts"; readonly products: readonly { readonly productId: string; readonly name: string; readonly onHandThousandths: number }[]; readonly truncated: boolean }
-  | { readonly kind: "purchases"; readonly totalMinor: number; readonly deliveries: number; readonly bySupplier: readonly ReportLine[]; readonly truncated: boolean };
-/** How an analytics trend is sliced; weeks start on Monday. */
-export type AnalyticsBucket = "hour" | "day" | "week" | "month";
-/** One trend point keyed by local `YYYY-MM-DDTHH`, `YYYY-MM-DD` (day or week's Monday) or `YYYY-MM`; profit only with reports.financial. */
-export interface AnalyticsPoint { readonly key: string; readonly revenueMinor: number; readonly transactions: number; readonly grossProfitMinor?: number }
-/** Sales started in one local weekday (0 = Sunday) and hour, summed over the period; empty cells are absent. */
-export interface AnalyticsCell { readonly weekday: number; readonly hour: number; readonly transactions: number; readonly revenueMinor: number }
-/** A product's net sales over the period, before bill discounts; profit only with reports.financial. */
-export interface AnalyticsProduct { readonly productId: string; readonly name: string; readonly soldThousandths: number; readonly revenueMinor: number; readonly grossProfitMinor?: number }
-/** A named customer's net buying over the period. */
-export interface AnalyticsCustomer { readonly customerId: string; readonly name: string; readonly transactions: number; readonly revenueMinor: number; readonly lastPurchaseAt: string }
-/**
- * Light analytics for one period. Sections the actor may not read are absent rather than failing the
- * whole view: `profit` and per-point/product profit need reports.financial, `customers` needs
- * reports.customers; the rest needs reports.sales. `previous` is the equal-length period just before.
- */
-export interface AnalyticsResult {
-  readonly bucket: AnalyticsBucket;
-  readonly sales: { readonly revenueMinor: number; readonly transactions: number; readonly itemsSoldThousandths: number; readonly averageBasketMinor: number };
-  readonly previous: { readonly revenueMinor: number; readonly transactions: number; readonly grossProfitMinor?: number };
-  readonly profit?: { readonly grossProfitMinor: number; readonly costMinor: number; readonly marginBasisPoints?: number; readonly linesWithoutCost: number; readonly expensesMinor: number; readonly netResultMinor: number };
-  readonly trend: readonly AnalyticsPoint[];
-  readonly activity: readonly AnalyticsCell[];
-  readonly products: readonly AnalyticsProduct[];
-  readonly productsTruncated: boolean;
-  readonly categories: readonly ReportLine[];
-  readonly accounts: readonly ReportLine[];
-  readonly customers?: readonly AnalyticsCustomer[];
-}
+/** Report and analytics views are assembled in core so desktop and mobile show the same figures. */
+export type { ReportKind, ReportLine, ReportResult, AnalyticsBucket, AnalyticsPoint, AnalyticsCell, AnalyticsProduct, AnalyticsCustomer, AnalyticsResult } from "@kolo/core/application/report-views";
+import type { ReportKind, AnalyticsBucket, ReportResult, AnalyticsResult } from "@kolo/core/application/report-views";
 /** What remains returnable from a sale or purchase, at the original net prices or costs. */
 export interface ReturnSourceView {
   readonly kind: "SALE" | "PURCHASE"; readonly originalId: string; readonly priorId?: string; readonly hasCounterparty: boolean;
+  /** Most money that may still be refunded: what the original settled in cash less earlier refunds. The rest goes to the ledger. */
+  readonly refundableMinor: number;
   readonly items: readonly { readonly id: string; readonly name: string; readonly originalQuantity: number; readonly returnedQuantity: number }[];
 }
 /** Exact value of a selected return before it is recorded. */
 export interface ReturnPreview { readonly totalMinor: number; readonly lines: readonly { readonly originalItemId: string; readonly quantity: number; readonly amountMinor: number }[] }
 /**
  * Records a partial or full return against the predecessor the preview was made from. The
- * refund (sale: paid out; purchase: received back) is at most the value; any remainder goes to
- * the customer's or supplier's ledger. A return recorded meanwhile makes this one stale.
+ * refund (sale: paid out; purchase: received back) is at most the value and at most the source's
+ * `refundableMinor`; any remainder goes to the customer's or supplier's ledger. A return recorded meanwhile makes this one stale.
  */
 export interface ReturnRequest extends SessionRequest {
   readonly requestId: string; readonly kind: "SALE" | "PURCHASE"; readonly originalId: string; readonly priorId?: string; readonly reason: string;
@@ -272,6 +239,12 @@ export interface ShopService {
    * Larger files open only on computers with the switch on.
    */
   setLargeFiles(input: SessionRequest & { readonly enabled: boolean }): Promise<Result<SessionPreferences>>;
+  /**
+   * Owner-only computer reset: with the typed shop name and the owner's code, every shop on this computer
+   * (with safety copies), its credentials and the remembered session are erased and KOLO reopens empty.
+   * Per-computer preferences stay. The renderer is told through the usual change notification.
+   */
+  resetComputer(input: SessionRequest & { readonly confirmedName: string; readonly secret: string }): Promise<Result<null>>;
   /** Requires both current owner authority and a fresh credential proof. */
   recoveryKey(input: SessionRequest & { readonly secret: string }): Promise<Result<string | null>>;
   /** Bounded literal catalogue search with optional stock according to current permissions. */

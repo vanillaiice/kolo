@@ -30,6 +30,7 @@ export function desktopHandlers(current: DesktopApplication | (() => DesktopAppl
   command("kolo:session-preferences", input => application.sessionPreferences(input));
   command("kolo:remember-session", input => application.setRememberSession(input));
   command("kolo:large-files", input => application.setLargeFiles(input));
+  command("kolo:reset-computer", input => application.resetComputer(input));
   command("kolo:recovery-key", input => application.recoveryKey(input));
   command("kolo:products", input => application.listProducts(input));
   command("kolo:product", input => application.getProduct(input));

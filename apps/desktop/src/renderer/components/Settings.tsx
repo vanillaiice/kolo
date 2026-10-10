@@ -1,6 +1,7 @@
 import type { ShopService } from "../../shared/service.ts";
 import type { Language } from "../text.ts";
-import { ErrorText, useAction, useRead, useText } from "./ui.tsx";
+import { useState } from "react";
+import { ErrorText, Field, useAction, useRead, useText } from "./ui.tsx";
 import { LegalLinks } from "./Legal.tsx";
 import type { LegalKind } from "../legal.ts";
 
@@ -54,9 +55,32 @@ export function Settings({ service, sessionId, canChangeFiles, canViewProducts, 
         <div className="segmented" role="radiogroup" aria-labelledby="language-title">{(["fr", "en"] as const).map(item =>
           <label key={item} className={language === item ? "selected" : ""}><input type="radio" name="language" value={item} checked={language === item} onChange={() => onLanguage(item)}/>{item === "fr" ? "Français" : "English"}</label>)}</div>
       </div>
+      {canChangeFiles && <ResetPanel service={service} sessionId={sessionId}/>}
       <div className="panel about-panel"><h2>{t("about")}</h2><p className="hint">{t("aboutHelp")}</p>
         <dl className="facts"><dt>{t("version")}</dt><dd>KOLO {__KOLO_VERSION__}</dd></dl>
         <p className="eyebrow about-legal-title">{t("legal")}</p><LegalLinks onOpen={onLegal}/></div>
     </div>
   </section>;
+}
+
+/**
+ * Owner-only computer reset: the typed shop name and the owner's code, then an explicit second
+ * confirmation. Every shop, credential and remembered session on this computer is erased.
+ */
+function ResetPanel({ service, sessionId }: { readonly service: ShopService; readonly sessionId: string }): React.JSX.Element {
+  const { t } = useText(), action = useAction(), workspace = useRead(() => service.getWorkspace(), [service]);
+  const [name, setName] = useState(""), [secret, setSecret] = useState(""), [confirming, setConfirming] = useState(false);
+  const shop = workspace.data?.shopName ?? "";
+  const ready = shop !== "" && name.trim() === shop && secret !== "";
+  return <div className="panel"><h2>{t("resetComputer")}</h2>
+    <p className="notice error">{t("resetComputerWarning").replace("{shop}", shop)}</p><p className="hint">{t("resetComputerBackupFirst")}</p>
+    <form onSubmit={event => { event.preventDefault(); if (ready) setConfirming(true); }}><fieldset disabled={action.busy}>
+      <Field id="reset-name" label={t("resetTypeName").replace("{shop}", shop)} value={name} onChange={setName}/>
+      <Field id="reset-secret" label={t("resetOwnerCode")} value={secret} onChange={setSecret} secret/>
+    </fieldset>
+    {!confirming ? <div className="actions"><button className="secondary" type="submit" disabled={!ready || action.busy}>{t("resetComputer")}</button></div>
+      : <div className="actions"><button className="primary danger-action" type="button" disabled={action.busy}
+          onClick={() => { void action.run(() => service.resetComputer({ sessionId, confirmedName: name.trim(), secret })).then(() => { setSecret(""); setConfirming(false); }); }}>{t("resetComputerConfirm")}</button>
+        <button className="secondary" type="button" disabled={action.busy} onClick={() => setConfirming(false)}>{t("cancel")}</button></div>}
+    </form><ErrorText message={action.error}/></div>;
 }
