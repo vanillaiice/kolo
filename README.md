@@ -35,4 +35,5 @@ The technical overview, repository layout and commands are in
 
 ## License
 
-GPL-3.0-only; the full text is in [apps/desktop/LICENSE](apps/desktop/LICENSE).
+[GPL-3.0-only](LICENSE), except the optional server in `apps/server`, which is not
+licensed for reuse.
