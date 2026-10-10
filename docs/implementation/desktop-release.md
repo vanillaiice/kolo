@@ -10,8 +10,7 @@ the product; Bluetooth and optional paid-server event sync are separate shared p
 Following the local Rebar Studio shipping reference, electron-builder builds a Windows
 x64 NSIS installer and portable executable. `npm run dist:desktop:win` builds without
 publishing; `npm run pack:desktop` produces an unpacked host-platform app.
-`npm run dist:desktop:linux` creates an x64 AppImage for Linux testing in
-`release/desktop`. Make it executable and launch it; on systems without FUSE, use
+`npm run dist:desktop:linux` creates an x64 AppImage and `.deb` in `release/desktop`. Make it executable and launch it; on systems without FUSE, use
 `--appimage-extract-and-run`. Linux target-device acceptance remains separate. The staging
 script copies only compiled desktop/shared packages and their production dependency
 closure, avoiding workspace symlinks, mobile/server code and development dependencies.
@@ -30,11 +29,9 @@ download or automatic update restart is implemented. Database migrations are for
 do not promise binary downgrade after a schema upgrade. Retain the pre-upgrade backup
 and previous installer for a separately verified recovery procedure.
 
-The draft-release workflow accepts manual dispatch (artifact build only) and
-`desktop-vVERSION` tags (draft GitHub release with SHA-256 sums). It never publishes
-the draft. Tag version must match `apps/desktop/package.json`. Review Windows results,
-release notes and signing before publishing. No remote/tag/release has been created
-by this implementation work.
+The release workflow and tagging steps are in [releasing](../releasing.md). A
+`desktop-vVERSION` tag builds Linux and Windows into one draft pre-release with SHA-256
+sums; manual dispatch builds artifacts only. It never publishes the draft.
 
 Signing uses `CSC_LINK` and `CSC_KEY_PASSWORD` when configured; otherwise builds are
 unsigned test artifacts. A production signing provider/certificate is not configured

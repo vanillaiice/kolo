@@ -41,6 +41,7 @@ validation, authorization, transactions, events, errors and retries in JSDoc.
 
 - [Implementation guide](implementation/README.md): architecture, plan and every subsystem guide
 - [Progress log](implementation/progress.md): what is implemented and verified
+- [Releasing](releasing.md): tags, CI release builds and signing
 - [Architecture decisions](adr/README.md)
 - [Generated API reference](reference/typescript-api.md)
 - [Product specification](../SPECIFICATION.md)

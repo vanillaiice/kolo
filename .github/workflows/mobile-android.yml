@@ -1,8 +1,13 @@
-name: Android test APK
+# Android releases: push a tag mobile-vX.Y.Z matching apps/mobile/app.json and the test-signed APK
+# goes to a draft GitHub pre-release with its checksum. Manual runs build the artifact only.
+# See docs/releasing.md.
+name: Android release
 on:
   workflow_dispatch:
+  push:
+    tags: ['mobile-v*']
 permissions:
-  contents: read
+  contents: write
 jobs:
   android:
     runs-on: ubuntu-latest
@@ -19,10 +24,30 @@ jobs:
           java-version: '21'
       - uses: android-actions/setup-android@v3
       - run: npm ci
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/mobile-v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: test "$RELEASE_TAG" = "mobile-v$(node -p "require('./apps/mobile/app.json').expo.version")"
       - run: npm run check
       - run: npm run build:mobile:android
+      - name: Hash the APK
+        run: cd release/mobile && sha256sum *.apk > SHA256SUMS-android.txt && cat SHA256SUMS-android.txt
       - uses: actions/upload-artifact@v7
         with:
-          name: kolo-android-test-apk
-          path: release/mobile/*.apk
+          name: kolo-android-apk
           if-no-files-found: error
+          path: |
+            release/mobile/*.apk
+            release/mobile/SHA256SUMS-android.txt
+      - name: Upload to a draft release
+        if: startsWith(github.ref, 'refs/tags/mobile-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=${RELEASE_TAG#mobile-v}
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" --draft --prerelease --verify-tag \
+            --title "KOLO Android $VERSION" --notes "Android test build with generated test signing: install by allowing unknown sources. Not a Play Store build."
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = "true"
+          gh release upload "$RELEASE_TAG" release/mobile/*.apk release/mobile/SHA256SUMS-android.txt --clobber

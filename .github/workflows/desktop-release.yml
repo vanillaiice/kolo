@@ -1,4 +1,8 @@
-name: Desktop draft release
+# Desktop releases: push a tag desktop-vX.Y.Z matching apps/desktop/package.json and each platform
+# builds its installers into one draft GitHub pre-release, with checksums and the update files
+# electron-builder writes. Publish the draft by hand. Manual runs build artifacts only.
+# See docs/releasing.md.
+name: Desktop release
 on:
   workflow_dispatch:
   push:
@@ -6,8 +10,35 @@ on:
 permissions:
   contents: write
 jobs:
-  windows:
-    runs-on: windows-latest
+  draft:
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          test "$RELEASE_TAG" = "desktop-v$VERSION"
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" --draft --prerelease --verify-tag \
+            --title "KOLO Desktop $VERSION" --notes "Windows and Linux desktop. Unsigned builds: Windows SmartScreen warns until signing is configured."
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = "true"
+  desktop:
+    needs: draft
+    if: always() && (needs.draft.result == 'success' || needs.draft.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            args: --linux AppImage deb
+          - os: windows-latest
+            platform: windows
+            args: --win
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -16,32 +47,44 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - name: Build Windows installers
+      - run: npm run stage:desktop
+      - name: Build installers
+        shell: bash
         env:
+          # Signing is used when these secrets exist; without them the builds are unsigned.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-        run: npm run dist:desktop:win
-      - run: npm run smoke:desktop:packaged
-      - name: Hash artifacts
-        shell: pwsh
         run: |
-          Get-ChildItem release/desktop/*.exe | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content release/desktop/SHA256SUMS.txt
+          if [ -z "$CSC_LINK" ]; then export CSC_IDENTITY_AUTO_DISCOVERY=false; fi
+          npx electron-builder --config apps/desktop/electron-builder.json ${{ matrix.args }} --x64 --publish never
+      - if: matrix.platform == 'windows'
+        run: npm run smoke:desktop:packaged
+      - name: Hash artifacts
+        shell: bash
+        run: |
+          cd release/desktop
+          shopt -s nullglob
+          sha256sum *.exe *.AppImage *.deb > SHA256SUMS-${{ matrix.platform }}.txt
+          cat SHA256SUMS-${{ matrix.platform }}.txt
       - uses: actions/upload-artifact@v7
         with:
-          name: kolo-windows-release
+          name: kolo-desktop-${{ matrix.platform }}
+          if-no-files-found: error
           path: |
             release/desktop/*.exe
+            release/desktop/*.AppImage
+            release/desktop/*.deb
             release/desktop/*.blockmap
-            release/desktop/SHA256SUMS.txt
-      - name: Upload to draft release
+            release/desktop/latest*.yml
+            release/desktop/SHA256SUMS-*.txt
+      - name: Upload to the draft release
         if: startsWith(github.ref, 'refs/tags/desktop-v')
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          VERSION=$(node -p "require('./apps/desktop/package.json').version")
-          test "$RELEASE_TAG" = "desktop-v$VERSION"
-          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" --draft --title "KOLO Desktop $VERSION" --notes "Windows standalone desktop. See desktop release acceptance documentation."
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = "true"
-          gh release upload "$RELEASE_TAG" release/desktop/*.exe release/desktop/*.blockmap release/desktop/SHA256SUMS.txt --clobber
+          shopt -s nullglob
+          gh release upload "$RELEASE_TAG" release/desktop/*.exe release/desktop/*.AppImage release/desktop/*.deb \
+            release/desktop/*.blockmap release/desktop/latest*.yml release/desktop/SHA256SUMS-*.txt --clobber

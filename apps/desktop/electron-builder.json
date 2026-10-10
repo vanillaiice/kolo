@@ -40,9 +40,12 @@
   },
   "linux": {
     "target": [
-      "AppImage"
+      "AppImage",
+      "deb"
     ],
     "executableName": "kolo",
-    "category": "Office"
+    "category": "Office",
+    "synopsis": "Offline shop management: sales, stock, credit and reports",
+    "maintainer": "hblabs <vanillaiice@tutanota.com>"
   }
 }

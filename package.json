@@ -39,7 +39,7 @@
     "benchmark:desktop": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/benchmark-desktop.mjs",
     "benchmark:mobile:host": "npm run build:packages && node scripts/mobile-fixture.mjs",
     "build:mobile:android": "node scripts/build-mobile-android.mjs",
-    "dist:desktop:linux": "npm run stage:desktop && electron-builder --config apps/desktop/electron-builder.json --linux AppImage --x64 --publish never",
+    "dist:desktop:linux": "npm run stage:desktop && electron-builder --config apps/desktop/electron-builder.json --linux --x64 --publish never",
     "demo:desktop": "npm run build:packages && node --experimental-strip-types apps/desktop/scripts/demo-data.ts"
   },
   "devDependencies": {
