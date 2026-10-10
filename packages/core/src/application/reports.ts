@@ -1,4 +1,5 @@
 import type { Queryable } from "../data/database/driver.ts";
+import * as analytics from "../data/reports/analytics.ts";
 import * as queries from "../data/reports/reports.ts";
 import { authorizedOperation } from "../identity/internal-authority.ts";
 import type { Permission } from "../identity/permissions.ts";
@@ -117,3 +118,33 @@ export function lowStock(context: OperationContext, ...args: ReportArgs<typeof q
   return read(context, "reports.inventory", queries.lowStock, args);
 }
 
+
+/** Reads salesTrend for the unlocked shop under current reports.sales authority. */
+export function salesTrend(context: OperationContext, ...args: ReportArgs<typeof analytics.salesTrend>): ReturnType<typeof analytics.salesTrend> {
+  return read(context, "reports.sales", analytics.salesTrend, args);
+}
+
+/** Reads profitTrend for the unlocked shop under current reports.financial authority. */
+export function profitTrend(context: OperationContext, ...args: ReportArgs<typeof analytics.profitTrend>): ReturnType<typeof analytics.profitTrend> {
+  return read(context, "reports.financial", analytics.profitTrend, args);
+}
+
+/** Reads salesActivity for the unlocked shop under current reports.sales authority. */
+export function salesActivity(context: OperationContext, ...args: ReportArgs<typeof analytics.salesActivity>): ReturnType<typeof analytics.salesActivity> {
+  return read(context, "reports.sales", analytics.salesActivity, args);
+}
+
+/** Reads productSales for the unlocked shop under current reports.sales authority. */
+export function productSales(context: OperationContext, ...args: ReportArgs<typeof analytics.productSales>): ReturnType<typeof analytics.productSales> {
+  return read(context, "reports.sales", analytics.productSales, args);
+}
+
+/** Reads productProfit for the unlocked shop under current reports.financial authority. */
+export function productProfit(context: OperationContext, ...args: ReportArgs<typeof analytics.productProfit>): ReturnType<typeof analytics.productProfit> {
+  return read(context, "reports.financial", analytics.productProfit, args);
+}
+
+/** Reads topCustomers for the unlocked shop under current reports.customers authority. */
+export function topCustomers(context: OperationContext, ...args: ReportArgs<typeof analytics.topCustomers>): ReturnType<typeof analytics.topCustomers> {
+  return read(context, "reports.customers", analytics.topCustomers, args);
+}

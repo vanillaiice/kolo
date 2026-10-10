@@ -98,12 +98,14 @@ export function Devices({service,sessionId,revision}:{readonly service:ShopServi
   </section>;
 }
 function SaveBackup({service,sessionId}:{service:ShopService;sessionId:string}):React.JSX.Element{
-  const {t}=useText(),action=useAction(),[password,setPassword]=useState(""),[confirm,setConfirm]=useState(""),[saved,setSaved]=useState<boolean>();
+  const {t}=useText(),action=useAction(),[password,setPassword]=useState(""),[confirm,setConfirm]=useState(""),[saved,setSaved]=useState<boolean>(),[includePhotos,setIncludePhotos]=useState(true);
   const submit=async():Promise<void>=>{
     setSaved(undefined);if(password!==confirm){action.setError({code:"passwordsMismatch"});return;}
-    const value=await action.run(()=>service.saveBackup({sessionId,password}));setPassword("");setConfirm("");if(value!==undefined)setSaved(value.saved);
+    const value=await action.run(()=>service.saveBackup({sessionId,password,includePhotos}));setPassword("");setConfirm("");if(value!==undefined)setSaved(value.saved);
   };
-  return <form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={action.busy}><PasswordFields id="backup" value={password} confirm={confirm} onValue={setPassword} onConfirm={setConfirm}/></fieldset>
+  return <form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={action.busy}><PasswordFields id="backup" value={password} confirm={confirm} onValue={setPassword} onConfirm={setConfirm}/>
+    <label className="check" htmlFor="backup-photos"><input id="backup-photos" type="checkbox" checked={includePhotos} onChange={event=>setIncludePhotos(event.target.checked)}/>{t("includePhotos")}</label>
+    <p className="hint">{t("includePhotosHelp")}</p></fieldset>
     <ErrorText message={action.error}/><Saved saved={saved}/><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):t("saveBackup")}</button></form>;
 }
 function Pair({service,sessionId}:{service:ShopService;sessionId:string}):React.JSX.Element{

@@ -18,14 +18,19 @@ export function applyAppearance(value: Appearance): void {
 }
 
 /** Per-computer display and session preferences, available to every signed-in user. */
-export function Settings({ service, sessionId, appearance, onAppearance, language, onLanguage, onLegal }: {
-  readonly service: ShopService; readonly sessionId: string;
+export function Settings({ service, sessionId, canChangeFiles, canViewProducts, appearance, onAppearance, language, onLanguage, onLegal }: {
+  readonly service: ShopService; readonly sessionId: string; readonly canChangeFiles: boolean; readonly canViewProducts: boolean;
   readonly appearance: Appearance; readonly onAppearance: (value: Appearance) => void;
   readonly language: Language; readonly onLanguage: (value: Language) => void; readonly onLegal: (kind: LegalKind) => void;
 }): React.JSX.Element {
   const { t } = useText(), action = useAction();
   const preferences = useRead(() => service.sessionPreferences({ sessionId }), [service, sessionId]);
   const remember = (enabled: boolean): void => { void action.run(() => service.setRememberSession({ sessionId, enabled })).then(value => { if (value !== undefined) preferences.retry(); }); };
+  const large = useAction(), usage = useRead(() => canViewProducts ? service.photoUsage({ sessionId }) : Promise.resolve({ ok: true as const, value: undefined }), [service, sessionId, canViewProducts, preferences.data?.largeFiles]);
+  const setLarge = (enabled: boolean): void => { void large.run(() => service.setLargeFiles({ sessionId, enabled })).then(value => { if (value !== undefined) preferences.retry(); }); };
+  // Kilobytes below a megabyte so a handful of thumbnails does not read as zero; French writes ko/Mo.
+  const size = (bytes: number): string => { const megabyte = bytes >= 1024 * 1024, value = bytes / (megabyte ? 1024 * 1024 : 1024);
+    return `${new Intl.NumberFormat(language === "fr" ? "fr-FR" : "en-GB", { maximumFractionDigits: 1 }).format(value)} ${language === "fr" ? megabyte ? "Mo" : "ko" : megabyte ? "MB" : "KB"}`; };
   return <section className="workspace-content">
     <div className="section-heading"><div><p className="eyebrow">{t("settings")}</p><h1>{t("settingsHelp")}</h1></div></div>
     <div className="detail-layout">
@@ -37,6 +42,13 @@ export function Settings({ service, sessionId, appearance, onAppearance, languag
         <label className="check" htmlFor="remember-session"><input id="remember-session" type="checkbox" checked={preferences.data?.rememberSession ?? false}
           disabled={action.busy || preferences.data === undefined} onChange={event => remember(event.target.checked)}/>{t("rememberSession")}</label>
         <p className="hint">{t("rememberSessionHelp")}</p><ErrorText message={action.error ?? preferences.error}/>
+      </div>
+      <div className="panel"><h2>{t("largeFiles")}</h2>
+        <label className="check" htmlFor="large-files"><input id="large-files" type="checkbox" checked={preferences.data?.largeFiles ?? false}
+          disabled={!canChangeFiles || large.busy || preferences.data === undefined} onChange={event => setLarge(event.target.checked)}/>{t("largeFilesLabel")}</label>
+        <p className="hint">{t("largeFilesHelp")}</p>{!canChangeFiles && <p className="hint">{t("ownerOnlySetting")}</p>}
+        {usage.data !== undefined && <p className="hint photo-usage">{usage.data.photos} {t(usage.data.photos === 1 ? "photoStored" : "photosStored")} · {size(usage.data.bytes)} / {size(usage.data.limitBytes)}</p>}
+        <ErrorText message={large.error}/>
       </div>
       <div className="panel"><h2 id="language-title">{t("language")}</h2><p className="hint">{t("languageHelp")}</p>
         <div className="segmented" role="radiogroup" aria-labelledby="language-title">{(["fr", "en"] as const).map(item =>

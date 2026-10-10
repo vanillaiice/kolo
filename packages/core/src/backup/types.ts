@@ -1,6 +1,7 @@
 import type { Database } from "../data/database/driver.ts";
 import type { ExchangeCrypto } from "../exchange/types.ts";
-import { MAX_ENCRYPTED_FILE_BYTES, MAX_SNAPSHOT_IMAGE_BYTES } from "@kolo/contracts/transfer";
+import { MAX_ENCRYPTED_FILE_BYTES, MAX_SNAPSHOT_IMAGE_BYTES, STANDARD_TRANSFER_LIMITS, type TransferLimits } from "@kolo/contracts/transfer";
+export { LARGE_TRANSFER_LIMITS, STANDARD_TRANSFER_LIMITS, type TransferLimits } from "@kolo/contracts/transfer";
 
 /** Bounded portable snapshot; native readers enforce this before allocating file contents. */
 export const MAX_SNAPSHOT_BYTES = MAX_SNAPSHOT_IMAGE_BYTES;
@@ -40,9 +41,14 @@ export interface SnapshotHandle {
 }
 /** Platform boundary for SQLite-consistent copies and bounded private staging/activation. */
 export interface SnapshotPort {
+  /** The size profile this device runs under; standard when absent. Read at each call, so a setting change applies to the next file. */
+  limits?():TransferLimits;
   capture(source:Database):Promise<SnapshotHandle>;
   open(bytes:Uint8Array):Promise<SnapshotHandle>;
   empty():Promise<SnapshotHandle>;
 }
 /** Encrypted UTF-8 document ready for a user-selected file destination. */
 export interface TransferDocument { readonly filename:string; readonly text:string; }
+
+/** The size profile a snapshot port runs under. */
+export function limitsOf(files:Pick<SnapshotPort,"limits">):TransferLimits { return files.limits?.() ?? STANDARD_TRANSFER_LIMITS; }

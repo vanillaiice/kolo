@@ -5,7 +5,7 @@ import { lockWorkspace, currentInstallation } from "../identity/workspace.ts";
 import { validateLocalSecret } from "../identity/credentials.ts";
 import type { OperationContext, WorkspacePorts, Installation } from "../identity/types.ts";
 import { requireOwner, sealPendingEvents } from "./exchange.ts";
-import { TransferError, type TransferCrypto, type SnapshotPort, type TransferDocument } from "../backup/types.ts";
+import { limitsOf, TransferError, type TransferCrypto, type SnapshotPort, type TransferDocument } from "../backup/types.ts";
 import { encryptTransfer, decryptTransfer, validateTransferPassword } from "../backup/encryption.ts";
 import { sanitizeSnapshot, snapshotBoundary, validateSnapshot, encodeSnapshot, decodeSnapshot } from "../backup/snapshot.ts";
 import { backupPreviews } from "../backup/internal-preview.ts";
@@ -17,8 +17,8 @@ export interface BackupPreview {
  readonly sourceDeviceId:string;readonly snapshotId:string;readonly schemaVersion:number;readonly appliedEvents:number;
 }
 
-/** @internal Captures, strips credentials, compacts and signs one coherent snapshot for backup or approved enrollment. */
-export async function createSignedSnapshot(context:OperationContext,kind:SnapshotManifest["kind"],target:SnapshotManifest["target"],files:SnapshotPort,crypto:TransferCrypto):Promise<{signed:SignedSnapshot;image:Uint8Array}>{
+/** @internal Captures, strips credentials (and product photos when asked), compacts and signs one coherent snapshot for backup or approved enrollment. */
+export async function createSignedSnapshot(context:OperationContext,kind:SnapshotManifest["kind"],target:SnapshotManifest["target"],files:SnapshotPort,crypto:TransferCrypto,options:BackupOptions={}):Promise<{signed:SignedSnapshot;image:Uint8Array}>{
  const {ports,database}=authorizedOperation(context,["business.settings"],(database,tx,ports)=>{requireOwner(tx,context);return {ports,database};});
  for(let pass=0;pass<32;pass++){if(await sealPendingEvents(context,crypto,1000)<1000)break;if(pass===31)throw new TransferError("too_large");}
  const handle=await files.capture(database);
@@ -29,7 +29,7 @@ export async function createSignedSnapshot(context:OperationContext,kind:Snapsho
   if(db.get(`SELECT e.event_id FROM event_journal e LEFT JOIN event_signatures s ON s.event_id=e.event_id WHERE e.business_id=? AND e.origin_device_id=? AND s.event_id IS NULL LIMIT 1`,[context.businessId,context.deviceId])!==undefined)throw new TransferError("pairing_pending");
   const publicKey=String(install["public_key"]),keyReference=String(install["key_reference"]),boundary=snapshotBoundary(db,context.businessId);
   const schema=Number(db.get(`SELECT max(version) AS n FROM schema_migrations`)!["n"]);
-  sanitizeSnapshot(db,context.deviceId);const image=await handle.bytes();
+  sanitizeSnapshot(db,context.deviceId);if(options.includePhotos===false)db.run(`DELETE FROM product_photos`);const image=await handle.bytes();
   const manifest:SnapshotManifest={format:"kolo.snapshot",format_version:1,snapshot_id:nextId(ports),kind,schema_version:schema,created_at:timestamp(ports),business:{id:context.businessId,name:String(shop["name"]),currency:"XAF"},owner:{id:context.userId,name:String(owner["name"])},source_device_id:context.deviceId,source_public_key:publicKey,snapshot_digest:await crypto.sha256Bytes(image),snapshot_bytes:image.byteLength,boundary,credential_policy:"device_local_credentials_excluded",target};
   const message=`kolo.snapshot.v1\u0000${canonicalJson(manifest)}`;
   if(ports.credentials.sign===undefined)throw new TransferError("authentication_failed");
@@ -40,19 +40,22 @@ export async function createSignedSnapshot(context:OperationContext,kind:Snapsho
  }finally{await handle.discard();}
 }
 
-/** Consistent encrypted backup excluding credentials, cloud sessions and installation private keys. */
-export async function createBackup(context:OperationContext,password:string,files:SnapshotPort,crypto:TransferCrypto):Promise<TransferDocument>{
+/** Backup choices. Photos are included unless `includePhotos` is false; a backup without them restores products with no photo. */
+export interface BackupOptions { readonly includePhotos?: boolean }
+
+/** Consistent encrypted backup excluding credentials, cloud sessions and installation private keys, and optionally product photos. */
+export async function createBackup(context:OperationContext,password:string,files:SnapshotPort,crypto:TransferCrypto,options:BackupOptions={}):Promise<TransferDocument>{
  validateTransferPassword(password);
- const {signed,image}=await createSignedSnapshot(context,"backup",null,files,crypto);
- const plain=encodeSnapshot(signed,image,crypto);
- try{const text=await encryptTransfer(plain,"backup",signed.manifest.snapshot_id,password,crypto);authorizedOperation(context,["business.settings"],(_db,tx)=>requireOwner(tx,context));return {filename:`${signed.manifest.snapshot_id}.kolo-backup.json`,text};}finally{plain.fill(0);image.fill(0);}
+ const {signed,image}=await createSignedSnapshot(context,"backup",null,files,crypto,options);
+ const limits=limitsOf(files),plain=encodeSnapshot(signed,image,crypto,limits);
+ try{const text=await encryptTransfer(plain,"backup",signed.manifest.snapshot_id,password,crypto,limits);authorizedOperation(context,["business.settings"],(_db,tx)=>requireOwner(tx,context));return {filename:`${signed.manifest.snapshot_id}.kolo-backup.json`,text};}finally{plain.fill(0);image.fill(0);}
 }
 
 /** Authenticates password/image/manifest and validates schema, integrity, scope, foreign keys and replay boundary in isolation. */
 export async function previewBackup(text:string,password:string,files:SnapshotPort,crypto:TransferCrypto):Promise<BackupPreview>{
- const plain=await decryptTransfer(text,"backup",password,crypto);
+ const limits=limitsOf(files),plain=await decryptTransfer(text,"backup",password,crypto,limits);
  try{
-  const {signed,image}=decodeSnapshot(plain,crypto),m=signed.manifest;
+  const {signed,image}=decodeSnapshot(plain,crypto,limits),m=signed.manifest;
   if(m.kind!=="backup"||m.target!==null||image.length!==m.snapshot_bytes||await crypto.sha256Bytes(image)!==m.snapshot_digest)throw new TransferError("invalid_snapshot");
   const message=`kolo.snapshot.v1\u0000${canonicalJson(m)}`;
   if(await crypto.sha256(message)!==signed.digest||!await crypto.verify(m.source_public_key,message,signed.signature))throw new TransferError("authentication_failed");

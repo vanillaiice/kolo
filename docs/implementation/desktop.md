@@ -200,6 +200,36 @@ capped at 500 (stock alerts at 100) with a `truncated` flag; totals stay exact. 
 Reports section shows stat tiles and tables only. Commands live in `electron/reports.ts`.
 `KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT` optionally saves the fixture summary screen.
 
+## Analytics contract
+
+`analytics` takes a period `[from, until)` like `report`, the shop's local offset in minutes
+east of UTC (at most ±840) and an optional bucket (`hour`, `day`, `week` from Monday,
+`month`; defaulting to hours up to two days, days up to about two months, weeks up to about a
+year, months beyond, and at most 1,000 points). It requires `reports.sales`. Sections the
+actor cannot read are left out rather than failing the view: KPI profit, expenses, net
+result and per-point/per-product profit need `reports.financial`; top customers need
+`reports.customers`. `previous` is the equal-length period just before, for deltas.
+
+Figures come from core `data/reports/analytics.ts` over the same lines and returns as the
+reports: a trend summed over its buckets equals `profitBetween`; product figures are net
+of returns and before bill discounts; busy hours count sales where they were rung up;
+top customers are named customers only. The Analytics section (Recharts) shows KPI tiles
+with deltas, a revenue/profit line chart, a weekday × hour heatmap, best-seller bars,
+category and payment-method donuts (five slices plus "Others") and a customer table;
+each chart has a figures table or legend table as its accessible twin. Commands live in
+`electron/reports.ts`.
+
+## Product photos and large files
+
+`setProductPhoto` takes a product ID and the bytes of a WebP or JPEG (at most 64 KiB and
+512 px a side) under `products.edit`; the renderer crops to a 320 px square WebP with EXIF
+orientation applied and metadata dropped. `ProductView.photo` is the photo's SHA-256;
+`productPhoto` returns a data URL (the CSP allows only `data:` images); `removeProductPhoto`
+and `photoUsage` complete the set. `invalid_photo` and `photo_storage_full` are the failures.
+`saveBackup` takes `includePhotos` (default true). `setLargeFiles` (owner, business.settings)
+switches this computer between the standard and large transfer profiles and photo limits;
+`sessionPreferences` reports `largeFiles`. See [ADR-027](../adr/ADR-027-large-files-and-product-photos.md).
+
 ## Returns contract
 
 Sale returns need `sales.refund`; purchase returns need `purchases.create` and

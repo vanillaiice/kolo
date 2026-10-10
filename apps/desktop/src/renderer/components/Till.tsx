@@ -6,6 +6,7 @@ import { lineTotal, subtotalOf } from "@kolo/core/rules/pricing";
 import { moneyEntry } from "@kolo/core/domain/entry";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { CheckoutRequest, CustomerView, ProductView, ShopService } from "../../shared/service.ts";
+import { ProductThumb } from "./Photo.tsx";
 import { call, ErrorText, Field, Pager, ReadState, useAction, useRead, useText } from "./ui.tsx";
 
 type DraftLine={readonly product:ProductView;readonly quantityText:string};
@@ -76,7 +77,7 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
       <Field id="till-search" label={t("search")} value={term} required={false} disabled={frozen} onChange={value=>{setTerm(value);setCursor(undefined);}}/>
       <ReadState loading={products.loading} error={products.error} empty={products.data?.items.length===0} emptyText={t(term===""?"noProducts":"noResults")} retry={products.retry}>
         <div className="product-grid">{products.data?.items.map(product=><button key={product.id} className="product-tile" disabled={frozen} onClick={()=>add(product)}>
-          <span className="product-initial" aria-hidden="true">{product.name.slice(0,1).toLocaleUpperCase()}</span><strong>{product.name}</strong><span className="money">{formatMoney(product.sellingPriceMinor,language)}</span>
+          <ProductThumb service={service} sessionId={sessionId} product={product}/><strong>{product.name}</strong><span className="money">{formatMoney(product.sellingPriceMinor,language)}</span>
           <small className={product.onHandThousandths!==undefined&&product.onHandThousandths<0?"negative":"muted"}>{product.onHandThousandths===undefined?product.unit:`${t("stock")}: ${formatQuantityWithUnit(product.onHandThousandths,product.unit,language)}`}</small>
         </button>)}</div>
       </ReadState>

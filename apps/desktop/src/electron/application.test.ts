@@ -3,15 +3,17 @@ import { it } from "node:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID, randomUUIDv7 } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, randomUUIDv7 } from "node:crypto";
 import { openDesktopDatabase } from "./database.ts";
 import { DesktopApplication } from "./application.ts";
 import { desktopHandlers } from "./handlers.ts";
 import { localCredentialsOnDesktop, desktopExchangeCrypto, desktopSecretStore, type NativeSafeStorage } from "./local-credentials.ts";
 import { desktopSessionMemory } from "./session-memory.ts";
+import { devicePreferences } from "./preferences.ts";
+import { LARGE_TRANSFER_LIMITS, STANDARD_TRANSFER_LIMITS } from "@kolo/core/backup/types";
 import { balanceOfAccount } from "@kolo/core/data/finance/cash";
 import { createLocalMember } from "@kolo/core/identity/members";
-import { unlockWorkspace } from "@kolo/core/identity/workspace";
+import { grantPermission, unlockWorkspace } from "@kolo/core/identity/workspace";
 import { saveAccount } from "@kolo/core/application/operations";
 import type { CredentialPort, WorkspacePorts } from "@kolo/core/identity/types";
 import type { ProductRequest, Result, WorkspaceView } from "../shared/service.ts";
@@ -522,6 +524,86 @@ it("reports read exact period figures under report authority and refuse malforme
     for(const kind of ["sales","valuation","customerDebt"] as const)failure(await f.application.report({...period,sessionId:cashier,kind}),"permission_denied");
   }finally{await f.dispose();}
 });
+/** A lossless WebP header declaring the given size, padded to `length` bytes. */
+function webp(width:number,height:number,length=200):Uint8Array{
+  const bytes=new Uint8Array(length),view=new DataView(bytes.buffer);
+  bytes.set([..."RIFF"].map(c=>c.charCodeAt(0)),0);view.setUint32(4,length-8,true);bytes.set([..."WEBPVP8L"].map(c=>c.charCodeAt(0)),8);view.setUint32(16,length-20,true);
+  bytes[20]=0x2f;view.setUint32(21,(width-1)|((height-1)<<14),true);return bytes;
+}
+it("product photos are stored, listed by digest, served as data URLs and checked for type, size and permission",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:0})));
+    assert.equal(item.photo,undefined);assert.equal(value(await f.application.productPhoto({sessionId,productId:item.id})),null);
+    const bytes=webp(320,320);
+    const saved=value(await f.application.setProductPhoto({sessionId,productId:item.id,bytes}));
+    assert.equal(saved.photo,createHash("sha256").update(bytes).digest("hex"));
+    assert.equal(value(await f.application.listProducts({sessionId})).items[0]!.photo,saved.photo);
+    const served=value(await f.application.productPhoto({sessionId,productId:item.id}))!;
+    assert.equal(served.digest,saved.photo);assert.equal(served.dataUrl,`data:image/webp;base64,${Buffer.from(bytes).toString("base64")}`);
+    for(const bad of [webp(600,600),new Uint8Array(70_000),"not bytes",[1,2,3],new Uint8Array([0x89,0x50,0x4e,0x47])])failure(await f.application.setProductPhoto({sessionId,productId:item.id,bytes:bad as Uint8Array}),"invalid_photo");
+    failure(await f.application.setProductPhoto({sessionId,productId:randomUUIDv7(),bytes}),"scope_mismatch");
+    failure(await f.application.setProductPhoto({sessionId,productId:item.id,bytes,extra:1} as never),"invalid_input");
+    assert.deepEqual(value(await f.application.photoUsage({sessionId})),{photos:1,bytes:200,limitBytes:16*1024*1024});
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const cashierId=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"876543"});
+    const cashier=value(await f.application.unlock({userId:cashierId,secret:"876543"})).sessionId!;
+    assert.equal(value(await f.application.productPhoto({sessionId:cashier,productId:item.id}))?.digest,saved.photo);
+    failure(await f.application.setProductPhoto({sessionId:cashier,productId:item.id,bytes}),"permission_denied");
+    failure(await f.application.removeProductPhoto({sessionId:cashier,productId:item.id}),"permission_denied");
+    failure(await f.application.setLargeFiles({sessionId:cashier,enabled:true}),"permission_denied");
+    const again=value(await f.application.unlock({userId:workspace.members[0]!.id,secret:"654321"})).sessionId!;
+    assert.equal(value(await f.application.removeProductPhoto({sessionId:again,productId:item.id})).photo,undefined);
+  }finally{await f.dispose();}
+});
+it("the large-files switch is owner-only, persists per computer and raises the photo storage limit",async()=>{
+  const f=fixture(),path=join(f.directory,"preferences.json"),preferences=devicePreferences(path);
+  await f.application.dispose();
+  const application=new DesktopApplication(f.ports,desktopExchangeCrypto,undefined,undefined,preferences);
+  try{
+    await application.initialize();
+    const setup=value(await application.createShop({businessName:"Shop",ownerName:"Owner",deviceLabel:"PC",cashAccountName:"Cash",secret:"654321"}));
+    const sessionId=value(await application.unlock({userId:setup.members[0]!.id,secret:"654321"})).sessionId!;
+    assert.equal(value(await application.sessionPreferences({sessionId})).largeFiles,false);assert.equal(preferences.limits(),STANDARD_TRANSFER_LIMITS);
+    assert.equal(value(await application.setLargeFiles({sessionId,enabled:true})).largeFiles,true);
+    assert.equal(preferences.limits(),LARGE_TRANSFER_LIMITS);assert.equal(value(await application.photoUsage({sessionId})).limitBytes,256*1024*1024);
+    assert.equal(devicePreferences(path).largeFiles(),true,"persisted for the next start");
+    failure(await application.setLargeFiles({sessionId,enabled:"yes"}),"invalid_input");
+    value(await application.setLargeFiles({sessionId,enabled:false}));assert.equal(devicePreferences(path).largeFiles(),false);
+    writeFileSync(path,"{damaged");assert.equal(devicePreferences(path).largeFiles(),false,"a damaged file reads as the default");
+  }finally{await application.dispose();f.database.close();rmSync(f.directory,{recursive:true,force:true});}
+});
+it("analytics reads one period with permission-scoped sections and refuses malformed requests",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:0,purchasePriceMinor:300})));
+    const cash=value(await f.application.listPaymentAccounts({sessionId})).items[0]!.id,customer=value(await f.application.createCustomer({sessionId,requestId:randomUUID(),name:"Awa"}));
+    value(await f.application.recordPurchase({sessionId,requestId:randomUUID(),lines:[{productId:item.id,quantity:5000,unitCostMinor:300}],payment:{accountId:cash,amountMinor:1500}}));
+    value(await f.application.checkout({sessionId,requestId:randomUUID(),customerId:customer.id,lines:[{productId:item.id,quantity:2000,unitPriceMinor:500}],payments:[{accountId:cash,amountMinor:1000}]}));
+    value(await f.application.checkout({sessionId,requestId:randomUUID(),lines:[{productId:item.id,quantity:1000,unitPriceMinor:500}],payments:[{accountId:cash,amountMinor:500}]}));
+    const period={sessionId,from:"2026-10-05T23:00:00.000Z",until:"2026-10-06T23:00:00.000Z",offsetMinutes:60};
+    const result=value(await f.application.analytics(period));
+    assert.equal(result.bucket,"hour");assert.equal(result.trend.length,24);
+    assert.deepEqual([result.sales.revenueMinor,result.sales.transactions,result.sales.averageBasketMinor],[1500,2,750]);
+    assert.deepEqual([result.profit?.grossProfitMinor,result.profit?.marginBasisPoints],[600,4000]);
+    assert.equal(result.trend.reduce((sum,point)=>sum+(point.grossProfitMinor??0),0),600);
+    assert.deepEqual(result.products.map(row=>[row.name,row.soldThousandths,row.revenueMinor,row.grossProfitMinor]),[["Rice",3000,1500,600]]);
+    assert.deepEqual(result.customers?.map(row=>[row.name,row.revenueMinor]),[["Awa",1000]]);
+    assert.equal(result.activity.reduce((sum,cell)=>sum+cell.transactions,0),2);
+    assert.deepEqual(result.previous,{revenueMinor:0,transactions:0,grossProfitMinor:0});
+    assert.equal(value(await f.application.analytics({...period,bucket:"week"})).trend.length,1);
+    for(const bad of [{offsetMinutes:900},{offsetMinutes:"60"},{offsetMinutes:1.5},{bucket:"year"},{until:period.from},{from:"2026-10-06"},{extra:1},{from:"2016-01-01T00:00:00.000Z",bucket:"hour"}])
+      failure(await f.application.analytics({...period,...bad}),"invalid_input");
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const cashierId=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"876543"}),sellerId=await createLocalMember(context,{name:"Seller",role:"CASHIER",secret:"987654"});
+    grantPermission(context,sellerId,"reports.sales");
+    const cashier=value(await f.application.unlock({userId:cashierId,secret:"876543"})).sessionId!;
+    failure(await f.application.analytics({...period,sessionId:cashier}),"permission_denied");
+    const seller=value(await f.application.unlock({userId:sellerId,secret:"987654"})).sessionId!;
+    const limited=value(await f.application.analytics({...period,sessionId:seller}));
+    assert.equal(limited.sales.revenueMinor,1500);assert.equal(limited.profit,undefined);assert.equal(limited.customers,undefined);
+    assert.equal(limited.trend.some(point=>"grossProfitMinor" in point),false);assert.equal(limited.products.some(row=>"grossProfitMinor" in row),false);
+    assert.equal("grossProfitMinor" in limited.previous,false);
+  }finally{await f.dispose();}
+});
 it("sale and purchase returns compensate stock, money and ledgers, retry by content and refuse stale predecessors",async()=>{
   const f=fixture();try{
     const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:10000})));
@@ -601,7 +683,7 @@ it("a remembered user reopens after restart and stepping away, until Lock, recov
     let app=await r.start();
     const setup=value(await app.createShop({businessName:"Shop",ownerName:"Owner",deviceLabel:"PC",cashAccountName:"Cash",secret:"654321"}));
     const ownerId=setup.members[0]!.id,first=value(await app.unlock({userId:ownerId,secret:"654321"}));
-    assert.deepEqual(value(await app.sessionPreferences({sessionId:first.sessionId!})),{rememberSession:true});
+    assert.deepEqual(value(await app.sessionPreferences({sessionId:first.sessionId!})),{rememberSession:true,largeFiles:false});
     app=await r.start();let view=value(await app.getWorkspace());
     assert.equal(view.state,"unlocked");assert.equal(view.actor?.isOwner,true);assert.notEqual(view.sessionId,first.sessionId);
     failure(await app.listProducts({sessionId:first.sessionId!}),"locked");
@@ -612,7 +694,7 @@ it("a remembered user reopens after restart and stepping away, until Lock, recov
     assert.equal(await r.memory.read(),undefined);
     // Turned off: stepping away locks again and unlocking is not remembered.
     view=value(await app.unlock({userId:ownerId,secret:"654321"}));
-    assert.deepEqual(value(await app.setRememberSession({sessionId:view.sessionId!,enabled:false})),{rememberSession:false});
+    assert.deepEqual(value(await app.setRememberSession({sessionId:view.sessionId!,enabled:false})),{rememberSession:false,largeFiles:false});
     assert.equal(await r.memory.read(),undefined);
     await app.autoLock("away");assert.equal(value(await app.getWorkspace()).state,"locked");
     view=value(await app.unlock({userId:ownerId,secret:"654321"}));
@@ -655,10 +737,10 @@ it("the stay-signed-in command needs the current session, a boolean and host sto
     failure(await app.setRememberSession({sessionId,enabled:"no"}),"invalid_input");
     failure(await app.setRememberSession({sessionId,enabled:false,extra:1}),"invalid_input");
     failure(await app.sessionPreferences({sessionId:randomUUIDv7()}),"locked");
-    assert.deepEqual(value(await app.sessionPreferences({sessionId})),{rememberSession:true});
+    assert.deepEqual(value(await app.sessionPreferences({sessionId})),{rememberSession:true,largeFiles:false});
     const other=(await owner(f)).sessionId!;
     failure(await f.application.setRememberSession({sessionId:other,enabled:true}),"unavailable");
-    assert.deepEqual(value(await f.application.sessionPreferences({sessionId:other})),{rememberSession:false});
+    assert.deepEqual(value(await f.application.sessionPreferences({sessionId:other})),{rememberSession:false,largeFiles:false});
   }finally{await r.dispose();await f.dispose();}
 });
 it("session memory keeps the remembered user encrypted, defaults on and treats damaged records as absent",async()=>{

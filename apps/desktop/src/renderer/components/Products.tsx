@@ -1,3 +1,4 @@
+import { PhotoEditor, ProductThumb } from "./Photo.tsx";
 import { useEffect, useState } from "react";
 import { moneyEntry, quantityEntry, quantityInput } from "@kolo/core/domain/entry";
 import { formatMoney, formatQuantity, formatQuantityWithUnit } from "@kolo/core/domain/money";
@@ -33,7 +34,7 @@ function ProductList({service,sessionId,revision,onOpen}:{service:ShopService;se
     <label className="check"><input type="checkbox" checked={archived} onChange={event=>{setArchived(event.target.checked);setCursor(undefined);}}/>{t("showArchived")}</label>
     <ReadState loading={list.loading} error={list.error} empty={list.data?.items.length===0} emptyText={t("noResults")} retry={list.retry}>
       <div className="table-wrap"><table><thead><tr><th>{t("name")}</th><th>{t("price")}</th><th>{t("stock")}</th></tr></thead><tbody>
-        {list.data?.items.map(product=><tr key={product.id}><td><button className="row-link" onClick={()=>onOpen(product.id)}><strong>{product.name}</strong></button>{!product.active&&<span className="tag">{t("archived")}</span>}<small>{product.barcode ?? product.unit}</small></td><td className="money">{formatMoney(product.sellingPriceMinor,language)}</td>
+        {list.data?.items.map(product=><tr key={product.id}><td><div className="name-with-thumb"><ProductThumb service={service} sessionId={sessionId} product={product} className="list-thumb"/><div><button className="row-link" onClick={()=>onOpen(product.id)}><strong>{product.name}</strong></button>{!product.active&&<span className="tag">{t("archived")}</span>}<small>{product.barcode ?? product.unit}</small></div></div></td><td className="money">{formatMoney(product.sellingPriceMinor,language)}</td>
           <td><Stock product={product}/></td></tr>)}
       </tbody></table></div>
     </ReadState>
@@ -58,6 +59,7 @@ function ProductDetail({service,sessionId,revision,permissions,productId,onBack}
       <div className="actions">{shown.active&&canEdit&&editing===undefined&&<button className="secondary" onClick={()=>setEditing(shown)}>{t("edit")}</button>}
         {canArchive&&<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.setProductActive({sessionId,productId,version:shown.version,active:!shown.active})).then(value=>{if(value!==undefined){setShown(value);setEditing(undefined);}});}}>{t(shown.active?"archive":"restore")}</button>}</div></div>
       <h2>{shown.name}{!shown.active&&<span className="tag">{t("archived")}</span>}</h2>
+      {canEdit&&shown.active?<PhotoEditor service={service} sessionId={sessionId} product={shown} onSaved={setShown}/>:shown.photo!==undefined&&<ProductThumb service={service} sessionId={sessionId} product={shown} className="photo-preview"/>}
       <ErrorText message={action.error} conflictMessage="staleVersion"/>
       {!shown.active&&<p className="notice">{t("archivedNotice")}</p>}
       <dl className="facts"><dt>{t("stock")}</dt><dd><Stock product={shown}/></dd><dt>{t("sellingPrice")}</dt><dd className="money">{formatMoney(shown.sellingPriceMinor,language)}</dd>

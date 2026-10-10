@@ -84,8 +84,9 @@ function staged<K extends StagedFile["kind"]>(host: TransferHost, kind: K): Extr
 function deviceLabel(value: unknown): string { return text(value, 120); }
 
 export async function saveBackup(host: TransferHost, input: unknown): Promise<SavedFile> {
-  const data = object(input, ["sessionId", "password"]), context = host.actor(data, ["business.settings"]);
-  return save(host, await createBackup(context, password(data["password"]), host.transfer.files, host.transfer.crypto));
+  const data = object(input, ["sessionId", "password", "includePhotos"]), context = host.actor(data, ["business.settings"]);
+  const includePhotos = data["includePhotos"] === undefined ? true : boolean(data["includePhotos"]);
+  return save(host, await createBackup(context, password(data["password"]), host.transfer.files, host.transfer.crypto, { includePhotos }));
 }
 export async function openBackup(host: TransferHost, input: unknown): Promise<BackupFileView> {
   const data = object(input, ["password"]), secret = password(data["password"]), file = await chosen(host, "backup");

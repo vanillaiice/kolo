@@ -167,12 +167,19 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await wait("document.querySelectorAll('.detail-layout tbody tr').length===4", "stock history"); await snapshot("product-detail");
     await press(".detail-heading button", "Edit"); await snapshot("product-edit"); await fill("#edit-name", "Rice 25kg"); await submit("#edit-name");
     await wait("document.querySelector('.detail-layout h2')?.textContent==='Rice 25kg' && document.querySelector('#edit-name')===null", "product edit");
+    // Photo: a large landscape PNG picked through the real file input becomes a small square WebP thumbnail.
+    await evaluate(`(async()=>{const canvas=document.createElement('canvas');canvas.width=1200;canvas.height=800;const c=canvas.getContext('2d');c.fillStyle='#c0392b';c.fillRect(0,0,1200,800);c.fillStyle='#f1c40f';c.fillRect(400,200,400,400);
+      const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));const input=document.querySelector('.photo-editor input[type=file]');const transfer=new DataTransfer();transfer.items.add(new File([blob],'rice.png',{type:'image/png'}));
+      input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    await wait("document.querySelector('img.photo-preview')?.src.startsWith('data:image/webp;base64,')===true", "product photo saved");
+    assert.equal(await evaluate("(()=>{const img=document.querySelector('img.photo-preview');return img.naturalWidth===320&&img.naturalHeight===320;})()"), true, "photo stored as a 320 px square");
+    await snapshot("product-photo");
     await press(".tabs button", "Categories"); await fill("#category-name", "Grain"); await submit("#category-name");
     await wait("Array.from(document.querySelectorAll('tbody')).some(element=>element.textContent.includes('Grain'))", "category created"); await snapshot("categories");
     // Credit: a customer with a limit buys with part payment, then pays some of the balance.
     await navigate("Customers"); await click(".section-heading .primary"); await fill("#customer-name", "Awa"); await fill("#customer-limit", "1000"); await submit("#customer-name");
     await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.detail-layout h2')[0]?.textContent==='Awa';})()", "customer created"); await snapshot("customer-detail");
-    await navigate("Till"); await wait("document.querySelector('.product-tile')?.textContent.includes('Rice 25kg')", "edited product in till");
+    await navigate("Till"); await wait("document.querySelector('.product-tile')?.textContent.includes('Rice 25kg')", "edited product in till"); await wait("document.querySelector('.product-tile img.has-photo')!==null", "photo on till tile"); await snapshot("till-photo");
     await click(".product-tile"); await fill("#customer-search", "Aw"); await wait("document.querySelector('.customer-results button')!==null", "customer search");
     await click(".customer-results button"); await wait("document.querySelector('.customer-choice')?.textContent.includes('Awa')", "customer chosen");
     await fill(".payment-row input", "200"); await wait("Array.from(document.querySelectorAll('.settlement-line')).some(element=>element.textContent.includes('300'))", "credit remainder");
@@ -203,6 +210,11 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await navigate("Reports"); await wait("document.querySelector('.stat-tile strong')?.textContent.replace(/[^0-9-]/g,'')==='750'", "sales report");
     await audit("Reports");
     assert.equal(await evaluate("Array.from(document.querySelectorAll('.stat-tile')).find(tile=>tile.textContent.startsWith('Expenses'))?.textContent.replace(/[^0-9-]/g,'')"), "200");
+    // Analytics: the default period includes today; KPIs, trend, heatmap, best sellers and shares render.
+    await navigate("Analytics"); await wait("document.querySelector('.stat-tile strong')?.textContent.replace(/[^0-9-]/g,'')==='750'", "analytics summary");
+    await wait(`${visible(".chart-frame .recharts-wrapper")}.length===2 && ${visible(".heatmap-cell:not(.is-empty)")}.length>0 && ${visible(".donut .recharts-wrapper")}.length===2`, "analytics charts");
+    await audit("Analytics");
+    for (const [index, card] of ["busy", "sellers", "shares"].entries()) { await evaluate(`document.querySelectorAll('.analytics .chart-card')[${index + 1}]?.scrollIntoView()`); await snapshot(`analytics-${card}`); }
     // Settings: an explicit appearance overrides the system theme and persists; "System" follows it again.
     await navigate("Settings"); await wait(`${visible("input[name=appearance]")}.length===3`, "settings page");
     await audit("Settings");

@@ -63,7 +63,7 @@ describe("migration 21 search keys", () => {
     for (const migration of MIGRATIONS.filter(item => item.version <= 20)) db.transaction(tx => { for (const statement of migration.statements) tx.run(statement); tx.run(`INSERT INTO schema_migrations VALUES (?,?,?)`, [migration.version, migration.name, at]); });
     db.run(`INSERT INTO businesses(id,name,currency,created_at,updated_at) VALUES (?,'Boutique','XAF',?,?)`, [shop, at, at]);
     seed?.(db);
-    assert.deepEqual(migrate(db).applied.map(item => item.version), [21]);
+    assert.deepEqual(migrate(db).applied.map(item => item.version), [21, 22]);
     return db;
   }
   const product = (db: ReturnType<typeof openDatabase>, id: string, name: string): void => void db.run(

@@ -46,3 +46,5 @@ consult and supersede, per §55.
 - [ADR-025: Fastify for the optional server](ADR-025-fastify-server.md) — replaces NestJS/Express; TypeScript, pg and shared contracts stay.
 
 - [ADR-026: Compressed transfer files and larger snapshots](ADR-026-compressed-transfer-files.md) — deflate before encryption (format v2), bounded inflation, 128 MiB snapshots; supersedes ADR-022 limits.
+
+- [ADR-027: Opt-in large transfer files and optional product photos](ADR-027-large-files-and-product-photos.md) — standard/large size profiles, per-computer switch; photo thumbnails in migration 22.

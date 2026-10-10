@@ -3,7 +3,7 @@ import { signedSnapshotSchema, type SnapshotManifest, type SignedSnapshot } from
 import type { Database, Queryable } from "../data/database/driver.ts";
 import { MIGRATIONS, LATEST_VERSION, migrate, schemaVersion } from "../data/database/migrations.ts";
 import { memberPermissions } from "../identity/internal-authority.ts";
-import { MAX_SNAPSHOT_BYTES, TransferError, type SnapshotPort, type TransferCrypto } from "./types.ts";
+import { STANDARD_TRANSFER_LIMITS, TransferError, type SnapshotPort, type TransferCrypto, type TransferLimits } from "./types.ts";
 
 /** Current journal/legacy coverage derived from this exact snapshot, not a live database's later cursor. */
 export function snapshotBoundary(tx:Queryable,businessId:string):SnapshotManifest["boundary"]{
@@ -57,16 +57,16 @@ export async function validateSnapshot(database:Database,manifest:SnapshotManife
 }
 
 /** Packs a small signed manifest plus raw SQLite bytes, avoiding double-base64 expansion. */
-export function encodeSnapshot(signed:SignedSnapshot,bytes:Uint8Array,crypto:TransferCrypto):Uint8Array{
+export function encodeSnapshot(signed:SignedSnapshot,bytes:Uint8Array,crypto:TransferCrypto,limits:TransferLimits=STANDARD_TRANSFER_LIMITS):Uint8Array{
  const metadata=crypto.encodeText(canonicalJson(signed)),result=new Uint8Array(4+metadata.length+bytes.length);
- if(metadata.length>1024*1024||bytes.length>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");
+ if(metadata.length>1024*1024||bytes.length>limits.snapshotBytes)throw new TransferError("too_large");
  new DataView(result.buffer).setUint32(0,metadata.length,false);result.set(metadata,4);result.set(bytes,4+metadata.length);return result;
 }
 /** Bounds metadata/image independently before schema parsing or opening SQLite. */
-export function decodeSnapshot(bytes:Uint8Array,crypto:TransferCrypto):{signed:SignedSnapshot;image:Uint8Array}{
+export function decodeSnapshot(bytes:Uint8Array,crypto:TransferCrypto,limits:TransferLimits=STANDARD_TRANSFER_LIMITS):{signed:SignedSnapshot;image:Uint8Array}{
  if(bytes.byteLength<104)throw new TransferError("invalid_snapshot");
  const length=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(0,false);
- if(length<1||length>1024*1024||length+104>bytes.byteLength||bytes.byteLength-4-length>MAX_SNAPSHOT_BYTES)throw new TransferError("invalid_snapshot");
+ if(length<1||length>1024*1024||length+104>bytes.byteLength||bytes.byteLength-4-length>limits.snapshotBytes)throw new TransferError("invalid_snapshot");
  let input:unknown;try{input=JSON.parse(crypto.decodeText(bytes.subarray(4,4+length)));canonicalJson(input);}catch{throw new TransferError("invalid_snapshot");}
  const parsed=signedSnapshotSchema.safeParse(input);if(!parsed.success)throw new TransferError("invalid_snapshot");
  return {signed:parsed.data,image:bytes.slice(4+length)};

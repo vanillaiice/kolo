@@ -8,7 +8,9 @@ export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later"
   "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" |
   /** File transfer failures; file contents and paths never cross the bridge. */
   "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" |
-  "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file";
+  "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" |
+  /** Product photo failures: not a WebP/JPEG within limits, or the shop's photo storage is full. */
+  "invalid_photo" | "photo_storage_full";
 /** Serializable results make transport and operation failures explicit. */
 export type Result<T> = { readonly ok: true; readonly value: T } |
   { readonly ok: false; readonly error: { readonly code: FailureCode; readonly retryAt?: string } };
@@ -29,6 +31,8 @@ export interface ProductView {
   readonly active: boolean;
   /** Opaque stored version; an edit names the version it was made from. */
   readonly version: string;
+  /** SHA-256 of the product's photo on this computer, absent when it has none; fetch bytes with productPhoto. */
+  readonly photo?: string;
 }
 /** Catalogue grouping. Archived categories remain attached to existing products. */
 export interface CategoryView { readonly id: string; readonly name: string; readonly active: boolean; readonly version: string; }
@@ -158,6 +162,34 @@ export type ReportResult =
   | { readonly kind: "fastMoving"; readonly products: readonly { readonly productId: string; readonly name: string; readonly soldThousandths: number; readonly revenueMinor: number; readonly onHandThousandths: number }[] }
   | { readonly kind: "stockAlerts"; readonly products: readonly { readonly productId: string; readonly name: string; readonly onHandThousandths: number }[]; readonly truncated: boolean }
   | { readonly kind: "purchases"; readonly totalMinor: number; readonly deliveries: number; readonly bySupplier: readonly ReportLine[]; readonly truncated: boolean };
+/** How an analytics trend is sliced; weeks start on Monday. */
+export type AnalyticsBucket = "hour" | "day" | "week" | "month";
+/** One trend point keyed by local `YYYY-MM-DDTHH`, `YYYY-MM-DD` (day or week's Monday) or `YYYY-MM`; profit only with reports.financial. */
+export interface AnalyticsPoint { readonly key: string; readonly revenueMinor: number; readonly transactions: number; readonly grossProfitMinor?: number }
+/** Sales started in one local weekday (0 = Sunday) and hour, summed over the period; empty cells are absent. */
+export interface AnalyticsCell { readonly weekday: number; readonly hour: number; readonly transactions: number; readonly revenueMinor: number }
+/** A product's net sales over the period, before bill discounts; profit only with reports.financial. */
+export interface AnalyticsProduct { readonly productId: string; readonly name: string; readonly soldThousandths: number; readonly revenueMinor: number; readonly grossProfitMinor?: number }
+/** A named customer's net buying over the period. */
+export interface AnalyticsCustomer { readonly customerId: string; readonly name: string; readonly transactions: number; readonly revenueMinor: number; readonly lastPurchaseAt: string }
+/**
+ * Light analytics for one period. Sections the actor may not read are absent rather than failing the
+ * whole view: `profit` and per-point/product profit need reports.financial, `customers` needs
+ * reports.customers; the rest needs reports.sales. `previous` is the equal-length period just before.
+ */
+export interface AnalyticsResult {
+  readonly bucket: AnalyticsBucket;
+  readonly sales: { readonly revenueMinor: number; readonly transactions: number; readonly itemsSoldThousandths: number; readonly averageBasketMinor: number };
+  readonly previous: { readonly revenueMinor: number; readonly transactions: number; readonly grossProfitMinor?: number };
+  readonly profit?: { readonly grossProfitMinor: number; readonly costMinor: number; readonly marginBasisPoints?: number; readonly linesWithoutCost: number; readonly expensesMinor: number; readonly netResultMinor: number };
+  readonly trend: readonly AnalyticsPoint[];
+  readonly activity: readonly AnalyticsCell[];
+  readonly products: readonly AnalyticsProduct[];
+  readonly productsTruncated: boolean;
+  readonly categories: readonly ReportLine[];
+  readonly accounts: readonly ReportLine[];
+  readonly customers?: readonly AnalyticsCustomer[];
+}
 /** What remains returnable from a sale or purchase, at the original net prices or costs. */
 export interface ReturnSourceView {
   readonly kind: "SALE" | "PURCHASE"; readonly originalId: string; readonly priorId?: string; readonly hasCounterparty: boolean;
@@ -198,7 +230,12 @@ export interface BundleView { readonly total: number; readonly ready: number; re
 export interface SavedFile { readonly saved: boolean; }
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
 /** Per-computer session behaviour. */
-export interface SessionPreferences { readonly rememberSession: boolean }
+/** Per-computer preferences. `largeFiles` lifts transfer-file and photo-storage limits for powerful computers. */
+export interface SessionPreferences { readonly rememberSession: boolean; readonly largeFiles: boolean }
+/** A product photo ready for an <img>: a data URL (the renderer CSP allows data: images only). */
+export interface PhotoView { readonly digest: string; readonly dataUrl: string }
+/** Photos held by the shop on this computer against the active storage limit. */
+export interface PhotoUsage { readonly photos: number; readonly bytes: number; readonly limitBytes: number }
 
 export interface ShopService {
   /** Public boot status; no credentials or key references are returned. */
@@ -229,6 +266,12 @@ export interface ShopService {
    * disabling forgets any remembered user so the next start is locked.
    */
   setRememberSession(input: SessionRequest & { readonly enabled: boolean }): Promise<Result<SessionPreferences>>;
+  /**
+   * Owner (business.settings) switch for this computer: raises backup/enrollment file limits from the
+   * standard profile (48 MiB files) to the large one (about 500 MiB) and photo storage from 16 to 256 MiB.
+   * Larger files open only on computers with the switch on.
+   */
+  setLargeFiles(input: SessionRequest & { readonly enabled: boolean }): Promise<Result<SessionPreferences>>;
   /** Requires both current owner authority and a fresh credential proof. */
   recoveryKey(input: SessionRequest & { readonly secret: string }): Promise<Result<string | null>>;
   /** Bounded literal catalogue search with optional stock according to current permissions. */
@@ -243,6 +286,14 @@ export interface ShopService {
   updateProduct(input: ProductUpdateRequest): Promise<Result<ProductView>>;
   /** Archives or restores a product from its displayed version under archive authority. */
   setProductActive(input: SessionRequest & { readonly productId: string; readonly version: string; readonly active: boolean }): Promise<Result<ProductView>>;
+  /** A product's photo under products.view, or null when this computer holds none. */
+  productPhoto(input: SessionRequest & { readonly productId: string }): Promise<Result<PhotoView | null>>;
+  /** Stores or replaces a product's photo (WebP or JPEG, at most 64 KiB and 512 px a side) under products.edit. */
+  setProductPhoto(input: SessionRequest & { readonly productId: string; readonly bytes: Uint8Array }): Promise<Result<ProductView>>;
+  /** Removes a product's photo under products.edit. */
+  removeProductPhoto(input: SessionRequest & { readonly productId: string }): Promise<Result<ProductView>>;
+  /** Photo storage used by the shop on this computer, under products.view. */
+  photoUsage(input: SessionRequest): Promise<Result<PhotoUsage>>;
   /** Bounded categories, optionally including archived ones. */
   listCategories(input: CatalogueQuery): Promise<Result<Page<CategoryView>>>;
   /** Creates a category whose ID is the stable request ID; matching retries return it. */
@@ -312,6 +363,11 @@ export interface ShopService {
    * local calendar days. Period-free reports (valuation, debts, alerts) ignore the period.
    */
   report(input: SessionRequest & { readonly kind: ReportKind; readonly from: string; readonly until: string }): Promise<Result<ReportResult>>;
+  /**
+   * Reads light analytics for [from, until) under reports.sales, bucketing by the shop's local time
+   * given as minutes east of UTC. The bucket defaults to one that keeps the trend readable.
+   */
+  analytics(input: SessionRequest & { readonly from: string; readonly until: string; readonly offsetMinutes: number; readonly bucket?: AnalyticsBucket }): Promise<Result<AnalyticsResult>>;
   /** Returnable lines of a sale (sales.refund) or purchase (purchases.create and purchases.pay). */
   returnSource(input: SessionRequest & { readonly kind: "SALE" | "PURCHASE"; readonly originalId: string }): Promise<Result<ReturnSourceView>>;
   /** Exact value of a selection against the current predecessor. */
@@ -329,7 +385,7 @@ export interface ShopService {
   /** Owner-only: replaces another member's code. */
   resetStaffSecret(input: SessionRequest & { readonly userId: string; readonly secret: string }): Promise<Result<StaffView>>;
   /** Owner: encrypts a backup with a file password and saves it through the native dialog. */
-  saveBackup(input: SessionRequest & { readonly password: string }): Promise<Result<SavedFile>>;
+  saveBackup(input: SessionRequest & { readonly password: string; readonly includePhotos?: boolean }): Promise<Result<SavedFile>>;
   /**
    * Import screen: opens one file dialog and reports whether the file is a backup or a pairing
    * invite. The next openBackup or openInvite uses that file instead of asking again.

@@ -22,7 +22,7 @@ Desktop authority and operations. The opaque core context never leaves this host
 class DesktopApplication implements ShopService {
   constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & {
     readonly onActivated: (database: Database) => Promise<void>;
-}, memory?: SessionMemory);
+}, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences());
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   initialize(): Promise<void>;
   /** Automatic lock from the host. "away" (minimize, suspend, OS lock) is skipped while the user
@@ -54,6 +54,8 @@ class DesktopApplication implements ShopService {
   lock(): Promise<Result<WorkspaceView>>;
   sessionPreferences(input: unknown): Promise<Result<SessionPreferences>>;
   setRememberSession(input: unknown): Promise<Result<SessionPreferences>>;
+  /** Owner switch for this computer's transfer-file and photo-storage limits. */
+  setLargeFiles(input: unknown): Promise<Result<SessionPreferences>>;
   /** Owner recovery uses the separate protected key and leaves the installation locked. */
   recoverAccess(input: unknown): Promise<Result<WorkspaceView>>;
   /** Returns a protected owner recovery key only after current authority and fresh secret proof. */
@@ -64,6 +66,14 @@ class DesktopApplication implements ShopService {
   getProduct(input: unknown): Promise<Result<ProductView>>;
   /** Exact active/unambiguous barcode lookup; no prefix/name substitution. */
   scanProduct(input: unknown): Promise<Result<ProductView>>;
+  /** A product's photo as a data URL under products.view; null when this computer holds none. */
+  productPhoto(input: unknown): Promise<Result<PhotoView>>;
+  /** Stores or replaces a product's photo under products.edit; the bytes are checked in core before anything is written. */
+  setProductPhoto(input: unknown): Promise<Result<ProductView>>;
+  /** Removes a product's photo under products.edit. */
+  removeProductPhoto(input: unknown): Promise<Result<ProductView>>;
+  /** Photo storage against this computer's limit. */
+  photoUsage(input: unknown): Promise<Result<PhotoUsage>>;
   /** Creates product and optional opening stock in one transaction; safe matching retries reuse the product ID. */
   createProduct(input: unknown): Promise<Result<ProductView>>;
   /** Edits an active product's details from the displayed version. Unchanged requests (including
@@ -126,6 +136,8 @@ class DesktopApplication implements ShopService {
   reverseExpense(input: unknown): Promise<Result<ExpenseView>>;
   /** Period and snapshot reports; see reports.ts. */
   report(input: unknown): Promise<Result<ReportResult>>;
+  /** Period analytics with permission-scoped sections; see reports.ts. */
+  analytics(input: unknown): Promise<Result<AnalyticsResult>>;
   /** Sale and purchase returns; see returns.ts. */
   returnSource(input: unknown): Promise<Result<ReturnSourceView>>;
   previewReturn(input: unknown): Promise<Result<ReturnPreview>>;
@@ -350,6 +362,32 @@ Native authenticated file encryption; uses the measured credential KDF with inde
 const desktopTransferCrypto: TransferCrypto;
 ```
 
+## [apps/desktop/src/electron/preferences.ts](../../apps/desktop/src/electron/preferences.ts)
+
+Per-computer settings that are not business data and must never travel in a backup. Today only
+the large-files switch: off by default, it lifts transfer-file and photo-storage limits for
+computers with memory to spare (ADR-027).
+
+```ts
+export interface DevicePreferences {
+    largeFiles(): boolean;
+    setLargeFiles(value: boolean): void;
+    limits(): TransferLimits;
+}
+```
+
+File-backed preferences; a missing or damaged file reads as the defaults.
+
+```ts
+devicePreferences(path: string): DevicePreferences;
+```
+
+In-memory preferences for tests and smoke runs.
+
+```ts
+memoryPreferences(initial = false): DevicePreferences;
+```
+
 ## [apps/desktop/src/electron/purchasing.ts](../../apps/desktop/src/electron/purchasing.ts)
 
 Bounded suppliers with payables under suppliers.view.
@@ -413,6 +451,14 @@ One report under its core permission; the period is at most about ten years and 
 
 ```ts
 report(host: Host, input: unknown): ReportResult;
+```
+
+Light analytics for one period under reports.sales, with profit and customer sections only for
+actors holding reports.financial and reports.customers. The period is at most about ten years; the
+offset is the shop's local minutes east of UTC; an explicit bucket must keep the trend to 1,000 points.
+
+```ts
+analytics(host: Host, input: unknown): AnalyticsResult;
 ```
 
 ## [apps/desktop/src/electron/returns.ts](../../apps/desktop/src/electron/returns.ts)
@@ -480,22 +526,22 @@ resetStaffSecret(host: Host, input: unknown): Promise<StaffView>;
 
 ## [apps/desktop/src/electron/transfer-files.ts](../../apps/desktop/src/electron/transfer-files.ts)
 
-Reads a selected regular file through one descriptor, capped even if it grows after the initial stat.
+Reads a selected regular file through one descriptor, capped (standard profile by default) even if it grows after the initial stat.
 
 ```ts
-readBoundedTransferFile(path: string): string;
+readBoundedTransferFile(path: string, maximum: number = MAX_TRANSFER_FILE_BYTES): string;
 ```
 
 Main-process native picker. Renderer IPC must authenticate its caller before invoking this adapter (F5).
 
 ```ts
-pickDesktopTransferFile(native: Pick<Dialog, "showOpenDialog">): Promise<string>;
+pickDesktopTransferFile(native: Pick<Dialog, "showOpenDialog">, maximum: number = MAX_TRANSFER_FILE_BYTES): Promise<string>;
 ```
 
 Main-process save dialog; writes only a newly created selected file, never overwrites an existing business database.
 
 ```ts
-saveDesktopTransferFile(document: TransferDocument, native: Pick<Dialog, "showSaveDialog">): Promise<boolean>;
+saveDesktopTransferFile(document: TransferDocument, native: Pick<Dialog, "showSaveDialog">, maximum: number = MAX_TRANSFER_FILE_BYTES): Promise<boolean>;
 ```
 
 ## [apps/desktop/src/electron/transfer.ts](../../apps/desktop/src/electron/transfer.ts)
@@ -720,7 +766,7 @@ runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void>;
 Stable application failures; native exception text, credentials and paths never cross the bridge.
 
 ```ts
-export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file";
+export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "invalid_photo" | "photo_storage_full";
 ```
 
 Serializable results make transport and operation failures explicit.
@@ -773,6 +819,7 @@ export interface ProductView {
     readonly minimumStockThousandths: number;
     readonly active: boolean;
     readonly version: string;
+    readonly photo?: string;
 }
 ```
 
@@ -1175,6 +1222,94 @@ export type ReportResult = {
 };
 ```
 
+How an analytics trend is sliced; weeks start on Monday.
+
+```ts
+export type AnalyticsBucket = "hour" | "day" | "week" | "month";
+```
+
+One trend point keyed by local `YYYY-MM-DDTHH`, `YYYY-MM-DD` (day or week's Monday) or `YYYY-MM`; profit only with reports.financial.
+
+```ts
+export interface AnalyticsPoint {
+    readonly key: string;
+    readonly revenueMinor: number;
+    readonly transactions: number;
+    readonly grossProfitMinor?: number;
+}
+```
+
+Sales started in one local weekday (0 = Sunday) and hour, summed over the period; empty cells are absent.
+
+```ts
+export interface AnalyticsCell {
+    readonly weekday: number;
+    readonly hour: number;
+    readonly transactions: number;
+    readonly revenueMinor: number;
+}
+```
+
+A product's net sales over the period, before bill discounts; profit only with reports.financial.
+
+```ts
+export interface AnalyticsProduct {
+    readonly productId: string;
+    readonly name: string;
+    readonly soldThousandths: number;
+    readonly revenueMinor: number;
+    readonly grossProfitMinor?: number;
+}
+```
+
+A named customer's net buying over the period.
+
+```ts
+export interface AnalyticsCustomer {
+    readonly customerId: string;
+    readonly name: string;
+    readonly transactions: number;
+    readonly revenueMinor: number;
+    readonly lastPurchaseAt: string;
+}
+```
+
+Light analytics for one period. Sections the actor may not read are absent rather than failing the
+whole view: `profit` and per-point/product profit need reports.financial, `customers` needs
+reports.customers; the rest needs reports.sales. `previous` is the equal-length period just before.
+
+```ts
+export interface AnalyticsResult {
+    readonly bucket: AnalyticsBucket;
+    readonly sales: {
+        readonly revenueMinor: number;
+        readonly transactions: number;
+        readonly itemsSoldThousandths: number;
+        readonly averageBasketMinor: number;
+    };
+    readonly previous: {
+        readonly revenueMinor: number;
+        readonly transactions: number;
+        readonly grossProfitMinor?: number;
+    };
+    readonly profit?: {
+        readonly grossProfitMinor: number;
+        readonly costMinor: number;
+        readonly marginBasisPoints?: number;
+        readonly linesWithoutCost: number;
+        readonly expensesMinor: number;
+        readonly netResultMinor: number;
+    };
+    readonly trend: readonly AnalyticsPoint[];
+    readonly activity: readonly AnalyticsCell[];
+    readonly products: readonly AnalyticsProduct[];
+    readonly productsTruncated: boolean;
+    readonly categories: readonly ReportLine[];
+    readonly accounts: readonly ReportLine[];
+    readonly customers?: readonly AnalyticsCustomer[];
+}
+```
+
 What remains returnable from a sale or purchase, at the original net prices or costs.
 
 ```ts
@@ -1320,9 +1455,31 @@ Platform-neutral UI service. Electron implements it with named preload calls; a 
 
 Per-computer session behaviour.
 
+Per-computer preferences. `largeFiles` lifts transfer-file and photo-storage limits for powerful computers.
+
 ```ts
 export interface SessionPreferences {
     readonly rememberSession: boolean;
+    readonly largeFiles: boolean;
+}
+```
+
+A product photo ready for an <img>: a data URL (the renderer CSP allows data: images only).
+
+```ts
+export interface PhotoView {
+    readonly digest: string;
+    readonly dataUrl: string;
+}
+```
+
+Photos held by the shop on this computer against the active storage limit.
+
+```ts
+export interface PhotoUsage {
+    readonly photos: number;
+    readonly bytes: number;
+    readonly limitBytes: number;
 }
 ```
 
@@ -1360,6 +1517,9 @@ export interface ShopService {
     setRememberSession(input: SessionRequest & {
         readonly enabled: boolean;
     }): Promise<Result<SessionPreferences>>;
+    setLargeFiles(input: SessionRequest & {
+        readonly enabled: boolean;
+    }): Promise<Result<SessionPreferences>>;
     recoveryKey(input: SessionRequest & {
         readonly secret: string;
     }): Promise<Result<string | null>>;
@@ -1377,6 +1537,17 @@ export interface ShopService {
         readonly version: string;
         readonly active: boolean;
     }): Promise<Result<ProductView>>;
+    productPhoto(input: SessionRequest & {
+        readonly productId: string;
+    }): Promise<Result<PhotoView | null>>;
+    setProductPhoto(input: SessionRequest & {
+        readonly productId: string;
+        readonly bytes: Uint8Array;
+    }): Promise<Result<ProductView>>;
+    removeProductPhoto(input: SessionRequest & {
+        readonly productId: string;
+    }): Promise<Result<ProductView>>;
+    photoUsage(input: SessionRequest): Promise<Result<PhotoUsage>>;
     listCategories(input: CatalogueQuery): Promise<Result<Page<CategoryView>>>;
     createCategory(input: SessionRequest & {
         readonly requestId: string;
@@ -1515,6 +1686,12 @@ export interface ShopService {
         readonly from: string;
         readonly until: string;
     }): Promise<Result<ReportResult>>;
+    analytics(input: SessionRequest & {
+        readonly from: string;
+        readonly until: string;
+        readonly offsetMinutes: number;
+        readonly bucket?: AnalyticsBucket;
+    }): Promise<Result<AnalyticsResult>>;
     returnSource(input: SessionRequest & {
         readonly kind: "SALE" | "PURCHASE";
         readonly originalId: string;
@@ -1548,6 +1725,7 @@ export interface ShopService {
     }): Promise<Result<StaffView>>;
     saveBackup(input: SessionRequest & {
         readonly password: string;
+        readonly includePhotos?: boolean;
     }): Promise<Result<SavedFile>>;
     chooseImportFile(): Promise<Result<{
         readonly kind: "backup" | "invite";
@@ -1934,25 +2112,50 @@ const transferSignature: ZodString;
 const transferKey: ZodString;
 ```
 
-Largest raw SQLite image a backup or enrollment may carry (about a year of a busy shop).
+Size limits for transfer files; every reader and writer checks one profile before allocating.
+
+```ts
+export interface TransferLimits {
+    readonly snapshotBytes: number;
+    readonly contentBytes: number;
+    readonly payloadBytes: number;
+    readonly fileBytes: number;
+}
+```
+
+The default profile, sized for low-cost phones and PCs (ADR-026): about fourteen months of a busy shop.
+
+```ts
+const STANDARD_TRANSFER_LIMITS: TransferLimits;
+```
+
+The opt-in profile for computers with memory to spare (ADR-027). Not unlimited: a file is read
+as one string, and JavaScript engines cap strings near 512 MiB, so the file stays below that and
+the payload below its base64 share. Peak memory during a backup is several times the snapshot.
+
+```ts
+const LARGE_TRANSFER_LIMITS: TransferLimits;
+```
+
+Largest raw SQLite image a standard backup or enrollment may carry (about a year of a busy shop).
 
 ```ts
 const MAX_SNAPSHOT_IMAGE_BYTES: number;
 ```
 
-Largest decompressed transfer content: a snapshot image plus its framed signed manifest.
+Largest decompressed transfer content under the standard profile.
 
 ```ts
 const MAX_TRANSFER_CONTENT_BYTES: number;
 ```
 
-Largest encrypted (compressed) payload; base64 and the header must still fit the file cap.
+Largest encrypted (compressed) payload under the standard profile.
 
 ```ts
 const MAX_ENCRYPTED_PAYLOAD_BYTES: number;
 ```
 
-Largest encrypted file on disk, including base64 expansion and the JSON envelope.
+Largest encrypted file on disk under the standard profile.
 
 ```ts
 const MAX_ENCRYPTED_FILE_BYTES: number;
@@ -2042,10 +2245,18 @@ export interface BackupPreview {
 }
 ```
 
-Consistent encrypted backup excluding credentials, cloud sessions and installation private keys.
+Backup choices. Photos are included unless `includePhotos` is false; a backup without them restores products with no photo.
 
 ```ts
-createBackup(context: OperationContext, password: string, files: SnapshotPort, crypto: TransferCrypto): Promise<TransferDocument>;
+export interface BackupOptions {
+    readonly includePhotos?: boolean;
+}
+```
+
+Consistent encrypted backup excluding credentials, cloud sessions and installation private keys, and optionally product photos.
+
+```ts
+createBackup(context: OperationContext, password: string, files: SnapshotPort, crypto: TransferCrypto, options: BackupOptions = {}): Promise<TransferDocument>;
 ```
 
 Authenticates password/image/manifest and validates schema, integrity, scope, foreign keys and replay boundary in isolation.
@@ -2438,6 +2649,49 @@ Cancels an unused source invitation. A confirmed pin must be revoked explicitly.
 cancelPairingInvite(context: OperationContext, inviteId: string): void;
 ```
 
+## [packages/core/src/application/photos.ts](../../packages/core/src/application/photos.ts)
+
+Stores or replaces a product's photo under products.edit. The bytes are checked
+(WebP or JPEG, size and dimension limits) and hashed before the write; the shop's
+total is checked inside it against `options.large` (the large-files setting) or the standard
+limit. Photos are device-local until photo transfer exists:
+no exchange event is journaled, only a local audit entry with the digest.
+
+```ts
+setProductPhoto(context: OperationContext, input: {
+    readonly productId: string;
+    readonly bytes: Uint8Array;
+}, crypto: Pick<TransferCrypto, "sha256Bytes">, options: {
+    readonly large?: boolean;
+} = {}): Promise<{ digest: string; }>;
+```
+
+Removes a product's photo under products.edit; returns whether there was one.
+
+```ts
+removeProductPhoto(context: OperationContext, productId: string): boolean;
+```
+
+A product's photo under products.view, or undefined when this device holds none.
+
+```ts
+productPhoto(context: OperationContext, productId: string): ProductPhoto;
+```
+
+A product's photo digest under products.view, without the bytes.
+
+```ts
+productPhotoDigest(context: OperationContext, productId: string): string;
+```
+
+How many photos the shop holds against its storage limit (standard or large), under products.view.
+
+```ts
+photoUsage(context: OperationContext, options: {
+    readonly large?: boolean;
+} = {}): { photos: number; bytes: number; limitBytes: number; };
+```
+
 ## [packages/core/src/application/queries.ts](../../packages/core/src/application/queries.ts)
 
 Stable keyset continuation for catalogue queries; reset after a domain invalidation.
@@ -2753,6 +3007,42 @@ Reads lowStock for the unlocked shop under current reports.inventory authority.
 lowStock(context: OperationContext, ...args: ReportArgs<typeof queries.lowStock>): Line[];
 ```
 
+Reads salesTrend for the unlocked shop under current reports.sales authority.
+
+```ts
+salesTrend(context: OperationContext, ...args: ReportArgs<typeof analytics.salesTrend>): SalesPoint[];
+```
+
+Reads profitTrend for the unlocked shop under current reports.financial authority.
+
+```ts
+profitTrend(context: OperationContext, ...args: ReportArgs<typeof analytics.profitTrend>): ProfitPoint[];
+```
+
+Reads salesActivity for the unlocked shop under current reports.sales authority.
+
+```ts
+salesActivity(context: OperationContext, ...args: ReportArgs<typeof analytics.salesActivity>): ActivityCell[];
+```
+
+Reads productSales for the unlocked shop under current reports.sales authority.
+
+```ts
+productSales(context: OperationContext, ...args: ReportArgs<typeof analytics.productSales>): ProductSales[];
+```
+
+Reads productProfit for the unlocked shop under current reports.financial authority.
+
+```ts
+productProfit(context: OperationContext, ...args: ReportArgs<typeof analytics.productProfit>): ProductProfit[];
+```
+
+Reads topCustomers for the unlocked shop under current reports.customers authority.
+
+```ts
+topCustomers(context: OperationContext, ...args: ReportArgs<typeof analytics.topCustomers>): CustomerRank[];
+```
+
 ## [packages/core/src/application/returns.ts](../../packages/core/src/application/returns.ts)
 
 IDs and predecessor belong to one immutable return attempt; refunds are positive XAF allocations.
@@ -2809,18 +3099,19 @@ Backup/exchange passwords are independent of unlock PINs: 12–256 characters, n
 validateTransferPassword(password: string): void;
 ```
 
-Deflates, then encrypts with fresh salt/nonce, fixed expensive KDF and authenticated purpose/lengths.
+Deflates, then encrypts with fresh salt/nonce, fixed expensive KDF and authenticated purpose/lengths, within one size profile.
 
 ```ts
-encryptTransfer(bytes: Uint8Array, purpose: EncryptedHeader["purpose"], fileId: string, password: string, crypto: TransferCrypto): Promise<string>;
+encryptTransfer(bytes: Uint8Array, purpose: EncryptedHeader["purpose"], fileId: string, password: string, crypto: TransferCrypto, limits: TransferLimits = STANDARD_TRANSFER_LIMITS): Promise<string>;
 ```
 
 Bounds raw UTF-8 and KDF parameters before work; authenticates all bytes before returning plaintext.
 Version 2 content is inflated into a buffer one byte larger than its authenticated length, so a
-stream that expands further is refused without unbounded allocation.
+stream that expands further is refused without unbounded allocation. Declared lengths are checked
+against the size profile before any key derivation or allocation.
 
 ```ts
-decryptTransfer(text: string, purpose: EncryptedHeader["purpose"], password: string, crypto: TransferCrypto): Promise<Uint8Array<ArrayBufferLike>>;
+decryptTransfer(text: string, purpose: EncryptedHeader["purpose"], password: string, crypto: TransferCrypto, limits: TransferLimits = STANDARD_TRANSFER_LIMITS): Promise<Uint8Array<ArrayBufferLike>>;
 ```
 
 ## [packages/core/src/backup/native-crypto.ts](../../packages/core/src/backup/native-crypto.ts)
@@ -2869,13 +3160,13 @@ validateSnapshot(database: Database, manifest: SnapshotManifest, files: Snapshot
 Packs a small signed manifest plus raw SQLite bytes, avoiding double-base64 expansion.
 
 ```ts
-encodeSnapshot(signed: SignedSnapshot, bytes: Uint8Array, crypto: TransferCrypto): Uint8Array<ArrayBufferLike>;
+encodeSnapshot(signed: SignedSnapshot, bytes: Uint8Array, crypto: TransferCrypto, limits: TransferLimits = STANDARD_TRANSFER_LIMITS): Uint8Array<ArrayBufferLike>;
 ```
 
 Bounds metadata/image independently before schema parsing or opening SQLite.
 
 ```ts
-decodeSnapshot(bytes: Uint8Array, crypto: TransferCrypto): { signed: { manifest: { format: "kolo.snapshot"; format_version: 1; snapshot_id: string; kind: "backup" | "enrollment"; schema_version: number; created_at: string; business: { id: string; name: string; currency: "XAF"; }; ... 7 more ...; target?: { ...; }; }; digest: string; signature: string; }; image: Uint8Array<....;
+decodeSnapshot(bytes: Uint8Array, crypto: TransferCrypto, limits: TransferLimits = STANDARD_TRANSFER_LIMITS): { signed: { manifest: { format: "kolo.snapshot"; format_version: 1; snapshot_id: string; kind: "backup" | "enrollment"; schema_version: number; created_at: string; business: { id: string; name: string; currency: "XAF"; }; ... 7 more ...; target?: { ...; }; }; digest: string; signature: string; }; image: Uint8Array<....;
 ```
 
 ## [packages/core/src/backup/types.ts](../../packages/core/src/backup/types.ts)
@@ -2941,6 +3232,7 @@ Platform boundary for SQLite-consistent copies and bounded private staging/activ
 
 ```ts
 export interface SnapshotPort {
+    limits?(): TransferLimits;
     capture(source: Database): Promise<SnapshotHandle>;
     open(bytes: Uint8Array): Promise<SnapshotHandle>;
     empty(): Promise<SnapshotHandle>;
@@ -2954,6 +3246,12 @@ export interface TransferDocument {
     readonly filename: string;
     readonly text: string;
 }
+```
+
+The size profile a snapshot port runs under.
+
+```ts
+limitsOf(files: Pick<SnapshotPort, "limits">): TransferLimits;
 ```
 
 ## [packages/core/src/data/auth/login.ts](../../packages/core/src/data/auth/login.ts)
@@ -3688,7 +3986,22 @@ openDatabase(options: OpenOptions = {}): Database;
 Native file slots and private SQLite staging, shared by desktop and real-database recovery tests.
 
 ```ts
-nodeWorkspaceFiles(directory: string): SnapshotPort & { openActive(): Database; activeId(): string; saved(): Promise<readonly { id: string; name: string; }[]>; selectSaved(id: string, target: Database): Promise<...>; close(): void; };
+nodeWorkspaceFiles(directory: string, options: {
+    readonly limits?: () => TransferLimits;
+} = {}): SnapshotPort & { limits(): TransferLimits; openActive(): Database; activeId(): string; saved(): Promise<readonly { id: string; name: string; }[]>; selectSaved(id: string, target: Database): Promise<...>; close(): void; };
+```
+
+## [packages/core/src/data/database/photos-migration.ts](../../packages/core/src/data/database/photos-migration.ts)
+
+Optional product photos (migration 22).
+
+One current thumbnail per product, held as a small BLOB beside the catalogue so a
+backup snapshot carries it without a second store. The digest is the SHA-256 of the
+bytes, the content address later transfers and server storage will use. Size is
+bounded per row here and per shop by the operation that writes it.
+
+```ts
+const PHOTOS_MIGRATION: Migration;
 ```
 
 ## [packages/core/src/data/database/returns-migration.ts](../../packages/core/src/data/database/returns-migration.ts)
@@ -4236,6 +4549,94 @@ Shared category LWW primitive for authorized writes and verified replay, inside 
 upsertCategory(tx: Queryable, item: Category, deviceId: string): boolean;
 ```
 
+## [packages/core/src/data/products/photos.ts](../../packages/core/src/data/products/photos.ts)
+
+Size limits for product photos.
+
+```ts
+const PHOTO_LIMITS: { readonly maxBytes: number; readonly maxSide: 512; readonly shopBytes: number; readonly largeShopBytes: number; };
+```
+
+The encodings a photo may be stored in.
+
+```ts
+export type PhotoMediaType = "image/webp" | "image/jpeg";
+```
+
+Raised when a photo is not a usable image or would not fit.
+
+```ts
+class PhotoError extends Error {
+  code: "invalid_photo" | "photo_storage_full";
+  constructor(code: PhotoError["code"]);
+}
+```
+
+A stored product photo.
+
+```ts
+export interface ProductPhoto {
+    readonly productId: string;
+    readonly digest: string;
+    readonly mediaType: PhotoMediaType;
+    readonly bytes: Uint8Array;
+    readonly width: number;
+    readonly height: number;
+    readonly updatedAt: string;
+}
+```
+
+What a caller supplies to store a photo; dimensions and type come from .
+
+```ts
+export interface WritePhoto {
+    readonly businessId: string;
+    readonly productId: string;
+    readonly digest: string;
+    readonly bytes: Uint8Array;
+    readonly at: string;
+    readonly deviceId: string;
+}
+```
+
+Reads the type and size of an encoded image from its header, refusing anything
+that is not a WebP or JPEG within the limits. Pixels are not decoded here.
+
+```ts
+inspectPhoto(bytes: Uint8Array): { mediaType: PhotoMediaType; width: number; height: number; };
+```
+
+Stores or replaces a product's photo, refusing one that would take the shop
+past `shopBytes` (by default ). The replaced photo does not count.
+
+```ts
+writeProductPhoto(tx: Queryable, photo: WritePhoto, shopBytes: number = PHOTO_LIMITS.shopBytes): void;
+```
+
+Removes a product's photo; returns whether there was one.
+
+```ts
+deleteProductPhoto(tx: Queryable, businessId: string, productId: string): boolean;
+```
+
+A product's photo, or undefined when it has none on this device.
+
+```ts
+productPhoto(tx: Queryable, businessId: string, productId: string): ProductPhoto;
+```
+
+A product's photo digest without its bytes, for listing and cache keys.
+
+```ts
+productPhotoDigest(tx: Queryable, businessId: string, productId: string): string;
+```
+
+How many photos the shop holds and their total size.
+
+```ts
+photoUsage(tx: Queryable, businessId: string, shopBytes: number = PHOTO_LIMITS.shopBytes): { photos: number; bytes: number; limitBytes: number; };
+```
+
 ## [packages/core/src/data/products/products.ts](../../packages/core/src/data/products/products.ts)
 
 The event a product write queues.
@@ -4459,6 +4860,145 @@ number and the delivery note another.
 
 ```ts
 totalsOfDelivery(delivery: Delivery): DeliveryTotals;
+```
+
+## [packages/core/src/data/reports/analytics.ts](../../packages/core/src/data/reports/analytics.ts)
+
+How a trend is sliced. Weeks start on Monday.
+
+```ts
+export type Bucket = "hour" | "day" | "week" | "month";
+```
+
+One slice of a sales trend.
+
+```ts
+export interface SalesPoint {
+    readonly key: string;
+    readonly revenueMinor: number;
+    readonly transactions: number;
+}
+```
+
+One slice of a profit trend: a sales point with what the goods cost.
+
+```ts
+export interface ProfitPoint extends SalesPoint {
+    readonly costMinor: number;
+    readonly grossProfitMinor: number;
+}
+```
+
+Sales started in one local hour of one weekday, summed over the period.
+
+```ts
+export interface ActivityCell {
+    readonly weekday: number;
+    readonly hour: number;
+    readonly transactions: number;
+    readonly revenueMinor: number;
+}
+```
+
+What one product sold over a period, net of its returns.
+
+```ts
+export interface ProductSales {
+    readonly productId: string;
+    readonly name: string;
+    readonly soldThousandths: number;
+    readonly revenueMinor: number;
+}
+```
+
+ with what the goods cost (§8).
+
+```ts
+export interface ProductProfit extends ProductSales {
+    readonly costMinor: number;
+    readonly grossProfitMinor: number;
+    readonly linesWithoutCost: number;
+}
+```
+
+One named customer's buying over a period.
+
+```ts
+export interface CustomerRank {
+    readonly customerId: string;
+    readonly name: string;
+    readonly transactions: number;
+    readonly revenueMinor: number;
+    readonly lastPurchaseAt: string;
+}
+```
+
+The finest bucket that keeps a period to a readable number of points: hours
+for up to two days, days for up to about two months, weeks for up to about a
+year, months beyond.
+
+```ts
+defaultBucket(from: string, to: string): Bucket;
+```
+
+Every bucket key a period touches, in order, including the empty ones a
+trend needs to show as zero rather than skip.
+
+```ts
+bucketKeys(from: string, to: string, bucket: Bucket, offsetMinutes: number): string[];
+```
+
+Takings, cost and sales count per bucket, empty buckets included (§21).
+
+Sale lines, bill discounts and returns are each placed in the bucket in which
+they *happened*, which is how `profitBetween` slices a period; summed, the
+points equal its revenue, cost and gross profit exactly.
+
+```ts
+profitTrend(tx: Queryable, businessId: string, from: string, to: string, bucket: Bucket, offsetMinutes: number): ProfitPoint[];
+```
+
+ without cost, for those who may see sales but not margins.
+
+```ts
+salesTrend(tx: Queryable, businessId: string, from: string, to: string, bucket: Bucket, offsetMinutes: number): SalesPoint[];
+```
+
+When the shop is busy: sales by local weekday and hour (§22).
+
+Only cells with at least one sale are returned. A sale counts where it was
+rung up; its later returns are not activity at the hour they reversed.
+
+```ts
+salesActivity(tx: Queryable, businessId: string, from: string, to: string, offsetMinutes: number): ActivityCell[];
+```
+
+What every product that moved in a period sold and earned, best takings first.
+
+Net of the returns made in the period, product by product, so a product
+returned but not sold in the period appears with negative figures rather than
+vanishing. Named by the product's current name, so a renamed product is one
+row. Bill-level discounts belong to no product and are not spread over them.
+
+```ts
+productProfit(tx: Queryable, businessId: string, from: string, to: string): ProductProfit[];
+```
+
+ without cost, for those who may see sales but not margins.
+
+```ts
+productSales(tx: Queryable, businessId: string, from: string, to: string): ProductSales[];
+```
+
+The named customers who bought most over a period, most first (§12, §21).
+
+Every sale naming them counts, paid or on credit. Walk-in sales name nobody
+and are absent. Returns made in the period against their sales come off;
+a customer who only returned goods in the period bought nothing in it and is
+not ranked.
+
+```ts
+topCustomers(tx: Queryable, businessId: string, from: string, to: string, limit = 10): CustomerRank[];
 ```
 
 ## [packages/core/src/data/reports/reports.ts](../../packages/core/src/data/reports/reports.ts)

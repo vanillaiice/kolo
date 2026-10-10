@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@kolo/contracts": "0.1.0",
-    "fflate": "0.8.3"
+    "fflate": "0.8.3",
+    "image-size": "2.0.4"
   }
 }

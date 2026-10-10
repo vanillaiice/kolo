@@ -5,7 +5,7 @@ import { currentInstallation, lockWorkspace } from "../identity/workspace.ts";
 import { validateLocalSecret } from "../identity/credentials.ts";
 import type { OperationContext, WorkspacePorts, Installation, ProvisionedIdentity } from "../identity/types.ts";
 import type { Database } from "../data/database/driver.ts";
-import { TransferError, type TransferCrypto, type SnapshotPort, type TransferDocument } from "../backup/types.ts";
+import { limitsOf, TransferError, type TransferCrypto, type SnapshotPort, type TransferDocument } from "../backup/types.ts";
 import { createSignedSnapshot, initializeSnapshot } from "./backup.ts";
 import { encodeSnapshot, decodeSnapshot, validateSnapshot } from "../backup/snapshot.ts";
 import { encryptTransfer, decryptTransfer, validateTransferPassword } from "../backup/encryption.ts";
@@ -73,8 +73,8 @@ export async function confirmPairing(context:OperationContext,text:string,confir
   tx.run(`UPDATE pairing_invites SET state='confirmed',request_digest=?,recipient_device_id=? WHERE invite_id=?`,[signed.digest,r.device_id,i.invite_id]);
  });
  const {signed:snapshot,image}=await createSignedSnapshot(context,"enrollment",{installation_id:r.installation_id,device_id:r.device_id,public_key:r.public_key,label:r.label,platform:r.platform,authority_allowed:i.authority_allowed,invite_id:i.invite_id,request_id:r.request_id,request_digest:signed.digest},files,crypto);
- const plain=encodeSnapshot(snapshot,image,crypto);
- try{const result=await encryptTransfer(plain,"enrollment",snapshot.manifest.snapshot_id,password,crypto);primary(context);return {filename:`${r.request_id}.kolo-enrollment.json`,text:result};}finally{plain.fill(0);image.fill(0);}
+ const limits=limitsOf(files),plain=encodeSnapshot(snapshot,image,crypto,limits);
+ try{const result=await encryptTransfer(plain,"enrollment",snapshot.manifest.snapshot_id,password,crypto,limits);primary(context);return {filename:`${r.request_id}.kolo-enrollment.json`,text:result};}finally{plain.fill(0);image.fill(0);}
 }
 /** Finishes only the exact approved enrollment. Existing recovery re-pairing adds trust while preserving newer local history. */
 export async function completePairing(text:string,password:string,confirmedCode:string,ports:WorkspacePorts,files:SnapshotPort,crypto:TransferCrypto,existingContext?:OperationContext):Promise<{database:Database;installation:Installation}>{
@@ -85,7 +85,7 @@ export async function completePairing(text:string,password:string,confirmedCode:
   const check=():void=>{if(runtime(ports.database).replacing===true)throw new TransferError("pairing_pending");if(intentOf(ports.database)?.signed?.digest!==intent.signed!.digest)throw new TransferError("pairing_conflict");if(intent.mode==="fresh"){if(currentInstallation(ports.database).state!=="empty")throw new TransferError("not_empty");}else {if(existingContext===undefined)throw new TransferError("confirmation_required");authorizedOperation(existingContext,["business.settings"],(db,tx)=>{requireOwner(tx,existingContext);if(db!==ports.database||existingContext.businessId!==intent.invite.invite.business_id)throw new TransferError("scope_mismatch");});}};check();
   if(confirmedCode!==await pairingVerificationCode(intent.signed,crypto))throw new TransferError("confirmation_required");
   const native:ProvisionedIdentity|undefined=await ports.credentials.inspect(intent.installationId);if(native===undefined||native.publicKey!==intent.signed.request.public_key)throw new TransferError("authentication_failed");
-  plain=await decryptTransfer(text,"enrollment",password,crypto);const {signed,image}=decodeSnapshot(plain,crypto),m=signed.manifest,t=m.target,i=intent.invite.invite;
+  plain=await decryptTransfer(text,"enrollment",password,crypto,limitsOf(files));const {signed,image}=decodeSnapshot(plain,crypto,limitsOf(files)),m=signed.manifest,t=m.target,i=intent.invite.invite;
   if(m.kind!=="enrollment"||t===null||m.business.id!==i.business_id||m.owner.id!==i.owner_id||m.source_device_id!==i.source_device_id||m.source_public_key!==i.source_public_key||t.installation_id!==intent.installationId||t.device_id!==intent.deviceId||t.public_key!==native.publicKey||t.request_id!==intent.requestId||t.request_digest!==intent.signed.digest||t.invite_id!==i.invite_id||t.authority_allowed!==i.authority_allowed||m.snapshot_bytes!==image.length||await crypto.sha256Bytes(image)!==m.snapshot_digest)throw new TransferError("invalid_pairing");
   const message=`kolo.snapshot.v1\u0000${canonicalJson(m)}`;if(await crypto.sha256(message)!==signed.digest||!await crypto.verify(i.source_public_key,message,signed.signature))throw new TransferError("authentication_failed");
   const candidate=await files.open(image);image.fill(0);

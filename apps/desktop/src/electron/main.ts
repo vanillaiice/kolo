@@ -11,6 +11,7 @@ import { localCredentialsOnDesktop, desktopExchangeCrypto, desktopTransferCrypto
 import { pickDesktopTransferFile, saveDesktopTransferFile } from "./transfer-files.js";
 import type { TransferDialogs } from "./transfer.js";
 import { nodeWorkspaceFiles } from "@kolo/core/data/database/node-sqlite";
+import { devicePreferences } from "./preferences.js";
 import { migrate } from "@kolo/core/data/database/migrations";
 import type { Database } from "@kolo/core/data/database/driver";
 
@@ -57,11 +58,13 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
 
   void app.whenReady().then(async () => {
     try {
-      fileSlots = nodeWorkspaceFiles(app.getPath("userData")); database = fileSlots.openActive(); migrate(database);
+      // Per-computer settings live beside, never inside, the business database.
+      const preferences = devicePreferences(join(app.getPath("userData"), "preferences.json"));
+      fileSlots = nodeWorkspaceFiles(app.getPath("userData"), { limits: preferences.limits }); database = fileSlots.openActive(); migrate(database);
       const slots = fileSlots, credentials = localCredentialsOnDesktop(join(app.getPath("userData"), "credentials"), safeStorage);
       const memory = desktopSessionMemory(join(app.getPath("userData"), "session"), safeStorage);
       const dialogs: TransferDialogs = workflowSmoke ? (await import("./workflow-smoke.js")).smokeDialogs() : {
-        open: () => pickDesktopTransferFile(dialog), save: document => saveDesktopTransferFile(document, dialog) };
+        open: () => pickDesktopTransferFile(dialog, preferences.limits().fileBytes), save: document => saveDesktopTransferFile(document, dialog, preferences.limits().fileBytes) };
       // Restore and pairing activate a new database: a new application serves it, and the old one
       // is disposed after its in-flight command (the activation itself) has answered.
       const serve = async (next: Database): Promise<DesktopApplication> => {
@@ -71,7 +74,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
             application = await serve(activated); database = activated;
             void previous?.dispose().finally(() => previousDatabase?.close());
             if (window !== undefined && !window.isDestroyed()) window.webContents.send("kolo:changed");
-          } }, memory);
+          } }, memory, preferences);
         await created.initialize();
         created.onChanged(() => { if (!closing && created === application && window !== undefined && !window.isDestroyed() && !window.webContents.isDestroyed() && !window.webContents.mainFrame.isDestroyed()) window.webContents.send("kolo:changed"); });
         return created;

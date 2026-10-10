@@ -13,9 +13,10 @@ import { createBackup, previewBackup, restoreWorkspace, cancelBackupPreview } fr
 import { encryptTransfer,decryptTransfer } from "./encryption.ts";
 import { deflateSync } from "fflate";
 import { canonicalJson } from "@kolo/contracts/canonical";
-import { MAX_ENCRYPTED_PAYLOAD_BYTES } from "@kolo/contracts/transfer";
+import { LARGE_TRANSFER_LIMITS, MAX_ENCRYPTED_PAYLOAD_BYTES, STANDARD_TRANSFER_LIMITS } from "@kolo/contracts/transfer";
 import { MAX_SNAPSHOT_BYTES } from "./types.ts";
 import * as operations from "../application/operations.ts";
+import { setProductPhoto } from "../application/photos.ts";
 import type { Database } from "../data/database/driver.ts";
 
 const at="2026-10-06T14:00:00.000Z",password="a portable backup password",secret="654321";
@@ -181,4 +182,31 @@ it("backup compaction removes native references and failed pointer commit preser
   await assert.rejects(restoreWorkspace(preview,{confirmedBusinessId:i.businessId,deviceLabel:"B",platform:"DESKTOP",secret},b.ports));assert.equal(b.db.get(`SELECT id FROM businesses`),undefined);assert.equal(control.get(`SELECT filename FROM active_slot`)!["filename"],"kolo.db");
   const reopened=b.files.openActive();databases.push(reopened);assert.equal(reopened.get(`SELECT id FROM businesses`),undefined);
  }finally{control.close();}
+});
+it("backups carry product photos unless asked not to; the shop's own photos are untouched either way",async()=>{
+ const a=fixture(),installation=await createWorkspace({businessName:"Photo shop",ownerName:"Owner",deviceLabel:"A",platform:"DESKTOP",currency:"XAF",secret},a.ports),context=await unlockWorkspace({userId:installation.ownerId,secret},a.ports);
+ const p=randomUUIDv7();operations.saveProduct(context,{id:p,name:"Rice",unit:"bag",active:true,divisible:false,sellingPriceMinor:500,currency:"XAF",taxRateBasisPoints:0,minimumStock:0,createdAt:at,updatedAt:at});
+ // A WebP header followed by incompressible bytes, as a real thumbnail would be.
+ const photo=new Uint8Array(40_000);photo.set(randomBytes(40_000));const view=new DataView(photo.buffer);
+ photo.set([..."RIFF"].map(c=>c.charCodeAt(0)),0);view.setUint32(4,photo.length-8,true);photo.set([..."WEBPVP8L"].map(c=>c.charCodeAt(0)),8);view.setUint32(16,photo.length-20,true);photo[20]=0x2f;view.setUint32(21,319|(319<<14),true);
+ const {digest}=await setProductPhoto(context,{productId:p,bytes:photo},crypto);
+ const restore=async(text:string)=>{const b=fixture(),restored=await restoreWorkspace(await previewBackup(text,password,b.files,crypto),{confirmedBusinessId:installation.businessId,deviceLabel:"B",platform:"DESKTOP",secret},b.ports);databases.push(restored.database);return restored.database;};
+ const withPhotos=await createBackup(context,password,a.files,crypto),without=await createBackup(context,password,a.files,crypto,{includePhotos:false});
+ assert.ok(withPhotos.text.length-without.text.length>40_000,"the photo is in one backup and not the other");
+ const full=await restore(withPhotos.text);assert.equal(full.get(`SELECT digest FROM product_photos WHERE product_id=?`,[p])!["digest"],digest);
+ const bare=await restore(without.text);assert.equal(bare.get(`SELECT count(*) AS n FROM product_photos`)!["n"],0);assert.equal(bare.get(`SELECT name FROM products WHERE id=?`,[p])!["name"],"Rice");
+ assert.equal(a.db.get(`SELECT count(*) AS n FROM product_photos`)!["n"],1);
+});
+it("the large profile writes and reads files past the standard limits; the standard profile refuses them before key derivation",async()=>{
+ // Incompressible content just past the standard compressed-payload limit.
+ const content=new Uint8Array(STANDARD_TRANSFER_LIMITS.payloadBytes+1024*1024);for(let at=0;at<content.length;at+=65_536)content.set(randomBytes(Math.min(65_536,content.length-at)),at);
+ await assert.rejects(encryptTransfer(content,"backup",randomUUIDv7(),password,crypto),(error:Error)=>"code" in error&&error.code==="too_large");
+ const text=await encryptTransfer(content,"backup",randomUUIDv7(),password,crypto,LARGE_TRANSFER_LIMITS);
+ assert.ok(JSON.parse(text).header.plaintext_bytes>STANDARD_TRANSFER_LIMITS.payloadBytes);
+ let derived=0;const counting={...crypto,derive:(...args:Parameters<typeof crypto.derive>)=>{derived++;return crypto.derive(...args);}};
+ await assert.rejects(decryptTransfer(text,"backup",password,counting),(error:Error)=>"code" in error&&error.code==="too_large");assert.equal(derived,0);
+ const back=await decryptTransfer(text,"backup",password,crypto,LARGE_TRANSFER_LIMITS);assert.equal(back.length,content.length);assert.ok(back.subarray(0,1024).every((byte,index)=>byte===content[index]));
+ // A header declaring more than the standard profile is refused under it even when the file itself is small.
+ const small=JSON.parse(await encryptTransfer(new Uint8Array([1,2,3]),"backup",randomUUIDv7(),password,crypto));small.header.content_bytes=STANDARD_TRANSFER_LIMITS.contentBytes+1;
+ await assert.rejects(decryptTransfer(canonicalJson(small),"backup",password,counting),(error:Error)=>"code" in error&&error.code==="too_large");assert.equal(derived,0);
 });

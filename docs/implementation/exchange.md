@@ -109,7 +109,8 @@ desktop has native crypto/active-slot/file-dialog adapters, with renderer work i
 AES-256-GCM with fresh nonce/salt and PBKDF2-SHA256/600,000 iterations protects the F2
 signed batches/receipts. File passwords are independent of unlock PINs. Input is bounded
 before allocation/KDF/application: 48 MiB encrypted file, 32 MiB encrypted payload,
-8 MiB batch, 128 MiB SQLite snapshot. Content is deflated before encryption (format
+8 MiB batch, 128 MiB SQLite snapshot (standard profile; backups and pairing snapshots may
+use the opt-in large profile, [ADR-027](../adr/ADR-027-large-files-and-product-photos.md)). Content is deflated before encryption (format
 version 2) and inflated only up to its authenticated length; version 1 files remain
 readable ([ADR-026](../adr/ADR-026-compressed-transfer-files.md)). Previews have no business effects and
 actual imports recheck authority. Receipts can be regenerated after loss/cancellation;

@@ -2,7 +2,7 @@ import { domainsForWrite, publishChanges, type ChangedDomain } from "./changes.t
 import { mkdirSync, readFileSync, writeFileSync, statSync, rmSync, renameSync, openSync, fsyncSync, closeSync, existsSync, readdirSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUIDv7 } from "node:crypto";
-import { MAX_SNAPSHOT_BYTES, TransferError, type SnapshotPort, type SnapshotHandle } from "../../backup/types.ts";
+import { STANDARD_TRANSFER_LIMITS, TransferError, type SnapshotPort, type SnapshotHandle, type TransferLimits } from "../../backup/types.ts";
 /**
  * A {@link Database} backed by Node's built-in SQLite.
  *
@@ -152,8 +152,9 @@ function describe(cause: unknown): string {
 }
 
 /** Native file slots and private SQLite staging, shared by desktop and real-database recovery tests. */
-export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActive():Database; activeId():string; saved():Promise<readonly {id:string;name:string}[]>; selectSaved(id:string,target:Database):Promise<Database>; close():void } {
+export function nodeWorkspaceFiles(directory:string,options:{readonly limits?:()=>TransferLimits}={}): SnapshotPort & { limits():TransferLimits; openActive():Database; activeId():string; saved():Promise<readonly {id:string;name:string}[]>; selectSaved(id:string,target:Database):Promise<Database>; close():void } {
   mkdirSync(directory,{recursive:true,mode:0o700});
+  const limits=():TransferLimits=>options.limits?.() ?? STANDARD_TRANSFER_LIMITS,maximum=():number=>limits().snapshotBytes;
   const control=openDatabase({location:join(directory,"workspace-slots.db")});
   control.run("PRAGMA synchronous=FULL");
   control.run(`CREATE TABLE IF NOT EXISTS active_slot(id INTEGER PRIMARY KEY CHECK(id=1),filename TEXT NOT NULL,generation INTEGER NOT NULL) STRICT`);
@@ -167,7 +168,7 @@ export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActiv
       async bytes(){
         if(state!=="open")throw new TransferError("invalid_snapshot");
         const exportName=allocate(),path=name(exportName);
-        try{database.run("VACUUM INTO ?",[path]);if(statSync(path).size>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");return new Uint8Array(readFileSync(path));}
+        try{database.run("VACUUM INTO ?",[path]);if(statSync(path).size>maximum())throw new TransferError("too_large");return new Uint8Array(readFileSync(path));}
         finally{rmSync(path,{force:true});}
       },
       async discard(){if(state==="activated")return;if(state==="open"){database.close();state="closed";}for(const suffix of ["","-wal","-shm"])rmSync(name(filename)+suffix,{force:true});},
@@ -188,7 +189,7 @@ export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActiv
       },
     };
   }
-  return {
+  return {limits,
     /** File name of the active slot; a failed replacement selects it again. */
     activeId(){return String(control.get(`SELECT filename FROM active_slot WHERE id=1`)!["filename"]);},
     openActive(){const row=control.get(`SELECT * FROM active_slot WHERE id=1`)!;const filename=String(row["filename"]);if(filename!=="kolo.db"&&!existsSync(name(filename)))throw new TransferError("activation_failed");const database=openDatabase({location:name(filename)});bindings.set(database,{filename,generation:Number(row["generation"])});return database;},
@@ -210,8 +211,8 @@ export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActiv
       catch(error){next.close();throw error;}
       bindings.set(next,{filename:id,generation:binding.generation+1});return next;
     },
-    async capture(source){const filename=allocate();try{source.run("VACUUM INTO ?",[name(filename)]);if(statSync(name(filename)).size>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");return handle(filename,openDatabase({location:name(filename)}));}catch(error){rmSync(name(filename),{force:true});throw error;}},
-    async open(bytes){if(bytes.byteLength<100||bytes.byteLength>MAX_SNAPSHOT_BYTES)throw new TransferError("invalid_snapshot");const filename=allocate();writeFileSync(name(filename),bytes,{flag:"wx",mode:0o600});try{return handle(filename,openDatabase({location:name(filename)}));}catch{rmSync(name(filename),{force:true});throw new TransferError("invalid_snapshot");}},
+    async capture(source){const filename=allocate();try{source.run("VACUUM INTO ?",[name(filename)]);if(statSync(name(filename)).size>maximum())throw new TransferError("too_large");return handle(filename,openDatabase({location:name(filename)}));}catch(error){rmSync(name(filename),{force:true});throw error;}},
+    async open(bytes){if(bytes.byteLength<100||bytes.byteLength>maximum())throw new TransferError("invalid_snapshot");const filename=allocate();writeFileSync(name(filename),bytes,{flag:"wx",mode:0o600});try{return handle(filename,openDatabase({location:name(filename)}));}catch{rmSync(name(filename),{force:true});throw new TransferError("invalid_snapshot");}},
     async empty(){const filename=allocate();return handle(filename,openDatabase({location:name(filename)}));},
     close(){control.close();},
   };

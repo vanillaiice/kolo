@@ -25,6 +25,10 @@ import * as staff from "./staff.ts";
 import * as transfer from "./transfer.ts";
 import type { Database } from "@kolo/core/data/database/driver";
 import { migrate } from "@kolo/core/data/database/migrations";
+import { createHash } from "node:crypto";
+import { photoUsage, productPhoto, productPhotoDigest, removeProductPhoto, setProductPhoto } from "@kolo/core/application/photos";
+import { PhotoError, PHOTO_LIMITS } from "@kolo/core/data/products/photos";
+import { memoryPreferences, type DevicePreferences } from "./preferences.ts";
 
 const customerFields = ["name", "phone", "address", "notes", "creditLimitMinor"] as const;
 function customerDetails(data: Record<string, unknown>): CustomerDetails {
@@ -64,9 +68,10 @@ export class DesktopApplication implements ShopService {
   #staged: transfer.StagedFile | undefined;
   private readonly crypto: ExchangeCrypto | undefined;
   readonly #memory: SessionMemory | undefined;
+  readonly #preferences: DevicePreferences;
   #remember = false;
-  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void> }, memory?: SessionMemory) {
-    this.#transfer = files; this.#memory = memory;
+  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void> }, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences()) {
+    this.#transfer = files; this.#memory = memory; this.#preferences = preferences;
     this.ports = ports; this.crypto = crypto; this.#host = { ports, actor: (data, required) => this.#actor(data, required) };
     lockWorkspace(ports.database);
     this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority"], () => this.#notify());
@@ -184,7 +189,7 @@ export class DesktopApplication implements ShopService {
     return this.#run(async () => { this.#invalidate(); this.#notify(); await this.#store(undefined); return this.#view(); });
   }
   sessionPreferences(input: unknown): Promise<Result<SessionPreferences>> {
-    return this.#run(() => { this.#actor(object(input, ["sessionId"])); return { rememberSession: this.#remember }; });
+    return this.#run(() => { this.#actor(object(input, ["sessionId"])); return { rememberSession: this.#remember, largeFiles: this.#preferences.largeFiles() }; });
   }
   setRememberSession(input: unknown): Promise<Result<SessionPreferences>> {
     return this.#run(() => this.#identity(async () => {
@@ -193,8 +198,16 @@ export class DesktopApplication implements ShopService {
       if (memory === undefined) throw new CommandError("unavailable");
       await memory.setEnabled(enabled); this.#remember = enabled;
       await this.#store(enabled ? rememberMember(context) : undefined, epoch);
-      return { rememberSession: enabled };
+      return { rememberSession: enabled, largeFiles: this.#preferences.largeFiles() };
     }));
+  }
+  /** Owner switch for this computer's transfer-file and photo-storage limits. */
+  setLargeFiles(input: unknown): Promise<Result<SessionPreferences>> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "enabled"]); this.#actor(data, ["business.settings"]);
+      this.#preferences.setLargeFiles(boolean(data["enabled"]));
+      return { rememberSession: this.#remember, largeFiles: this.#preferences.largeFiles() };
+    });
   }
   /** Owner recovery uses the separate protected key and leaves the installation locked. */
   recoverAccess(input: unknown): Promise<Result<WorkspaceView>> {
@@ -236,6 +249,39 @@ export class DesktopApplication implements ShopService {
       const data = object(input, ["sessionId", "barcode"]), context = this.#actor(data);
       const item = scannedProduct(context, text(data["barcode"], 256)); return item === undefined ? null : this.#product(context, item);
     });
+  }
+  /** A product's photo as a data URL under products.view; null when this computer holds none. */
+  productPhoto(input: unknown): ReturnType<ShopService["productPhoto"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "productId"]), photo = productPhoto(this.#actor(data, ["products.view"]), uuid(data["productId"]));
+      return photo === undefined ? null : { digest: photo.digest, dataUrl: `data:${photo.mediaType};base64,${Buffer.from(photo.bytes).toString("base64")}` };
+    });
+  }
+  /** Stores or replaces a product's photo under products.edit; the bytes are checked in core before anything is written. */
+  setProductPhoto(input: unknown): ReturnType<ShopService["setProductPhoto"]> {
+    return this.#run(async () => {
+      const data = object(input, ["sessionId", "productId", "bytes"]), context = this.#actor(data, ["products.edit"]), id = uuid(data["productId"]), bytes = data["bytes"];
+      if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > PHOTO_LIMITS.maxBytes) throw new CommandError("invalid_photo");
+      try { await setProductPhoto(context, { productId: id, bytes: new Uint8Array(bytes) }, { sha256Bytes: async value => createHash("sha256").update(value).digest("hex") }, { large: this.#preferences.largeFiles() }); }
+      catch (error) { if (error instanceof PhotoError) throw new CommandError(error.code); throw error; }
+      return this.#stored(context, id);
+    });
+  }
+  /** Removes a product's photo under products.edit. */
+  removeProductPhoto(input: unknown): ReturnType<ShopService["removeProductPhoto"]> {
+    return this.#run(() => {
+      const data = object(input, ["sessionId", "productId"]), context = this.#actor(data, ["products.edit"]), id = uuid(data["productId"]);
+      removeProductPhoto(context, id); return this.#stored(context, id);
+    });
+  }
+  /** Photo storage against this computer's limit. */
+  photoUsage(input: unknown): ReturnType<ShopService["photoUsage"]> {
+    return this.#run(() => photoUsage(this.#actor(object(input, ["sessionId"]), ["products.view"]), { large: this.#preferences.largeFiles() }));
+  }
+  #stored(context: OperationContext, id: string): ProductView {
+    const product = productOf(this.ports.database, context.businessId, id);
+    if (product === undefined) throw new WorkspaceError("scope_mismatch");
+    return this.#product(context, product);
   }
   /** Creates product and optional opening stock in one transaction; safe matching retries reuse the product ID. */
   createProduct(input: unknown): ReturnType<ShopService["createProduct"]> {
@@ -564,6 +610,8 @@ export class DesktopApplication implements ShopService {
   reverseExpense(input: unknown): ReturnType<ShopService["reverseExpense"]> { return this.#run(() => finance.reverseExpense(this.#host, input)); }
   /** Period and snapshot reports; see reports.ts. */
   report(input: unknown): ReturnType<ShopService["report"]> { return this.#run(() => reports.report(this.#host, input)); }
+  /** Period analytics with permission-scoped sections; see reports.ts. */
+  analytics(input: unknown): ReturnType<ShopService["analytics"]> { return this.#run(() => reports.analytics(this.#host, input)); }
   /** Sale and purchase returns; see returns.ts. */
   returnSource(input: unknown): ReturnType<ShopService["returnSource"]> { return this.#run(() => returns.returnSource(this.#host, input)); }
   previewReturn(input: unknown): ReturnType<ShopService["previewReturn"]> { return this.#run(() => returns.previewReturn(this.#host, input)); }
@@ -635,7 +683,8 @@ export class DesktopApplication implements ShopService {
     return { id: product.id, name: product.name, unit: product.unit, divisible: product.divisible, sellingPriceMinor: product.sellingPriceMinor,
       minimumStockThousandths: product.minimumStock, active: product.active, version: product.updatedAt, ...(product.categoryId === undefined ? {} : { categoryId: product.categoryId }),
       ...(product.barcode === undefined ? {} : { barcode: product.barcode }), ...(product.purchasePriceMinor === undefined ? {} : { purchasePriceMinor: product.purchasePriceMinor }),
-      ...(capabilities(context).includes("inventory.view") ? { onHandThousandths: productStock(context, product.id).onHandThousandths } : {}) };
+      ...(capabilities(context).includes("inventory.view") ? { onHandThousandths: productStock(context, product.id).onHandThousandths } : {}),
+      ...((photo => photo === undefined ? {} : { photo })(capabilities(context).includes("products.view") ? productPhotoDigest(context, product.id) : undefined)) };
   }
   #actor(data: Record<string, unknown>, required: readonly Permission[] = []): OperationContext {
     uuid(data["sessionId"]);

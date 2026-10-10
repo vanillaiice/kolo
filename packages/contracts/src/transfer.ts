@@ -6,15 +6,37 @@ export const transferSignature=z.string().regex(/^[a-f0-9]{128}$/);
 export const transferKey=z.string().min(32).max(8192).refine(v=>v.includes("BEGIN PUBLIC KEY")&&!v.includes("PRIVATE KEY"));
 const name=z.string().min(1).max(120).refine(v=>v.trim().length>0);
 const integer=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-/** Largest raw SQLite image a backup or enrollment may carry (about a year of a busy shop). */
-export const MAX_SNAPSHOT_IMAGE_BYTES=128*1024*1024;
-/** Largest decompressed transfer content: a snapshot image plus its framed signed manifest. */
-export const MAX_TRANSFER_CONTENT_BYTES=MAX_SNAPSHOT_IMAGE_BYTES+1024*1024+4;
-/** Largest encrypted (compressed) payload; base64 and the header must still fit the file cap. */
-export const MAX_ENCRYPTED_PAYLOAD_BYTES=32*1024*1024;
-/** Largest encrypted file on disk, including base64 expansion and the JSON envelope. */
-export const MAX_ENCRYPTED_FILE_BYTES=48*1024*1024;
-const base64=z.string().max(4*Math.ceil(MAX_ENCRYPTED_PAYLOAD_BYTES/3)).regex(/^[A-Za-z0-9+/]*={0,2}$/).refine(v=>v.length%4===0);
+/** Size limits for transfer files; every reader and writer checks one profile before allocating. */
+export interface TransferLimits {
+  /** Largest raw SQLite image a backup or enrollment may carry. */
+  readonly snapshotBytes: number;
+  /** Largest decompressed content: a snapshot image plus its framed signed manifest. */
+  readonly contentBytes: number;
+  /** Largest encrypted (compressed) payload; base64 and the header must still fit the file. */
+  readonly payloadBytes: number;
+  /** Largest encrypted file on disk, including base64 expansion and the JSON envelope. */
+  readonly fileBytes: number;
+}
+/** The default profile, sized for low-cost phones and PCs (ADR-026): about fourteen months of a busy shop. */
+export const STANDARD_TRANSFER_LIMITS: TransferLimits = Object.freeze({
+  snapshotBytes: 128 * 1024 * 1024, contentBytes: 128 * 1024 * 1024 + 1024 * 1024 + 4, payloadBytes: 32 * 1024 * 1024, fileBytes: 48 * 1024 * 1024 });
+/**
+ * The opt-in profile for computers with memory to spare (ADR-027). Not unlimited: a file is read
+ * as one string, and JavaScript engines cap strings near 512 MiB, so the file stays below that and
+ * the payload below its base64 share. Peak memory during a backup is several times the snapshot.
+ */
+export const LARGE_TRANSFER_LIMITS: TransferLimits = Object.freeze({
+  snapshotBytes: 1024 * 1024 * 1024, contentBytes: 1024 * 1024 * 1024 + 1024 * 1024 + 4, payloadBytes: 360 * 1024 * 1024, fileBytes: 496 * 1024 * 1024 });
+/** Largest raw SQLite image a standard backup or enrollment may carry (about a year of a busy shop). */
+export const MAX_SNAPSHOT_IMAGE_BYTES=STANDARD_TRANSFER_LIMITS.snapshotBytes;
+/** Largest decompressed transfer content under the standard profile. */
+export const MAX_TRANSFER_CONTENT_BYTES=STANDARD_TRANSFER_LIMITS.contentBytes;
+/** Largest encrypted (compressed) payload under the standard profile. */
+export const MAX_ENCRYPTED_PAYLOAD_BYTES=STANDARD_TRANSFER_LIMITS.payloadBytes;
+/** Largest encrypted file on disk under the standard profile. */
+export const MAX_ENCRYPTED_FILE_BYTES=STANDARD_TRANSFER_LIMITS.fileBytes;
+// Schemas accept the largest profile; callers check the profile they run under before any work.
+const base64=z.string().max(4*Math.ceil(LARGE_TRANSFER_LIMITS.payloadBytes/3)).regex(/^[A-Za-z0-9+/]*={0,2}$/).refine(v=>v.length%4===0);
 /** Versioned authenticated-encryption header; every field participates in AES-GCM AAD. */
 const encryptedCommon={format:z.literal("kolo.encrypted"),
  purpose:z.enum(["backup","enrollment","exchange","receipt"]),file_id:transferUuid,
@@ -27,7 +49,7 @@ const encryptedCommon={format:z.literal("kolo.encrypted"),
 export const encryptedHeaderSchema=z.discriminatedUnion("format_version",[
  z.strictObject({...encryptedCommon,format_version:z.literal(1),plaintext_bytes:integer.positive().max(18*1024*1024)}),
  z.strictObject({...encryptedCommon,format_version:z.literal(2),compression:z.literal("deflate"),
-  plaintext_bytes:integer.positive().max(MAX_ENCRYPTED_PAYLOAD_BYTES),content_bytes:integer.positive().max(MAX_TRANSFER_CONTENT_BYTES)}),
+  plaintext_bytes:integer.positive().max(LARGE_TRANSFER_LIMITS.payloadBytes),content_bytes:integer.positive().max(LARGE_TRANSFER_LIMITS.contentBytes)}),
 ]);
 export const encryptedFileSchema=z.strictObject({header:encryptedHeaderSchema,ciphertext:base64,tag:z.string().regex(/^[a-f0-9]{32}$/)});
 export type EncryptedHeader=z.infer<typeof encryptedHeaderSchema>;
@@ -42,7 +64,7 @@ const target=z.strictObject({installation_id:transferUuid,device_id:transferUuid
 export const snapshotManifestSchema=z.strictObject({format:z.literal("kolo.snapshot"),format_version:z.literal(1),snapshot_id:transferUuid,
  kind:z.enum(["backup","enrollment"]),schema_version:integer.min(17),created_at:transferTime,
  business:z.strictObject({id:transferUuid,name,currency:z.literal("XAF")}),owner:z.strictObject({id:transferUuid,name}),
- source_device_id:transferUuid,source_public_key:transferKey,snapshot_digest:transferDigest,snapshot_bytes:integer.positive().max(MAX_SNAPSHOT_IMAGE_BYTES),
+ source_device_id:transferUuid,source_public_key:transferKey,snapshot_digest:transferDigest,snapshot_bytes:integer.positive().max(LARGE_TRANSFER_LIMITS.snapshotBytes),
  boundary:snapshotBoundarySchema,credential_policy:z.literal("device_local_credentials_excluded"),target:target.nullable(),
 }).refine(m=>(m.kind==="enrollment")===(m.target!==null));
 export const signedSnapshotSchema=z.strictObject({manifest:snapshotManifestSchema,digest:transferDigest,signature:transferSignature});

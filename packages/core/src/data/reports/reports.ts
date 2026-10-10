@@ -193,9 +193,11 @@ export interface Dashboard {
  * round-half-up, and quantities on a sale line are positive by construction. A
  * float divide would be the one place money stopped being exact (ADR-010), and
  * a device that rounded differently from the server would disagree with the
- * receipt by a franc a line.
+ * receipt by a franc a line. Shared with the analytics queries for the same reason.
+ *
+ * @internal
  */
-const LINE_TOTAL = `((i.unit_price_minor * i.quantity + ${QUANTITY_SCALE / 2}) / ${QUANTITY_SCALE}
+export const LINE_TOTAL = `((i.unit_price_minor * i.quantity + ${QUANTITY_SCALE / 2}) / ${QUANTITY_SCALE}
                      - i.discount_minor)`;
 
 /**

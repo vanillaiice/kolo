@@ -20,3 +20,12 @@ it("real desktop AES-GCM and bounded selected files preserve ciphertext, reject 
   writeFileSync(path,Buffer.from([0xff]));assert.throws(()=>readBoundedTransferFile(path));truncateSync(path,MAX_TRANSFER_FILE_BYTES+1);assert.throws(()=>readBoundedTransferFile(path));
  }finally{rmSync(directory,{recursive:true,force:true});}
 });
+it("a larger cap from the large-files setting admits a file past the standard cap; the standard reader still refuses it",()=>{
+ const directory=mkdtempSync(join(tmpdir(),"kolo-transfer-")),path=join(directory,"big.json");
+ try{
+  writeFileSync(path,"x");truncateSync(path,MAX_TRANSFER_FILE_BYTES+10);
+  assert.throws(()=>readBoundedTransferFile(path),(error:Error)=>"code" in error&&error.code==="too_large");
+  assert.equal(readBoundedTransferFile(path,MAX_TRANSFER_FILE_BYTES+10).length,MAX_TRANSFER_FILE_BYTES+10);
+  assert.throws(()=>readBoundedTransferFile(path,MAX_TRANSFER_FILE_BYTES+9),(error:Error)=>"code" in error&&error.code==="too_large");
+ }finally{rmSync(directory,{recursive:true,force:true});}
+});
