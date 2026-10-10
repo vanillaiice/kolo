@@ -449,6 +449,19 @@ One recorded purchase with lines, door payments and payable.
 getPurchase(host: Host, input: unknown): PurchaseView;
 ```
 
+## [apps/desktop/src/electron/renderer-origin.ts](../../apps/desktop/src/electron/renderer-origin.ts)
+
+Whether a frame URL loads exactly the packaged renderer file.
+
+Compares decoded file paths rather than URL strings: Chromium and Node percent-encode
+different characters (Node writes `~` as `%7E`, so 8.3 short paths such as
+`C:\Users\RUNNER~1\…` never matched). Query strings, fragments and other schemes are
+refused. Windows paths compare case-insensitively, like the file system.
+
+```ts
+isRendererUrl(candidate: string | undefined, rendererPath: string, windows = process.platform === "win32"): boolean;
+```
+
 ## [apps/desktop/src/electron/reports.ts](../../apps/desktop/src/electron/reports.ts)
 
 One report under its core permission; the period is at most about ten years and must not be empty.

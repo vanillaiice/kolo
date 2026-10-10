@@ -1096,3 +1096,11 @@ expo-sqlite Android build; its installed-device behaviour still needs the native
   shop's file; it now uses the replacement path shared with the unlock screen.
 - After a restore or pairing, staff codes belong to the other device: unlock lists (mobile and desktop)
   show only members with a code here, and mobile explains that the owner sets the others in Staff.
+
+### Desktop renderer trust on short Windows paths — 2026-10-10
+
+- The IPC trust check compared the sender frame URL with Node's `pathToFileURL` string. Node writes
+  `~` as `%7E` while Chromium keeps it, so an install under an 8.3 short path (`C:\Users\RUNNER~1\…`)
+  refused every command as `permission_denied`. `isRendererUrl` now compares decoded file paths
+  (case-insensitive on Windows) and still refuses other files, schemes, queries and fragments. The
+  installed-upgrade CI step is the Windows evidence.

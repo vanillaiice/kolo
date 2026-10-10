@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, powerMonitor, safeStorage, nativeTheme, type IpcMainInvokeEvent } from "electron";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { randomUUIDv7 } from "node:crypto";
@@ -7,6 +7,7 @@ import { desktopStatus } from "./database.js";
 import { DesktopApplication } from "./application.js";
 import { desktopSessionMemory } from "./session-memory.js";
 import { desktopHandlers } from "./handlers.js";
+import { isRendererUrl } from "./renderer-origin.js";
 import { localCredentialsOnDesktop, desktopExchangeCrypto, desktopTransferCrypto } from "./local-credentials.js";
 import { pickDesktopTransferFile, saveDesktopTransferFile } from "./transfer-files.js";
 import type { TransferDialogs } from "./transfer.js";
@@ -94,11 +95,10 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
       };
       application = await serve(database);
       const rendererPath = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
-      const rendererUrl = pathToFileURL(rendererPath).href;
       const trusted = (candidate: unknown): boolean => {
         const event = candidate as IpcMainInvokeEvent;
         return !closing && window !== undefined && !window.isDestroyed() && event.sender === window.webContents &&
-          event.senderFrame === window.webContents.mainFrame && event.senderFrame?.url === rendererUrl;
+          event.senderFrame === window.webContents.mainFrame && isRendererUrl(event.senderFrame?.url, rendererPath);
       };
       for (const [channel, handler] of Object.entries(desktopHandlers(() => application!, () => desktopStatus(database!), trusted))) ipcMain.handle(channel, handler);
       window = new BrowserWindow({ width: 1280, height: 850, minWidth: 880, minHeight: 620, backgroundColor: windowBackground(),
