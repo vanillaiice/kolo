@@ -6,7 +6,8 @@ pharmacies and wholesalers in Cameroon and across Africa.
 
 ## What it does
 
-- **Sell** at the till with barcode scanning, discounts, split payments and credit sales.
+- **Sell** at the till by searching products or entering their barcode, with discounts,
+  split payments and credit sales.
 - **Track stock** with deliveries, counts, adjustments and low-stock alerts.
 - **Follow money** owed by customers and to suppliers, cash accounts and expenses.
 - **See results** in daily sales, profit and stock reports.
@@ -25,7 +26,8 @@ pharmacies and wholesalers in Cameroon and across Africa.
 ## Status
 
 KOLO is in beta. The Windows desktop app covers the full shop workflow. The Android
-app is being tested on real devices. Online sync is not available yet. Test builds
+app is being tested on real devices. Barcode scanning (camera and scanners) and online
+sync are not available yet. Test builds
 appear on the [Releases](https://github.com/vanillaiice/kolo/releases) page.
 
 ## For developers
