@@ -1,72 +1,38 @@
 # KOLO
 
-Standalone business management for Cameroon: inventory, POS, credit, suppliers,
-cash, expenses, and reports. Mobile and desktop operate from local SQLite.
-Encrypted file exchange and backup/restore are implemented; Bluetooth is planned. Optional hosted or
-self-hosted synchronization connects the same installations.
+KOLO helps small and medium shops run the business day: selling, stock, customer
+credit, suppliers, cash and reports. It is built for shops, supermarkets, boutiques,
+pharmacies and wholesalers in Cameroon and across Africa.
 
-The architecture was accepted on 2026-10-05. Start with the [implementation guide](docs/implementation/README.md)
-and [phased plan](docs/implementation/plan.md). [SPECIFICATION.md](SPECIFICATION.md) owns
-product rules; ADR-017 through ADR-019 record the updated architecture.
+## What it does
 
-## Repository
+- **Sell** at the till with barcode scanning, discounts, split payments and credit sales.
+- **Track stock** with deliveries, counts, adjustments and low-stock alerts.
+- **Follow money** owed by customers and to suppliers, cash accounts and expenses.
+- **See results** in daily sales, profit and stock reports.
+- **Manage staff** with personal codes and role-based permissions.
+- **Print or share receipts**, including returns.
 
-| Directory | Responsibility | Current state |
-|---|---|---|
-| `packages/core` | Shared exact rules, SQLite operations, signed replay and receipts | F1–F3 core and real SQLite replica tests |
-| `packages/contracts` | Strict payloads, canonical signed batches/receipts | Signed events, pairing and encrypted file formats |
-| `apps/mobile` | Expo/React Native screens and native SQLite/keystore wiring | Local setup/POS, backup, pairing and file exchange; native acceptance pending |
-| `apps/desktop` | Electron/React app; main process owns SQLite | Planned offline business workflows complete; packaging and release acceptance in progress |
-| `apps/server` | Fastify/PostgreSQL optional synchronization server | Health/readiness/capabilities; sync planned |
-| `infrastructure` | Development database and self-host deployment scaffold | Compose and server Dockerfile |
-| `docs` | Decisions, plan, contracts, testing, function reference | Current architecture and implementation status |
-| `archive/legacy-go` | Previous Go server, migrations, and tests | Preserved reference; excluded from active checks |
+## How it works
 
-## Development
+- **Works without internet.** Every sale and stock movement is saved on the device first.
+- **Phone and computer.** An Android app and a Windows desktop app share the same rules.
+- **Your data stays yours.** Encrypted backups and file transfers move a shop between devices.
+- **French and English**, with amounts in FCFA (XAF).
+- **Online sync is optional** and planned: a hosted or self-hosted server that keeps
+  several devices in step.
 
-Use Node **24 LTS, at least 24.16**, and npm 11. Install from the repository root;
-there is one active npm lockfile. `.nvmrc` selects the Node line. Mobile SDK versions
-remain controlled by Expo; do not independently upgrade React Native.
+## Status
 
-```sh
-npm ci
-npm run check
-npm run bundle:mobile
-npm run build:mobile:android # Requires JDK 21 and ANDROID_HOME; builds a bundled test APK
-npm run dev:mobile
-npm run dev:desktop
-npm run dev:server
-```
+KOLO is in beta. The Windows desktop app covers the full shop workflow. The Android
+app is being tested on real devices. Online sync is not available yet. Test builds
+appear on the [Releases](https://github.com/vanillaiice/kolo/releases) page.
 
-`npm run check` builds shared packages, checks imports and types, runs tests,
-checks the API reference and documentation links, and builds server/desktop.
-Native/device and container checks are separate; see [testing](docs/implementation/testing.md).
-`make help` lists equivalents and explicit archived Go test targets.
+## For developers
 
-There are two installed clients: desktop and mobile. Each owns local SQLite and works
-without a server. They share business rules and versioned event exchange; the optional
-paid hosted server stores and synchronizes events without replacing local operations.
-Desktop business software is complete; packaging, credentials, recovery, performance,
-accessibility and documentation are the current release work. Physical hardware and
-cross-device acceptance are deferred. Mobile is next; Android native acceptance remains
-open. See the [desktop milestone](docs/implementation/desktop.md) and
-[release procedure](docs/implementation/desktop-release.md). Browser delivery is deferred.
-The new server does not implement authentication or event ingestion yet.
-The [status log](docs/implementation/progress.md) records verified foundations and
-remaining work separately.
+The technical overview, repository layout and commands are in
+[docs/README.md](docs/README.md). Product rules live in [SPECIFICATION.md](SPECIFICATION.md).
 
-## Documentation
+## License
 
-- [Architecture and editions](docs/implementation/architecture.md)
-- [Phases and acceptance criteria](docs/implementation/plan.md)
-- [Business operations and database rules](docs/implementation/business-core.md)
-- [Exchange, import, backup, and Bluetooth](docs/implementation/exchange.md)
-- [Implemented and planned server API](docs/implementation/server-api.md)
-- [Offline identity and authorization](docs/implementation/identity.md)
-- [Testing and release gates](docs/implementation/testing.md)
-- [Development, migration, deployment, and upgrades](docs/implementation/development.md)
-- [Generated public functions, types, and methods](docs/reference/typescript-api.md)
-
-Public APIs are documented from source JSDoc: run `npm run docs:api` after changing
-an exported declaration. Business methods must state validation, authorization,
-transaction boundaries, event effects, error behavior, and retry semantics.
+GPL-3.0-only; the full text is in [apps/desktop/LICENSE](apps/desktop/LICENSE).

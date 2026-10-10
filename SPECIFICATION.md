@@ -3,7 +3,7 @@
 ## Product, Architecture & Engineering Specification
 
 **Project status:** Active implementation; standalone editions and TypeScript architecture accepted 2026-10-05
-**Target market:** Small and medium-sized businesses in Cameroon
+**Target market:** Small and medium-sized businesses in Africa, starting with Cameroon
 **Primary platforms:** Android / Desktop (Windows first)
 **Secondary platforms:** iOS / Optional web management
 **Client:** React Native/Expo mobile + Electron/React desktop; shared TypeScript core
@@ -53,7 +53,7 @@ The initial product should focus on operational business management rather than 
 
 # 2. Product Vision
 
-The long-term vision is to build a digital operating system for small and medium-sized businesses in Cameroon.
+The long-term vision is to build a digital operating system for small and medium-sized businesses across Africa.
 
 The initial entry point is inventory and sales.
 
@@ -1040,7 +1040,7 @@ Conflict policies must be explicit.
 
 The optional backend is implemented in Fastify + TypeScript (ADR-025). Shared pure rules and
 contracts are reused from packages; PostgreSQL and SQLite repositories remain separate.
-The old Go backend is preserved in `archive/legacy-go` for parity/migration reference.
+The old Go backend remains in repository history as a parity/migration reference; it is no longer published in the tree.
 
 High-level structure:
 
@@ -1461,7 +1461,7 @@ Tenant isolation is a critical security requirement.
 
 # 44. Localization
 
-The initial target is Cameroon.
+The first market is Cameroon; the product is designed for other African countries as well.
 
 The application should therefore support:
 
@@ -1738,7 +1738,6 @@ docs/
 scripts/           Boundary and documentation verification
 infrastructure/    Development DB and deployment scaffolding
 archive/
-  legacy-go/       Preserved Go implementation/migrations/tests
   legacy-mobile/   Prior dependency-resolution reference
 ```
 
