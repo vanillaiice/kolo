@@ -1,0 +1,4 @@
+# Replaces the GitHub "Active workspaces" check: the same gate runs before every push.
+# Skip once with `git push --no-verify` (or HUSKY=0) only when you know why.
+npm run check
+npm run bundle:mobile

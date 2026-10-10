@@ -1,10 +1,8 @@
+# Manual runs only (Actions → Run workflow), e.g. before tagging a desktop release.
+# The local pre-push hook covers Linux; tagged releases also run the packaged Windows smoke.
 name: Desktop Windows acceptance
 on:
   workflow_dispatch:
-  push:
-    paths: ['apps/desktop/**', 'packages/**', 'scripts/*desktop*', 'package*.json', '.github/workflows/desktop.yml']
-  pull_request:
-    paths: ['apps/desktop/**', 'packages/**', 'scripts/*desktop*', 'package*.json', '.github/workflows/desktop.yml']
 permissions:
   contents: read
 jobs:

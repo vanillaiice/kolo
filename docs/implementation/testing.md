@@ -118,8 +118,11 @@ after dependency/native upgrades; avoid repeating unrelated expensive checks wit
 
 ## CI
 
-The foundation workflow installs the root lock on Node 24, runs `npm run check`, then
-Metro export. CI build/adapter tests do not launch Electron, so its runtime binary is not needed. Add PostgreSQL integration service and packaged/native jobs in their
+The workspace gate runs locally, not on GitHub: `npm install` sets up a husky `pre-push`
+hook (`.husky/pre-push`) that runs `npm run check`, then the Metro export
+(`npm run bundle:mobile`), and refuses the push if either fails. `git push --no-verify`
+skips it; do so only knowingly. On GitHub, Windows acceptance (`desktop.yml`) runs only when started by
+hand (Actions → Run workflow), e.g. before tagging; tag release workflows run as before. CI build/adapter tests do not launch Electron, so its runtime binary is not needed. Add PostgreSQL integration service and packaged/native jobs in their
 phases; label unavailable platform evidence in progress rather than claiming CI proves it.
 
 

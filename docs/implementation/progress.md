@@ -1104,3 +1104,10 @@ expo-sqlite Android build; its installed-device behaviour still needs the native
   refused every command as `permission_denied`. `isRendererUrl` now compares decoded file paths
   (case-insensitive on Windows) and still refuses other files, schemes, queries and fragments. The
   installed-upgrade CI step is the Windows evidence.
+
+### Local pre-push gate replaces the GitHub check workflow — 2026-10-10
+
+- The "Active workspaces" GitHub workflow (`npm run check` + Metro export on every push) was slow and is
+  removed. A husky `pre-push` hook, installed by `npm install` through the root `prepare` script, runs the
+  same two commands locally and blocks the push on failure. Windows acceptance (`desktop.yml`) is now
+  manual-only (run it before tagging); the tag release workflows still run on GitHub.
