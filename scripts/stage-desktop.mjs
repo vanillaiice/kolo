@@ -16,7 +16,10 @@ const installed = new Set();
 function copyDependency(name, parent) {
   if (installed.has(name)) return;
   const require = createRequire(join(parent, "package.json"));
-  let source = name === "@kolo/core" ? join(root, "packages/core") : name === "@kolo/contracts" ? join(root, "packages/contracts") : dirname(realpathSync(require.resolve(name)));
+  // A package's own manifest locates it even when it has no JavaScript entry (types-only packages such as
+  // @types/use-sync-external-store) or its exports hide package.json; the entry point is the fallback.
+  const locate = () => { try { return dirname(realpathSync(require.resolve(`${name}/package.json`))); } catch { return dirname(realpathSync(require.resolve(name))); } };
+  let source = name === "@kolo/core" ? join(root, "packages/core") : name === "@kolo/contracts" ? join(root, "packages/contracts") : locate();
   while (!existsSync(join(source, "package.json")) || JSON.parse(readFileSync(join(source, "package.json"), "utf8")).name !== name) {
     const next = dirname(source);
     if (next === source) throw new Error(`Cannot find production dependency ${name}`);
