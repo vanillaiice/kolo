@@ -1,5 +1,5 @@
 # Go
-/archive/legacy-go/bin/
+/archive/legacy-go/
 *.test
 coverage.out
 

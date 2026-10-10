@@ -8,8 +8,8 @@ on 2026-10-05 supersede the old Go/server-required setup architecture through AD
 
 The active repository is an npm workspace: TypeScript core/contracts, Expo mobile,
 Electron desktop, Fastify server (ADR-025). Existing business/data logic and tests moved into
-`packages/core/src` without redesigning behavior. `archive/legacy-go` preserves the
-previous server and pre-existing work. Historical root guidance is preserved in
+`packages/core/src` without redesigning behavior. The previous Go server is no longer tracked;
+it remains in git history (and may exist locally, gitignored, under `archive/legacy-go`). Historical root guidance is preserved in
 `docs/history/legacy-project-guidance.md`.
 
 Mobile has a parity reorganization (Sell/Products/Activity/More, all desktop business workflows, reports, analytics, photos, print/PDF); installed Android acceptance remains open — see docs/implementation/mobile-parity.md. Demo is opt-in.

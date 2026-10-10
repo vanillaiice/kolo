@@ -33,7 +33,7 @@ only. Source JSDoc and guides own invariants and planned behaviors.
 | `apps/mobile/src/domain/*` | `packages/core/src/domain/*` |
 | `data/database/open-on-device.ts` | Remains app-local; imports core driver/adapter/migrations |
 | `data/auth/store-on-device.ts` | Remains app-local; imports core keystore interface |
-| `backend/*` | `archive/legacy-go/*`; Go module import path unchanged |
+| `backend/*` | Removed from the tree; available in repository history |
 | Mobile package lock | Archived resolution; root lock used by all active workspaces |
 | Root historical guidance | Preserved under `docs/history/legacy-project-guidance.md` |
 
