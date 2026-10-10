@@ -5,7 +5,7 @@
     "version": "0.0.0",
     "orientation": "portrait",
     "scheme": "kolo",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "android": {
       "package": "cm.kolo.app"
@@ -16,6 +16,14 @@
         "expo-secure-store",
         {
           "configureAndroidBackup": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "KOLO uses your photos only to add a product picture you choose.",
+          "cameraPermission": "KOLO uses the camera only to take a product picture.",
+          "microphonePermission": false
         }
       ],
       "react-native-quick-crypto"

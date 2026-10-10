@@ -13,8 +13,13 @@ export async function pickTransferFile():Promise<string|undefined>{
   if(count===bytes.length)throw new TransferError("too_large");return transferCryptoOnDevice.decodeText(bytes.subarray(0,count));
  }finally{handle.close();}
 }
-/** Saves only bounded encrypted documents or identity-only pairing proofs to a user-selected directory. */
-export async function saveTransferFile(document:TransferDocument):Promise<void>{
+/**
+ * Saves only bounded encrypted documents or identity-only pairing proofs to a user-selected directory.
+ * Returns false when the user closes the folder picker; the document stays prepared for another try.
+ */
+export async function saveTransferFile(document:TransferDocument):Promise<boolean>{
  if(!/^[0-9a-f-]+\.kolo-(backup|invite|request|enrollment|exchange|receipt)\.json$/.test(document.filename)||utf8Length(document.text)>MAX_TRANSFER_FILE_BYTES)throw new TransferError("invalid_file");
- const directory=await Directory.pickDirectoryAsync();const file=directory.createFile(document.filename,"application/json");file.write(document.text);
+ let directory:Directory;
+ try{directory=await Directory.pickDirectoryAsync();}catch{return false;}
+ const file=directory.createFile(document.filename,"application/json");file.write(document.text);return true;
 }

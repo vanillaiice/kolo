@@ -1,11 +1,12 @@
 import type { Permission, Role } from "@kolo/core/identity/permissions";
+import { mobileStrings } from "./strings-mobile.ts";
 
-export const strings = {
+const baseStrings = {
   languageLoadFailed: ["La préférence de langue est indisponible. Choisissez votre langue pour la réenregistrer.", "The language preference is unavailable. Choose your language to save it again."],
   newerEdit: ["Une modification plus récente est déjà enregistrée. Les valeurs actuelles restent affichées.", "A newer edit is already saved. The current values remain displayed."],
   returnConflict: ["Un retour a déjà été enregistré. Actualisez et vérifiez avant de recommencer.", "A return was already recorded. Refresh and check before trying again."],
   returnGoods: ["Retour de marchandises", "Return goods"], fullReturn: ["Retourner tout le reste", "Return all remaining goods"], remaining: ["Quantité restante", "Remaining quantity"],
-  refundAmount: ["Remboursement XAF (vide = automatique)", "Cash refund XAF (blank = automatic)"], refund: ["Remboursement", "Cash refund"], returnCredit: ["Réduction de dette / avoir", "Debt reduction / credit"],
+  refundAmount: ["Remboursement XAF (vide = automatique)", "Cash refund XAF (blank = automatic)"], refund: ["Remboursement", "Cash refund"], returnCredit: ["Réduction de dette / avoir", "Debt reduction / credit"], refundableUpTo: ["Remboursable au plus", "Refundable up to"],
   returnHint: ["Sans montant, créez un avoir pour un client ou fournisseur nommé. Sans tiers, remboursez la totalité.", "A blank amount creates credit for a named customer or supplier. Without a counterparty, refund in full."],
   recordReturn: ["Enregistrer le retour", "Record return"], returned: ["Retours enregistrés", "Recorded returns"], unknownCost: ["Lignes sans coût connu", "Lines without known cost"],
   categories: ["Catégories", "Categories"], newCategory: ["Nouvelle catégorie", "New category"],
@@ -31,7 +32,7 @@ export const strings = {
   emptyCart: ["Scannez ou ajoutez un article pour commencer", "Scan or add a product to start"], saleSaved: ["Vente enregistrée", "Sale saved"],
   EMPTY: ["Ajoutez un article", "Add a product"], OVERPAID: ["Le paiement dépasse le total", "Payment exceeds total"],
   DISCOUNT_EXCEEDS_SALE: ["La remise dépasse le total", "Discount exceeds total"], CREDIT_NEEDS_CUSTOMER: ["Choisissez un client pour le crédit", "Choose a customer for credit"],
-  LINE_DISCOUNT_EXCEEDS_LINE: ["La remise dépasse sa ligne", "Line discount exceeds line total"], TOO_LARGE: ["Montant trop grand", "Amount is too large"],
+  LINE_DISCOUNT_EXCEEDS_LINE: ["La remise dépasse sa ligne", "Line discount exceeds line total"], TOO_LARGE: ["Montant trop grand", "Amount is too large"], INVALID_AMOUNT: ["Montant ou quantité invalide", "Invalid amount or quantity"],
   newProduct: ["Nouvel article", "New product"], newCustomer: ["Nouveau client", "New customer"], newSupplier: ["Nouveau fournisseur", "New supplier"],
   newAccount: ["Nouveau compte", "New account"], kind: ["Type", "Kind"], CASH: ["Espèces", "Cash"], MOBILE_MONEY: ["Mobile Money", "Mobile Money"], BANK: ["Banque", "Bank"], CARD: ["Carte", "Card"], OTHER: ["Autre", "Other"],
   transferCash: ["Transférer", "Transfer"], destination: ["Compte destinataire", "Destination account"], cashIn: ["Entrée d’argent", "Cash in"], cashOut: ["Sortie d’argent", "Cash out"],
@@ -240,6 +241,8 @@ export const strings = {
   "receiptsRecorded": ["{count} accusés de réception enregistrés.", "{count} acknowledgements recorded."],
   "eventsApplied": ["{count} événements appliqués.", "{count} events applied."],
 } as const;
+/** Every keyed French/English text: the original operational set plus the reorganized mobile screens. */
+export const strings = { ...baseStrings, ...mobileStrings } as const;
 export type TextKey = keyof typeof strings;
 export type Language = "fr" | "en";
 export type TextValues = Readonly<Record<string, string | number>>;

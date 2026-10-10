@@ -5,24 +5,34 @@ import { openNativeDatabase } from "@kolo/core/data/database/expo-sqlite";
 import { migrate, type MigrationResult } from "@kolo/core/data/database/migrations";
 import { MAX_SNAPSHOT_BYTES, TransferError, type SnapshotHandle, type SnapshotPort } from "@kolo/core/backup/types";
 import { newIdOnDevice } from "../auth/local-credentials-on-device.ts";
-import { sqlitePreferences, type LanguageStorage } from "./preferences.ts";
+import { sqlitePreferences, type PreferenceStorage } from "./preferences.ts";
+import { localSecretKeys } from "@kolo/core/identity/device-reset";
 
 /** Opens only device preferences; business activation and restore cannot replace them. */
-export const languageStorageOnDevice: LanguageStorage = {
- read() {
+export const preferenceStorageOnDevice: PreferenceStorage = {
+ read(key) {
   const database = openNativeDatabase(openDatabaseSync("device-preferences.db", { useNewConnection: true }));
-  try { return sqlitePreferences(database).read(); } finally { database.close(); }
+  try { return sqlitePreferences(database).read(key); } finally { database.close(); }
  },
- write(language) {
+ write(key, value) {
   const database = openNativeDatabase(openDatabaseSync("device-preferences.db", { useNewConnection: true }));
-  try { sqlitePreferences(database).write(language); } finally { database.close(); }
+  try { sqlitePreferences(database).write(key, value); } finally { database.close(); }
  },
 };
 
 /** Original business filename; a durable SQLite pointer selects replacements without overwriting it. */
 export const DATABASE_NAME="kolo.db";
 /** This is the sole Expo SQLite import boundary. Private staged images never enter a public export directory. */
-export function openOnDevice():{readonly database:Database;readonly migration:MigrationResult;readonly files:SnapshotPort;readonly close:()=>void}{
+/** Lets a staged empty database stand in for the active shop as a restore target. */
+export interface SlotControl {
+ /**
+  * Binds `stage` to `current`'s active slot, so restoring into the empty stage swaps the durable
+  * pointer straight from the current shop to the restored one. A failed restore never moved the
+  * pointer, and the previous shop's file and credentials stay on disk.
+  */
+ alias(stage:Database,current:Database):void;
+}
+export function openOnDevice():{readonly database:Database;readonly migration:MigrationResult;readonly files:SnapshotPort;readonly slots:SlotControl;readonly close:()=>void}{
  const open=(name:string):Database=>openNativeDatabase(openDatabaseSync(name,{useNewConnection:true}));
  const path=(name:string):string=>`${defaultDatabaseDirectory.replace(/^file:\/\//,"").replace(/\/$/,"")}/${name}`;
  const file=(name:string):File=>new File(`file://${path(name)}`);
@@ -59,5 +69,23 @@ export function openOnDevice():{readonly database:Database;readonly migration:Mi
   async open(bytes){if(bytes.length<100||bytes.length>MAX_SNAPSHOT_BYTES)throw new TransferError("invalid_snapshot");const name=allocate(),owned=file(name);owned.create();owned.write(bytes);try{return handle(name,open(name));}catch{remove(name);throw new TransferError("invalid_snapshot");}},
   async empty(){const name=allocate();return handle(name,open(name));},
  };
- return {database,migration,files,close:()=>control.close()};
+ const slots:SlotControl={alias(stage,current){const binding=bindings.get(current);if(binding===undefined)throw new TransferError("activation_failed");bindings.set(stage,binding);}};
+ return {database,migration,files,slots,close:()=>control.close()};
+}
+
+/**
+ * Device reset: deletes every shop database on this phone (the active one, safety copies, staged
+ * files and the slot pointer) and returns the protected-store keys they referred to, for the caller to
+ * forget. Device preferences (language, appearance) are kept. Every handle must already be closed.
+ */
+export function eraseShopsOnDevice():string[]{
+ const root=defaultDatabaseDirectory.replace(/^file:\/\//,"").replace(/\/$/,"");
+ const directory=new Directory(`file://${root}`),keys=new Set<string>();
+ const names=directory.list().filter((entry):entry is File=>entry instanceof File).map(entry=>entry.name);
+ for(const name of names.filter(item=>/^(kolo\.db|workspace-[0-9a-f-]+\.db)$/.test(item))){
+  try{const database=openNativeDatabase(openDatabaseSync(name,{useNewConnection:true}));try{for(const key of localSecretKeys(database))keys.add(key);}finally{database.close();}}
+  catch{/* An unreadable file still gets deleted; its keys cannot be named. */}
+ }
+ for(const name of names)if(/^(kolo\.db|workspace-[0-9a-f-]+\.db|stage-[0-9a-f-]+\.db|workspace-slots\.db)(?:-wal|-shm|-journal)?$/.test(name))new File(`file://${root}/${name}`).delete();
+ return [...keys];
 }

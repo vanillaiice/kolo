@@ -1,57 +1,56 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
-import { preferredLanguage, type LanguageStorage } from "../data/database/preferences.ts";
-import { colors, TOUCH_TARGET } from "../components/theme.ts";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useColorScheme } from "react-native";
+import * as SystemUI from "expo-system-ui";
+import { preferredAppearance, preferredLanguage, type PreferenceKey, type PreferenceStorage } from "../data/database/preferences.ts";
+import { resolveTheme, ThemeContext, type Appearance } from "../components/theme.ts";
 import { translate, type Language, type TextKey, type TextValues } from "./strings.ts";
 
 export type { Language, TextKey } from "./strings.ts";
-type LanguageContextValue = {
+type StorageError = "languageLoadFailed" | "languageSaveFailed" | "preferenceLoadFailed" | "preferenceSaveFailed" | undefined;
+type PreferencesValue = {
   language: Language;
   setLanguage: (value: Language) => void;
-  storageError: "languageLoadFailed" | "languageSaveFailed" | undefined;
+  appearance: Appearance;
+  setAppearance: (value: Appearance) => void;
+  storageError: StorageError;
+  retry: () => void;
 };
-const LanguageContext = createContext<LanguageContextValue>({ language: "fr", setLanguage: () => undefined, storageError: undefined });
+const PreferencesContext = createContext<PreferencesValue>({ language: "fr", setLanguage: () => undefined, appearance: "system", setAppearance: () => undefined, storageError: undefined, retry: () => undefined });
 
-/** Loads the device language before screens render and reports persistence failures without blocking work. */
-export function LanguageProvider({ children, storage }: { readonly children: ReactNode; readonly storage: LanguageStorage }): React.JSX.Element {
-  const [initial] = useState(() => preferredLanguage(storage));
-  const [language, updateLanguage] = useState(initial.language);
-  const [storageError, setStorageError] = useState<LanguageContextValue["storageError"]>(initial.failed ? "languageLoadFailed" : undefined);
-  const setLanguage = (value: Language): void => {
-    updateLanguage(value);
-    try { storage.write(value); setStorageError(undefined); }
-    catch { setStorageError("languageSaveFailed"); }
+/**
+ * Loads device language and appearance before screens render and reports persistence
+ * failures without blocking work. Both live in the device preference database, outside
+ * shop backups and events, so restoring or replacing a shop keeps them.
+ */
+export function PreferencesProvider({ children, storage }: { readonly children: ReactNode; readonly storage: PreferenceStorage }): React.JSX.Element {
+  const [initial] = useState(() => ({ language: preferredLanguage(storage), appearance: preferredAppearance(storage) }));
+  const [language, updateLanguage] = useState(initial.language.language);
+  const [appearance, updateAppearance] = useState(initial.appearance.appearance);
+  const [storageError, setStorageError] = useState<StorageError>(initial.language.failed ? "languageLoadFailed" : initial.appearance.failed ? "preferenceLoadFailed" : undefined);
+  const system = useColorScheme();
+  const theme = resolveTheme(appearance, system);
+  useEffect(() => { void SystemUI.setBackgroundColorAsync(theme.colors.canvas).catch(() => undefined); }, [theme.colors.canvas]);
+  const save = (key: PreferenceKey, value: string): void => {
+    try { storage.write(key, value); setStorageError(undefined); }
+    catch { setStorageError(key === "language" ? "languageSaveFailed" : "preferenceSaveFailed"); }
   };
-  return <LanguageContext.Provider value={{ language, setLanguage, storageError }}>{children}</LanguageContext.Provider>;
+  const value: PreferencesValue = {
+    language, appearance, storageError,
+    setLanguage: next => { updateLanguage(next); save("language", next); },
+    setAppearance: next => { updateAppearance(next); save("appearance", next); },
+    retry: () => { save("language", language); save("appearance", appearance); },
+  };
+  return <PreferencesContext.Provider value={value}><ThemeContext.Provider value={theme}>{children}</ThemeContext.Provider></PreferencesContext.Provider>;
 }
 
 /** Selects keyed UI text without placing translated prose in business commands. */
 export function useText(): { t: (key: TextKey, values?: TextValues) => string; language: Language; setLanguage: (value: Language) => void } {
-  const { language, setLanguage } = useContext(LanguageContext);
+  const { language, setLanguage } = useContext(PreferencesContext);
   return { language, setLanguage, t: (key, values) => translate(language, key, values) };
 }
 
-/** Language selection is available before setup/unlock as well as on operational and transfer screens. */
-export function LanguageControl({ disabled = false }: { readonly disabled?: boolean }): React.JSX.Element {
-  const { language, setLanguage, storageError } = useContext(LanguageContext);
-  const t = (key: TextKey): string => translate(language, key);
-  return <View style={{ gap: 8 }}>
-    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-      <Text style={{ color: colors.text }}>{t("language")}</Text>
-      {(["fr", "en"] as const).map(value => <Pressable key={value} accessibilityRole="radio"
-        accessibilityLabel={value === "fr" ? "Français" : "English"}
-        accessibilityState={{ selected: language === value, disabled }} disabled={disabled}
-        onPress={() => setLanguage(value)} style={{ minHeight: TOUCH_TARGET, padding: 12, justifyContent: "center", borderRadius: 6,
-          borderWidth: language === value ? 2 : 1, borderColor: language === value ? colors.accent : colors.border }}>
-        <Text style={{ color: colors.text }}>{value === "fr" ? "Français" : "English"}</Text>
-      </Pressable>)}
-    </View>
-    {storageError !== undefined && <>
-      <Text accessibilityRole="alert" style={{ color: colors.warning }}>{t(storageError)}</Text>
-      <Pressable accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled}
-        onPress={() => setLanguage(language)} style={{ minHeight: TOUCH_TARGET, justifyContent: "center" }}>
-        <Text style={{ color: colors.text }}>{t("retry")}</Text>
-      </Pressable>
-    </>}
-  </View>;
-}
+/** Device language/appearance and the last preference storage failure. */
+export function usePreferences(): PreferencesValue { return useContext(PreferencesContext); }
+
+/** The device locale tag for number and date formatting. */
+export function localeOf(language: Language): string { return language === "fr" ? "fr-FR" : "en-GB"; }

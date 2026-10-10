@@ -1,42 +1,88 @@
-import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, SafeAreaView, Text, View } from "react-native";
-import { currentInstallation, recoverWorkspaceSetup, lockWorkspace, unlockedActor } from "@kolo/core/identity/workspace";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, AppState, StatusBar, View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { KeyboardProvider } from "react-native-keyboard-controller";
+import { currentInstallation, recoverWorkspaceSetup, lockWorkspace, unlockedActor, rememberMember, resumeWorkspace, type RememberedMember } from "@kolo/core/identity/workspace";
 import { sealPendingEvents } from "@kolo/core/application/exchange";
 import { resumeOwnerRecovery } from "@kolo/core/identity/recovery";
 import { resumeMemberProvisioning } from "@kolo/core/identity/members";
-import type { InstallationState, OperationContext, WorkspacePorts } from "@kolo/core/identity/types";
+import { WorkspaceError, type InstallationState, type OperationContext, type WorkspacePorts } from "@kolo/core/identity/types";
 import { HttpAuthTransport, type AuthTransport } from "@kolo/core/data/auth/login";
 import { PERMISSIONS } from "@kolo/core/identity/permissions";
+import { subscribeChanges } from "@kolo/core/data/database/changes";
 import type { Database } from "@kolo/core/data/database/driver";
-import { openOnDevice, languageStorageOnDevice } from "../data/database/open-on-device.ts";
-import { localCredentialsOnDevice, newIdOnDevice, exchangeCryptoOnDevice } from "../data/auth/local-credentials-on-device.ts";
-import { WorkspaceScreen } from "../features/workspace/WorkspaceScreen.tsx";
-import { MembersScreen } from "../features/workspace/MembersScreen.tsx";
-import { TransferScreen } from "../features/transfer/TransferScreen.tsx";
 import type { SnapshotPort } from "@kolo/core/backup/types";
-import { ShopScreen } from "../features/shop/ShopScreen.tsx";
-import { LanguageProvider, useText, LanguageControl } from "./i18n.tsx";
-import { colors, spacing } from "../components/theme.ts";
+import { eraseShopsOnDevice, openOnDevice, preferenceStorageOnDevice, type SlotControl } from "../data/database/open-on-device.ts";
+import { localCredentialsOnDevice, newIdOnDevice, exchangeCryptoOnDevice } from "../data/auth/local-credentials-on-device.ts";
+import { secretStoreOnDevice } from "../data/auth/store-on-device.ts";
+import { sessionMemory } from "../data/auth/session-memory.ts";
+import { EntryScreen } from "../features/entry/EntryScreen.tsx";
+import { Shell } from "../features/shell/Shell.tsx";
+import { Notice, Page } from "../components/ui.tsx";
+import { spacing, useTheme } from "../components/theme.ts";
+import { PreferencesProvider, useText } from "./i18n.tsx";
+import { SessionProvider, type Session } from "./session.tsx";
 import { API_BASE_URL } from "./config.ts";
 import { seedDemoShop } from "./dev-seed.ts";
+import { LanguageControl } from "../components/controls.tsx";
 
 type Boot = { state: "opening" } | { state: "failed" } |
-  { state: "ready"; ports: WorkspacePorts; files:SnapshotPort; installation: InstallationState; authority: AuthTransport };
+  { state: "ready"; ports: WorkspacePorts; files: SnapshotPort; slots: SlotControl; installation: InstallationState; authority: AuthTransport };
+/** Every domain a business commit can touch; any of them may leave an unsigned event to seal. */
+const ALL_DOMAINS = ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority"] as const;
+/** Coalescing window after a commit, and the recovery retry while unlocked. */
+const SEAL_DELAY_MS = 400, SEAL_RETRY_MS = 60_000;
 
-/** Mobile always boots locked; core operations use local authority, independent of cloud sessions. */
+/**
+ * With "Stay signed in" on (the default, as on the desktop) the last user stays signed in across
+ * background and cold boot; with it off the phone boots locked and locks in the background. Core
+ * operations use local authority. Each unlock starts a new session generation: screens, drafts and subscriptions under
+ * it unmount on lock, actor change or database replacement, and late async results are refused.
+ */
 function AppContent(): React.JSX.Element {
-  const { t } = useText();
+  const { t } = useText(), { colors, scheme } = useTheme();
   const [boot, setBoot] = useState<Boot>({ state: "opening" });
-  const [context, setContext] = useState<OperationContext>();
-  const [staff, setStaff] = useState(false);
-  const [transfers,setTransfers]=useState(false);
-  const activeDatabase=useRef<Database|undefined>(undefined);
+  const [unlocked, setUnlocked] = useState<{ context: OperationContext; generation: number }>();
+  const generation = useRef(0);
+  const activeDatabase = useRef<Database | undefined>(undefined);
+  const unlockedRef = useRef(false), resetting = useRef(false), [bootRun, setBootRun] = useState(0);
+  // Declared before the boot effect, which closes any retired handles before a reset erases files.
+  const retired = useRef<Database[]>([]);
+  /** Android screens KOLO itself opened (file/photo pickers, share, print) that are still open. */
+  const systemScreens = useRef(0);
+
+  // "Stay signed in" (on by default, as on the desktop): the phone does not lock on background and a
+  // cold boot reopens the last unlocked user. Off restores locking on background and cold boot.
+  const memory = useMemo(() => sessionMemory(secretStoreOnDevice(), preferenceStorageOnDevice), []);
+  const [remember, setRemember] = useState(() => memory.enabled());
+  const rememberRef = useRef(remember); rememberRef.current = remember;
+  /** Saves or forgets the remembered user; failure only means the next start is locked. A save overtaken by a lock is undone. */
+  const store = useCallback(async (value: RememberedMember | undefined, owner?: number): Promise<void> => {
+    try {
+      await memory.write(value);
+      if (value !== undefined && owner !== undefined && owner !== generation.current) await memory.write(undefined);
+    } catch { /* The keystore is unavailable: the next cold boot opens locked. */ }
+  }, [memory]);
+
+  const refresh = useCallback((): void => setBoot(current => current.state === "ready" ? { ...current, installation: currentInstallation(activeDatabase.current ?? current.ports.database) } : current), []);
+  const lock = useCallback((): void => {
+    // Only an unlocked session gets a new generation; locking the entry screen must not reset its steps.
+    if (unlockedRef.current) generation.current++;
+    unlockedRef.current = false;
+    if (activeDatabase.current !== undefined) lockWorkspace(activeDatabase.current);
+    setUnlocked(undefined); refresh();
+  }, [refresh]);
+
   useEffect(() => {
     let disposed = false;
     let opened: ReturnType<typeof openOnDevice>;
-    let database: Database;
-    try { opened=openOnDevice();database=opened.database;activeDatabase.current=database; }
+    // A device reset runs here, after the previous boot's handles were closed by its cleanup.
+    let erased: string[] = [];
+    for (const database of retired.current.splice(0)) { try { database.close(); } catch { /* Already closed. */ } }
+    if (resetting.current) { resetting.current = false; try { erased = eraseShopsOnDevice(); } catch { setBoot({ state: "failed" }); return; } }
+    try { opened = openOnDevice(); activeDatabase.current = opened.database; }
     catch { setBoot({ state: "failed" }); return; }
+    const database = opened.database;
     const ports: WorkspacePorts = { database, credentials: localCredentialsOnDevice(), newId: newIdOnDevice, now: () => new Date().toISOString() };
     let authority: AuthTransport = new HttpAuthTransport({ baseUrl: API_BASE_URL });
     if (__DEV__ && process.env["EXPO_PUBLIC_DEMO_SHOP"] === "1") {
@@ -56,58 +102,125 @@ function AppContent(): React.JSX.Element {
     }
     void (async () => {
       try {
+        const vault = secretStoreOnDevice();
+        for (const key of erased) await vault.forget(key).catch(() => undefined);
         await recoverWorkspaceSetup(ports); await resumeOwnerRecovery(ports);
-        if (!disposed) setBoot({ state: "ready", ports, files:opened.files, installation: currentInstallation(database), authority });
+        // A remembered member reopens only if business, device and member are still active with the same credential.
+        let resumed: OperationContext | undefined;
+        const remembered = memory.enabled() ? await memory.read() : undefined;
+        if (remembered !== undefined) { try { resumed = resumeWorkspace(remembered, ports); } catch { await memory.write(undefined).catch(() => undefined); } }
+        if (disposed) return;
+        setBoot({ state: "ready", ports, files: opened.files, slots: opened.slots, installation: currentInstallation(database), authority });
+        if (resumed !== undefined) { generation.current++; unlockedRef.current = true; setUnlocked({ context: resumed, generation: generation.current }); }
       } catch { if (!disposed) setBoot({ state: "failed" }); }
     })();
-    const subscription = AppState.addEventListener("change", state => {
-      if (state !== "active") {
-        const currentDatabase=activeDatabase.current!;lockWorkspace(currentDatabase); setContext(undefined); setStaff(false);
-        setBoot(current => current.state === "ready" ? { ...current, installation: currentInstallation(currentDatabase) } : current);
-      }
-    });
-    return () => { disposed = true; subscription.remove(); if(activeDatabase.current!==undefined){lockWorkspace(activeDatabase.current);activeDatabase.current.close();activeDatabase.current=undefined;}opened.close(); };
-  }, []);
+    return () => {
+      disposed = true;
+      if (activeDatabase.current !== undefined) { lockWorkspace(activeDatabase.current); if (activeDatabase.current !== database) activeDatabase.current.close(); activeDatabase.current = undefined; }
+      database.close(); opened.close();
+    };
+  }, [bootRun]);
+
+  // With "Stay signed in" off, leaving the app locks it at once. Android screens KOLO opened itself
+  // (file and photo pickers, share, print) count as staying in the app and do not lock.
   useEffect(() => {
-    if (context === undefined) return;
-    let disposed = false, running = false;
+    const subscription = AppState.addEventListener("change", state => { if (state !== "active" && !rememberRef.current && systemScreens.current === 0) lock(); });
+    return () => subscription.remove();
+  }, [lock]);
+
+  // Commit-triggered, coalesced, single-flight sealing of unsigned events while unlocked, with a slow recovery retry.
+  useEffect(() => {
+    if (unlocked === undefined || boot.state !== "ready") return;
+    const { context } = unlocked, database = activeDatabase.current!;
+    let disposed = false, running = false, again = false, timer: ReturnType<typeof setTimeout> | undefined;
     const seal = async (): Promise<void> => {
-      if (disposed || running) return;
+      timer = undefined;
+      if (disposed) return;
+      if (running) { again = true; return; }
       running = true;
       try { await sealPendingEvents(context, exchangeCryptoOnDevice); }
-      catch { /* Durable unsigned facts retry while unlocked; a sale already committed stays recorded. */ }
-      finally { running = false; }
+      catch { /* Durable unsigned facts retry while unlocked; a committed sale stays recorded. */ }
+      finally { running = false; if (again && !disposed) { again = false; schedule(); } }
     };
-    void seal();
-    const interval = setInterval(() => { void seal(); }, 3000);
-    return () => { disposed = true; clearInterval(interval); };
-  }, [context]);
-  const refresh = (): void => setBoot(current => current.state === "ready" ? { ...current, installation: currentInstallation(current.ports.database) } : current);
-  const locked = (): void => {
-    if (boot.state !== "ready") return;
-    lockWorkspace(boot.ports.database); setContext(undefined); setStaff(false); refresh();
-  };
-  if (boot.state !== "ready") return <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}><View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl }}>
-    {boot.state === "opening" ? <ActivityIndicator color={colors.accent} /> : <><LanguageControl /><Text>{t("bootFailed")}</Text></>}
-  </View></SafeAreaView>;
-  if(transfers)return <TransferScreen ports={boot.ports} files={boot.files} context={context} onBack={()=>{setTransfers(false);refresh();}} onUnlocked={setContext} onActivated={database=>{
-    const previous=activeDatabase.current;activeDatabase.current=database;setContext(undefined);setStaff(false);setTransfers(false);
-    setBoot({...boot,ports:{...boot.ports,database},installation:currentInstallation(database)});if(previous!==undefined&&previous!==database)previous.close();
-  }}/>;
-  if (context === undefined) return <WorkspaceScreen key={boot.installation.state} ports={boot.ports} state={boot.installation} authority={boot.authority} onTransfer={()=>setTransfers(true)} onChanged={refresh} onUnlocked={unlocked => {
-    if (AppState.currentState !== "active") { locked(); return; }
-    const actor = unlockedActor(unlocked);
-    if (actor.isOwner) void resumeMemberProvisioning(unlocked).catch(() => undefined);
-    setContext(unlocked); refresh();
-  }} />;
-  const actor = unlockedActor(context);
-  const canManageUsers=actor.isOwner&&boot.ports.database.get(`SELECT authority_allowed FROM trusted_exchange_devices WHERE business_id=? AND device_id=?`,[context.businessId,context.deviceId])?.["authority_allowed"]===1;
-  if (staff && canManageUsers) return <MembersScreen context={context} onBack={() => setStaff(false)} />;
-  return <ShopScreen database={boot.ports.database} context={context} businessName={actor.businessName} userName={actor.userName} branchId={actor.branchId}
-    onLock={locked} onTransfer={actor.isOwner?()=>setTransfers(true):undefined} onStaff={canManageUsers ? () => setStaff(true) : undefined} />;
+    const schedule = (): void => { if (timer === undefined && !disposed) timer = setTimeout(() => { void seal(); }, SEAL_DELAY_MS); };
+    const unsubscribe = subscribeChanges(database, ALL_DOMAINS, schedule);
+    const retry = setInterval(schedule, SEAL_RETRY_MS);
+    schedule();
+    return () => { disposed = true; unsubscribe(); clearInterval(retry); if (timer !== undefined) clearTimeout(timer); };
+  }, [unlocked, boot.state]);
+
+  // A replaced database is closed only after the screens that used it have unmounted: a query on a closed
+  // native handle corrupts memory in expo-sqlite and aborts the app.
+  useEffect(() => {
+    for (const database of retired.current.splice(0)) { try { database.close(); } catch { /* Already closed. */ } }
+  }, [boot, unlocked]);
+  const activate = useCallback((database: Database): void => {
+    const previous = activeDatabase.current;
+    void store(undefined);
+    generation.current++; unlockedRef.current = false; activeDatabase.current = database; setUnlocked(undefined);
+    setBoot(current => current.state === "ready" ? { ...current, ports: { ...current.ports, database }, installation: currentInstallation(database) } : current);
+    if (previous !== undefined && previous !== database) retired.current.push(previous);
+  }, [store]);
+  const onUnlocked = useCallback((context: OperationContext): void => {
+    if (!rememberRef.current && AppState.currentState !== "active" && systemScreens.current === 0) { lockWorkspace(activeDatabase.current!); refresh(); return; }
+    const actor = unlockedActor(context);
+    if (actor.isOwner) void resumeMemberProvisioning(context).catch(() => undefined);
+    generation.current++; unlockedRef.current = true;
+    setUnlocked({ context, generation: generation.current }); refresh();
+    if (rememberRef.current) { try { void store(rememberMember(context), generation.current); } catch { /* Not remembered: next start is locked. */ } }
+  }, [refresh, store]);
+  /** The Lock button: locks now and forgets the remembered user, so the next start asks for a code. */
+  const lockNow = useCallback((): void => { lock(); void store(undefined); }, [lock, store]);
+  /** Erases every shop on this phone and its keystore entries, then boots empty; preferences stay. */
+  const resetDevice = useCallback((): void => {
+    resetting.current = true; void store(undefined);
+    generation.current++; unlockedRef.current = false; setUnlocked(undefined); setBoot({ state: "opening" }); setBootRun(run => run + 1);
+  }, [store]);
+  const changeRemember = useCallback((context: OperationContext, enabled: boolean): void => {
+    memory.setEnabled(enabled); setRemember(enabled);
+    void store(enabled ? rememberMember(context) : undefined, generation.current);
+  }, [memory, store]);
+
+  /** Runs an Android screen KOLO opened (picker, share, print); the app stays signed in while it is open. */
+  const entrySystemUi = useCallback(async <T,>(task: () => Promise<T>): Promise<T> => {
+    systemScreens.current++;
+    try { return await task(); } finally { systemScreens.current--; }
+  }, []);
+
+  const session = useMemo<Session | undefined>(() => {
+    if (unlocked === undefined || boot.state !== "ready") return undefined;
+    let actor: ReturnType<typeof unlockedActor>;
+    try { actor = unlockedActor(unlocked.context); } catch { return undefined; }
+    const database = boot.ports.database, context = unlocked.context;
+    const canManageStaff = actor.isOwner && database.get(`SELECT authority_allowed FROM trusted_exchange_devices WHERE business_id=? AND device_id=?`, [context.businessId, context.deviceId])?.["authority_allowed"] === 1;
+    return {
+      database, ports: boot.ports, files: boot.files, slots: boot.slots, context, generation: unlocked.generation, businessName: actor.businessName, userName: actor.userName,
+      isOwner: actor.isOwner, branchId: actor.branchId, canManageStaff, lock: lockNow, activate,
+      rememberSession: remember, setRememberSession: enabled => changeRemember(context, enabled), resetDevice,
+      isCurrent: value => value === generation.current,
+      systemUi: async task => {
+        const owner = unlocked.generation, result = await entrySystemUi(task);
+        // A result returned after a lock or session change is refused; the actor must still be active.
+        if (generation.current !== owner) throw new WorkspaceError("locked");
+        try { unlockedActor(context); } catch { lock(); throw new WorkspaceError("locked"); }
+        return result;
+      },
+    };
+  }, [unlocked, boot, lock, lockNow, activate, remember, changeRemember, entrySystemUi, resetDevice]);
+
+  if (boot.state !== "ready") return <Page><View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.lg }}>
+    {boot.state === "opening" ? <ActivityIndicator color={colors.primary} /> : <><LanguageControl /><Notice tone="error" text={t("bootFailed")} /></>}
+  </View></Page>;
+  return <>
+    <StatusBar barStyle={scheme === "dark" ? "light-content" : "dark-content"} backgroundColor={colors.surface} />
+    {session === undefined
+      ? <EntryScreen key={`${boot.installation.state}-${generation.current}`} ports={boot.ports} files={boot.files} slots={boot.slots} state={boot.installation} authority={boot.authority}
+          onChanged={refresh} onUnlocked={onUnlocked} onActivated={activate} systemUi={entrySystemUi} />
+      : <SessionProvider key={session.generation} session={session}><Shell /></SessionProvider>}
+  </>;
 }
 
-/** Device language spans setup, staff, transfer and operational screens and survives cold boot. */
+/** Device language and appearance span entry, staff, transfer and operational screens and survive cold boot. */
 export default function App(): React.JSX.Element {
-  return <LanguageProvider storage={languageStorageOnDevice}><AppContent /></LanguageProvider>;
+  return <SafeAreaProvider><KeyboardProvider><PreferencesProvider storage={preferenceStorageOnDevice}><AppContent /></PreferencesProvider></KeyboardProvider></SafeAreaProvider>;
 }

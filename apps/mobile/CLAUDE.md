@@ -9,19 +9,14 @@ Historical mobile notes are preserved in `docs/history/legacy-mobile-guidance.md
 These are the only native imports for those capabilities. App screens import narrow
 `@kolo/core/...` paths; never import the Node SQLite adapter into Metro.
 
-Current UI: permission-aware F4 operational navigation, product/category/stock, split/credit
-POS, counterpart payments, purchases/returns, finance/counts, expenses/reports and
-receipt sharing; offline create/unlock/pending setup/owner recovery/legacy migration,
-owner staff controls, authorized POS/product creation, backup/restore, pairing and
-encrypted file/receipt exchange with diagnostics. Native credentials use
-QuickCrypto/Nitro plus protected Expo SecureStore; rebuild the native app when these
-modules change. Boot/background lock is independent of cloud sessions. The explicit
+Current UI: see [mobile](../../docs/implementation/mobile.md) and the [parity checklist](../../docs/implementation/mobile-parity.md).
+Four destinations (Sell, Products, Activity, More) with stack navigation in `features/shell`;
+screens read the session via `app/session.tsx` and keep transient work in session drafts.
+Native photo/print adapters live in `src/data/photos` and `src/data/output`; system UI goes
+through `session.systemUi`. Boot/background lock is independent of cloud sessions. The explicit
 `npm run dev:mobile:demo` seed alone enables developer fixture migration authority.
-File/backup restoration is implemented in F3; Bluetooth remains F8. Configured
-workspaces use signed v2 events; HTTP v1 is restricted to unconverted legacy data.
 Native file handling uses the SDK-matched expo-file-system adapter. Replacement
 activation updates the durable active slot and App database handle together.
-Preserve all cached records/IDs/events in explicit owner-proven legacy migration.
 See [native acceptance](../../docs/implementation/f1-native-validation.md).
 
 Run commands from the repository root: `npm run typecheck`, `npm test`,
