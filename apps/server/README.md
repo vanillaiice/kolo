@@ -2,6 +2,7 @@
 
 Fastify + PostgreSQL ([ADR-025](../../docs/adr/ADR-025-fastify-server.md)). Clients
 work without it; hosted and self-hosted editions will run the same application.
+Licensed under [AGPL-3.0-only](LICENSE).
 
 Implemented: `/healthz`, `/readyz` (503 without a database) and `/api/v2/capabilities`.
 Authentication, event ingestion and server migrations are planned.

@@ -36,5 +36,6 @@ The technical overview, repository layout and commands are in
 
 ## License
 
-[GPL-3.0-only](LICENSE), except the optional server in `apps/server`, which is not
-licensed for reuse.
+The apps and shared packages are [GPL-3.0-only](LICENSE). The optional sync server in
+`apps/server` is [AGPL-3.0-only](apps/server/LICENSE): anyone who runs a modified copy as
+a service must share their changes with its users.
