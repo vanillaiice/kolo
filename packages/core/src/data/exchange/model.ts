@@ -5,7 +5,7 @@ import type { Permission } from "../../rules/permissions.ts";
 import { ExchangeError } from "../../exchange/types.ts";
 
 /** @internal Allowlisted entity tables used for dependency, scope and immutable-ID checks. */
-export type EntityTable = "business_returns" | "business_return_items" | "business_return_refunds" | "categories" | "products" | "customers" | "suppliers" | "financial_accounts" | "sales" | "sale_items" | "sale_payments" | "inventory_movements" | "customer_transactions" | "purchases" | "purchase_items" | "account_movements" | "supplier_transactions" | "expenses";
+export type EntityTable = "business_returns" | "business_return_items" | "business_return_refunds" | "categories" | "products" | "customers" | "suppliers" | "financial_accounts" | "sales" | "sale_items" | "sale_payments" | "inventory_movements" | "customer_transactions" | "purchases" | "purchase_items" | "account_movements" | "supplier_transactions" | "expenses" | "product_category_sets";
 /** @internal Entity ownership and dependencies derived only from strict payload schemas. */
 export interface EventModel {
   readonly entities: readonly { readonly table: EntityTable; readonly id: string; readonly mutable: boolean; readonly branch: string | null }[];
@@ -50,6 +50,13 @@ export function eventModel(event: JournalEnvelope): EventModel {
       const claim = event.required_permissions.includes("products.edit") ? "products.edit" : "products.create";
       permissions.push(claim); if (product.active === false) permissions.push("products.archive");
       if (product.updated_at < product.created_at) fail();
+      break;
+    }
+    case "PRODUCT_CATEGORIES_SET": {
+      const set = parseEventPayload("PRODUCT_CATEGORIES_SET", event.event_version, event.payload);
+      add("product_category_sets", set.product_id, true); ref("products", set.product_id);
+      for (const id of set.category_ids) ref("categories", id);
+      permissions.push("products.edit");
       break;
     }
     case "CUSTOMER_SAVED": { const { customer } = parseEventPayload("CUSTOMER_SAVED", event.event_version, event.payload); add("customers", customer.id, true); permissions.push("customers.manage"); if (customer.updated_at < customer.created_at) fail(); break; }

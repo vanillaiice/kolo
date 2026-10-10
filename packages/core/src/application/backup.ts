@@ -1,4 +1,7 @@
 import { canonicalJson } from "@kolo/contracts/canonical";
+import { rebuildFullText } from "../data/database/full-text-migration.ts";
+/** The word-search index is derived; snapshots leave it out and the receiver rebuilds it. */
+function dropFullText(db:Database):void{if(db.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='catalogue_search'`)!==undefined)db.run(`DELETE FROM catalogue_search`);}
 import type { SnapshotManifest, SignedSnapshot } from "@kolo/contracts/transfer";
 import { authorizedOperation, nextId, timestamp, runtime } from "../identity/internal-authority.ts";
 import { lockWorkspace, currentInstallation } from "../identity/workspace.ts";
@@ -29,7 +32,7 @@ export async function createSignedSnapshot(context:OperationContext,kind:Snapsho
   if(db.get(`SELECT e.event_id FROM event_journal e LEFT JOIN event_signatures s ON s.event_id=e.event_id WHERE e.business_id=? AND e.origin_device_id=? AND s.event_id IS NULL LIMIT 1`,[context.businessId,context.deviceId])!==undefined)throw new TransferError("pairing_pending");
   const publicKey=String(install["public_key"]),keyReference=String(install["key_reference"]),boundary=snapshotBoundary(db,context.businessId);
   const schema=Number(db.get(`SELECT max(version) AS n FROM schema_migrations`)!["n"]);
-  sanitizeSnapshot(db,context.deviceId);if(options.includePhotos===false)db.run(`DELETE FROM product_photos`);const image=await handle.bytes();
+  sanitizeSnapshot(db,context.deviceId);dropFullText(db);if(options.includePhotos===false)db.run(`DELETE FROM product_photos`);const image=await handle.bytes();
   const manifest:SnapshotManifest={format:"kolo.snapshot",format_version:1,snapshot_id:nextId(ports),kind,schema_version:schema,created_at:timestamp(ports),business:{id:context.businessId,name:String(shop["name"]),currency:"XAF"},owner:{id:context.userId,name:String(owner["name"])},source_device_id:context.deviceId,source_public_key:publicKey,snapshot_digest:await crypto.sha256Bytes(image),snapshot_bytes:image.byteLength,boundary,credential_policy:"device_local_credentials_excluded",target};
   const message=`kolo.snapshot.v1\u0000${canonicalJson(manifest)}`;
   if(ports.credentials.sign===undefined)throw new TransferError("authentication_failed");
@@ -98,6 +101,7 @@ export async function restoreWorkspace(preview:BackupPreview,input:{readonly con
 /** @internal Initializes a validated sanitized snapshot with a fresh writable installation; historical facts retain original origins. */
 export function initializeSnapshot(database:Database,m:SnapshotManifest,input:{installationId:string;deviceId:string;label:string;platform:"ANDROID"|"IOS"|"DESKTOP";publicKey:string;keyReference:string;credentialReference:string;at:string;authorityAllowed:boolean}):void{
  database.transaction(tx=>{
+  rebuildFullText(tx);
   const old=tx.get(`SELECT business_id FROM devices WHERE id=?`,[input.deviceId]);if(old!==undefined&&old["business_id"]!==m.business.id)throw new TransferError("scope_mismatch");
   tx.run(`INSERT OR IGNORE INTO devices(id,business_id,label,platform,created_at,updated_at,last_seen_at) VALUES(?,?,?,?,?,?,?)`,[input.deviceId,m.business.id,input.label,input.platform,input.at,input.at,input.at]);
   tx.run(`INSERT INTO local_installation(id,installation_id,business_id,owner_id,device_id,public_key,key_reference,configured_at) VALUES(1,?,?,?,?,?,?,?)`,[input.installationId,m.business.id,m.owner.id,input.deviceId,input.publicKey,input.keyReference,input.at]);

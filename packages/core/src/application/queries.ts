@@ -1,6 +1,6 @@
 import { categoryOf, type Category } from "../data/products/categories.ts";
 import type { Queryable, Row, SqlValue } from "../data/database/driver.ts";
-import { likePattern } from "../data/database/search.ts";
+import { fullTextQuery, likePattern } from "../data/database/search.ts";
 import { productOf, productByBarcode, type Product } from "../data/products/products.ts";
 import { customerOf, balanceOf, type Customer } from "../data/customers/customers.ts";
 import { supplierOf, balanceOfSupplier, type Supplier } from "../data/suppliers/suppliers.ts";
@@ -18,7 +18,9 @@ export interface Cursor { readonly name: string; readonly id: string; }
 /** Bounded page of local records. A missing cursor means the end of the result. */
 export interface Page<T> { readonly items: readonly T[]; readonly next?: Cursor | undefined; }
 /** Literal prefix search by name or phone/code; limit 1–100, default 30. */
-export interface PageQuery { readonly term?: string; readonly after?: Cursor; readonly limit?: number; readonly includeInactive?: boolean; }
+export interface PageQuery { readonly term?: string; readonly after?: Cursor; readonly limit?: number; readonly includeInactive?: boolean;
+  /** Products only: restricts the page to products whose main or additional category this is. */
+  readonly categoryId?: string | undefined; }
 function options(query: PageQuery): { limit: number; term: string } {
   const limit = query.limit ?? 30, term = query.term?.trim() ?? "";
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || term.length > 120 ||
@@ -35,7 +37,15 @@ function catalogue<T>(tx: Queryable, businessId: string, table: "products" | "ca
     where += ` AND (search_name LIKE ? ESCAPE '\\'`; values.push(prefix);
     if (table === "products") { where += ` OR barcode=? OR sku LIKE ? ESCAPE '\\'`; values.push(term, prefix); }
     if (table === "customers" || table === "suppliers") { where += " OR phone LIKE ? ESCAPE '\\'"; values.push(prefix); }
+    // Any word of the name (and brand, description, phone, contact) through the full-text index.
+    const words = table === "products" || table === "customers" || table === "suppliers" ? fullTextQuery(term) : undefined;
+    if (words !== undefined) { where += " OR id IN (SELECT id FROM catalogue_search WHERE catalogue_search MATCH ? AND entity=? AND business_id=?)"; values.push(words, table, businessId); }
     where += ")";
+  }
+  if (query.categoryId !== undefined) {
+    if (table !== "products" || typeof query.categoryId !== "string") throw new WorkspaceError("invalid_input");
+    // The main category or any additional one.
+    where += " AND (category_id=? OR id IN (SELECT product_id FROM product_categories WHERE business_id=? AND category_id=?))"; values.push(query.categoryId, businessId, query.categoryId);
   }
   if (query.after !== undefined) { where += " AND (name,id)>(?,?)"; values.push(query.after.name, query.after.id); }
   values.push(limit + 1);
@@ -84,6 +94,24 @@ export function productStock(context: OperationContext, productId: string): Retu
   return authorizedOperation(context, ["inventory.view"], (_db, tx) => {
     if (productOf(tx, context.businessId, productId) === undefined) throw new WorkspaceError("scope_mismatch");
     return stockOf(tx, context.businessId, productId);
+  });
+}
+
+/**
+ * Signed stock for up to 100 products of this shop in one read, under inventory.view. Products of
+ * another shop or unknown IDs are absent from the result rather than refused, so a visible list page
+ * can ask for its rows without a query per row.
+ */
+export function stockLevels(context: OperationContext, productIds: readonly string[]): ReadonlyMap<string, number> {
+  if (productIds.length > 100 || productIds.some(id => typeof id !== "string")) throw new WorkspaceError("invalid_input");
+  return authorizedOperation(context, ["inventory.view"], (_db, tx) => {
+    const result = new Map<string, number>();
+    if (productIds.length === 0) return result;
+    const rows = tx.all(`SELECT p.id AS id, coalesce(sum(m.quantity), 0) AS on_hand FROM products p
+      LEFT JOIN inventory_movements m ON m.business_id = p.business_id AND m.product_id = p.id
+      WHERE p.business_id = ? AND p.id IN (${productIds.map(() => "?").join(",")}) GROUP BY p.id`, [context.businessId, ...productIds]);
+    for (const row of rows) result.set(String(row["id"]), sqlInteger(row["on_hand"] ?? 0));
+    return result;
   });
 }
 
@@ -144,16 +172,18 @@ export function receipts(context: OperationContext, query: PageQuery = {}): Page
       next: rows.length > limit && last !== undefined ? { name: String(last["occurred_at"]), id: String(last["id"]) } : undefined };
   });
 }
-/** Bounded customer/supplier ledger page, newest first; preserves signs and references for statements. */
+/** Bounded customer/supplier ledger page, newest first; preserves signs and references, and adds `balance_minor`, the running balance after each entry. */
 export function statement(context: OperationContext, kind: "customer" | "supplier", id: string, query: PageQuery = {}): Page<Row> {
   if (kind !== "customer" && kind !== "supplier") throw new WorkspaceError("invalid_input");
   return authorizedOperation(context, [kind === "customer" ? "customers.view" : "suppliers.view"], (_db, tx) => {
     const { limit } = options(query), values: SqlValue[] = [context.businessId, id];
     if ((kind === "customer" ? customerOf : supplierOf)(tx, context.businessId, id) === undefined) throw new WorkspaceError("scope_mismatch");
-    let where = `business_id=? AND ${kind}_id=?`;
+    let where = "1=1";
     if (query.after !== undefined) { where += " AND (occurred_at,id)<(?,?)"; values.push(query.after.name, query.after.id); }
     values.push(limit + 1);
-    const rows = tx.all(`SELECT * FROM ${kind}_transactions WHERE ${where} ORDER BY occurred_at DESC,id DESC LIMIT ?`, values), shown = rows.slice(0, limit), last = shown.at(-1);
+    // balance_minor is the running balance after each entry, summed oldest first over the whole ledger.
+    const rows = tx.all(`SELECT * FROM (SELECT t.*, sum(t.amount_minor) OVER (ORDER BY t.occurred_at, t.id) AS balance_minor FROM ${kind}_transactions t
+      WHERE t.business_id=? AND t.${kind}_id=?) WHERE ${where} ORDER BY occurred_at DESC,id DESC LIMIT ?`, values), shown = rows.slice(0, limit), last = shown.at(-1);
     return { items: shown, next: rows.length > limit && last !== undefined ? { name: String(last["occurred_at"]), id: String(last["id"]) } : undefined };
   });
 }

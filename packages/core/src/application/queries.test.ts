@@ -75,7 +75,9 @@ it("bounded keyset catalogue handles duplicate names, archived rows, literal wil
   for (const limit of [0, -1, 101, Infinity, 1.5]) assert.throws(() => queries.products(f.context, { limit }));
   assert.ok(f.db.all(`EXPLAIN QUERY PLAN SELECT id,name FROM products WHERE business_id=? AND active=1 AND (name,id)>(?,?) ORDER BY name,id LIMIT 31`, [f.context.businessId, "A", "x"]).some(row => String(row["detail"]).includes("products_operational_page")));
   const foreign = await fixture(); const foreignProduct = foreign.product();
-  assert.equal(queries.products(f.context, { term: "Rice" }).items.length, 0);
+  // Word search finds this shop's active "50X rice" ("50% rice" was archived above), never the other shop's "Rice".
+  const rice = queries.products(f.context, { term: "Rice" }).items;
+  assert.deepEqual(rice.map(row => row.name), ["50X rice"]); assert.ok(!rice.some(row => row.id === foreignProduct));
   assert.throws(() => queries.productStock(f.context, foreignProduct)); assert.throws(() => queries.receipt(f.context, foreign.sale(foreignProduct)));
 });
 
@@ -143,7 +145,7 @@ it("schema 18 upgrades forward preserving catalogue metadata, events and append-
   for (const migration of MIGRATIONS.filter(item => item.version <= 18)) db.transaction(tx => { for (const sql of migration.statements) tx.run(sql); tx.run(`INSERT INTO schema_migrations VALUES (?,?,?)`, [migration.version, migration.name, at]); });
   const shop = randomUUIDv7(), category = randomUUIDv7(); db.run(`INSERT INTO businesses(id,name,currency,created_at,updated_at) VALUES (?,'Legacy','XAF',?,?)`, [shop, at, at]);
   db.run(`INSERT INTO categories(id,business_id,name,created_at,updated_at) VALUES (?,?,'Legacy category',?,?)`, [category, shop, at, at]);
-  assert.deepEqual(migrate(db).applied.map(item => item.version), [19, 20, 21, 22]); assert.equal(db.get(`SELECT name FROM categories`)!["name"], "Legacy category");
+  assert.deepEqual(migrate(db).applied.map(item => item.version), [19, 20, 21, 22, 23, 24]); assert.equal(db.get(`SELECT name FROM categories`)!["name"], "Legacy category");
   assert.equal(db.get(`SELECT updated_by_device FROM categories`)!["updated_by_device"], null);
 });
 

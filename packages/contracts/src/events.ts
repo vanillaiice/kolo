@@ -35,6 +35,8 @@ export const EVENT_PAYLOAD_SCHEMAS = {
   PRODUCT_SAVED: z.strictObject({ product: z.strictObject({ id: uuid, category_id: uuid.optional(), name, unit: name,
     selling_price_minor: money, purchase_price_minor: money.optional(), sku: text.optional(), barcode: text.optional(), description: text.optional(), brand: text.optional(),
     divisible: z.boolean().optional(), active: z.boolean().optional(), tax_rate_basis_points: whole.min(0).max(10000).optional(), minimum_stock: money.optional(), created_at: timestamp, updated_at: timestamp }) }),
+  /** A product's additional categories (its main category stays on PRODUCT_SAVED); last write wins per product. */
+  PRODUCT_CATEGORIES_SET: z.strictObject({ product_id: uuid, category_ids: z.array(uuid).max(20).refine(ids => new Set(ids).size === ids.length), updated_at: timestamp }),
   CUSTOMER_SAVED: z.strictObject({ customer: z.strictObject({ id: uuid, name, phone: text.optional(), address: text.optional(), notes: text.optional(),
     credit_limit_minor: money.optional(), active: z.boolean().optional(), created_at: timestamp, updated_at: timestamp }) }),
   SUPPLIER_SAVED: z.strictObject({ supplier: z.strictObject({ id: uuid, name, phone: text.optional(), address: text.optional(), contact: text.optional(), notes: text.optional(),

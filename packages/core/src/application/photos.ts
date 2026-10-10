@@ -51,6 +51,21 @@ export function productPhotoDigest(context: OperationContext, productId: string)
   return authorizedOperation(context, ["products.view"], (_database, tx) => photos.productPhotoDigest(tx, context.businessId, productId));
 }
 
+/**
+ * Photo digests for up to 100 products in one read, under products.view; products without a photo
+ * on this device are absent. Lists use the digest as a cache key and load bytes for visible rows only.
+ */
+export function productPhotoDigests(context: OperationContext, productIds: readonly string[]): ReadonlyMap<string, string> {
+  if (productIds.length > 100 || productIds.some(id => typeof id !== "string")) throw new WorkspaceError("invalid_input");
+  return authorizedOperation(context, ["products.view"], (_database, tx) => {
+    const result = new Map<string, string>();
+    if (productIds.length === 0) return result;
+    for (const row of tx.all(`SELECT product_id, digest FROM product_photos WHERE business_id = ? AND product_id IN (${productIds.map(() => "?").join(",")})`, [context.businessId, ...productIds]))
+      result.set(String(row["product_id"]), String(row["digest"]));
+    return result;
+  });
+}
+
 /** How many photos the shop holds against its storage limit (standard or large), under products.view. */
 export function photoUsage(context: OperationContext, options: { readonly large?: boolean } = {}): ReturnType<typeof photos.photoUsage> {
   return authorizedOperation(context, ["products.view"], (_database, tx) => photos.photoUsage(tx, context.businessId, shopLimit(options)));

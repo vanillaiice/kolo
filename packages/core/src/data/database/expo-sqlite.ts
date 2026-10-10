@@ -129,9 +129,19 @@ class NativeSqliteDatabase implements Database {
     this.#connection = connection;
   }
 
+  #closed = false;
+  /**
+   * The open native handle. A query on a closed expo-sqlite handle corrupts native memory and aborts
+   * the app, so it is refused here as an ordinary error instead.
+   */
+  #live(): NativeDatabase {
+    if (this.#closed) throw new DatabaseError("the database is closed", "");
+    return this.#connection;
+  }
+
   run(sql: string, parameters: readonly SqlValue[] = []): WriteResult {
     try {
-      const result = this.#connection.runSync(sql, bind(parameters, sql));
+      const result = this.#live().runSync(sql, bind(parameters, sql));
       if (Number(result.changes) > 0) {
         const domains = domainsForWrite(sql);
         if (this.#depth > 0) for (const domain of domains) this.#changed.add(domain);
@@ -145,7 +155,7 @@ class NativeSqliteDatabase implements Database {
 
   all(sql: string, parameters: readonly SqlValue[] = []): Row[] {
     try {
-      return this.#connection.getAllSync(sql, bind(parameters, sql)) as Row[];
+      return this.#live().getAllSync(sql, bind(parameters, sql)) as Row[];
     } catch (cause) {
       throw new DatabaseError(describe(cause), sql, { cause });
     }
@@ -153,7 +163,7 @@ class NativeSqliteDatabase implements Database {
 
   get(sql: string, parameters: readonly SqlValue[] = []): Row | undefined {
     try {
-      const row = this.#connection.getFirstSync(sql, bind(parameters, sql));
+      const row = this.#live().getFirstSync(sql, bind(parameters, sql));
       // The native driver reports "no row" as null; the interface says
       // undefined, and callers test for undefined.
       return row === null || row === undefined ? undefined : (row as Row);
@@ -181,13 +191,13 @@ class NativeSqliteDatabase implements Database {
       }
     }
 
-    this.#connection.execSync("BEGIN IMMEDIATE");
+    this.#live().execSync("BEGIN IMMEDIATE");
     let committed = false;
     this.#changed.clear();
     this.#depth = 1;
     try {
       const result = work(this);
-      this.#connection.execSync("COMMIT");
+      this.#live().execSync("COMMIT");
       committed = true;
       return result;
     } catch (error) {
@@ -195,7 +205,7 @@ class NativeSqliteDatabase implements Database {
       // itself fails there is nothing useful left to do, and the original
       // failure is the one worth reporting.
       try {
-        this.#connection.execSync("ROLLBACK");
+        this.#live().execSync("ROLLBACK");
       } catch {
         // Intentionally ignored; see above.
       }
@@ -207,7 +217,10 @@ class NativeSqliteDatabase implements Database {
     }
   }
 
+  /** Closes the handle once; later calls are ignored, so a replaced database can be retired safely. */
   close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
     this.#connection.closeSync();
   }
 }

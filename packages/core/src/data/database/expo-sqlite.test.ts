@@ -267,3 +267,16 @@ describe("committed domain invalidation through the native synchronous adapter",
     database.run(`UPDATE products SET id='z' WHERE id='missing'`);assert.equal(notifications,0);assert.equal(changeRevision(database,["products"]),"0");unsubscribe();database.close();
   });
 });
+
+describe("a retired native handle", () => {
+  it("closes once and refuses later queries as an ordinary error instead of touching freed native memory", () => {
+    let closes = 0;
+    const native = new FakeNative(), original = native.closeSync.bind(native);
+    native.closeSync = () => { closes++; original(); };
+    const retired = openNativeDatabase(native);
+    retired.close(); retired.close();
+    assert.equal(closes, 1);
+    for (const work of [() => retired.get("SELECT 1"), () => retired.all("SELECT 1"), () => retired.run("SELECT 1"), () => retired.transaction(() => undefined)])
+      assert.throws(work, (error: unknown) => error instanceof DatabaseError);
+  });
+});

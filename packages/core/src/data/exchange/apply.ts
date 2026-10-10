@@ -1,4 +1,5 @@
 import { applyReturn } from "../returns/returns.ts";
+import { writeProductCategories } from "../products/product-categories.ts";
 import { upsertCategory } from "../products/categories.ts";
 import { parseEventPayload, type EventType, type JournalEnvelope } from "@kolo/contracts/events";
 import type { Queryable, SqlValue } from "../database/driver.ts";
@@ -54,6 +55,11 @@ export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewe
     const old = tx.get(`SELECT * FROM categories WHERE id=?`, [category.id]);
     if (old !== undefined && (category.updated_at > String(old["updated_at"]) || category.updated_at === old["updated_at"] && event.origin_device_id > String(old["updated_by_device"] ?? ""))) require("products.edit");
     upsertCategory(tx, { id: category.id, businessId: event.business_id, name: category.name, active: category.active, createdAt: category.created_at, updatedAt: category.updated_at }, event.origin_device_id);
+    claimEntities(tx,event,model); return;
+  }
+  if (event.event_type === "PRODUCT_CATEGORIES_SET") {
+    const set = parseEventPayload("PRODUCT_CATEGORIES_SET",2,event.payload);
+    writeProductCategories(tx, { businessId: event.business_id, productId: set.product_id, categoryIds: set.category_ids, updatedAt: set.updated_at }, event.origin_device_id);
     claimEntities(tx,event,model); return;
   }
   if (event.event_type === "SALE_COMPLETED") {

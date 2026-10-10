@@ -48,3 +48,4 @@ consult and supersede, per §55.
 - [ADR-026: Compressed transfer files and larger snapshots](ADR-026-compressed-transfer-files.md) — deflate before encryption (format v2), bounded inflation, 128 MiB snapshots; supersedes ADR-022 limits.
 
 - [ADR-027: Opt-in large transfer files and optional product photos](ADR-027-large-files-and-product-photos.md) — standard/large size profiles, per-computer switch; photo thumbnails in migration 22.
+- [ADR-028](ADR-028-additional-product-categories.md) — one main category for reports plus up to 20 others for browsing (migration 23).

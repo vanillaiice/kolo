@@ -87,6 +87,8 @@ it("a shop larger than the former 16 MiB snapshot cap backs up and restores",asy
  const preview=await previewBackup(doc.text,password,b.files,crypto);
  const restored=await restoreWorkspace(preview,{confirmedBusinessId:installation.businessId,deviceLabel:"B",platform:"DESKTOP",secret},b.ports);databases.push(restored.database);
  assert.equal(restored.database.get(`SELECT count(*) AS n FROM products`)!["n"],120_000);
+ // The word-search index is left out of the file and rebuilt on restore.
+ assert.equal(restored.database.get(`SELECT count(*) AS n FROM catalogue_search WHERE entity='products'`)!["n"],120_000);
 });
 it("WAL-consistent encrypted backup restores a fresh native identity, preserves history and permits new writes",async()=>{
  const a=fixture(),b=fixture(),installation=await createWorkspace({businessName:"Backup shop",ownerName:"Owner",deviceLabel:"A",platform:"DESKTOP",currency:"XAF",secret},a.ports),context=await unlockWorkspace({userId:installation.ownerId,secret},a.ports);

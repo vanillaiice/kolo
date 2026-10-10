@@ -39,3 +39,16 @@ export function likePattern(term: string, { anywhere = false }: { readonly anywh
   const escaped = foldSearchTerm(term).replace(/[\\%_]/g, character => "\\" + character);
   return `${anywhere ? "%" : ""}${escaped}%`;
 }
+
+/**
+ * An FTS5 query for a typed term: every word must match, the last one as a prefix while it is
+ * still being typed ("sac riz parf" finds "Sac de riz parfumé"). Only letters and digits reach the query, so operators, quotes and
+ * column filters typed by a user are inert. Returns undefined when nothing searchable remains.
+ */
+export function fullTextQuery(term: string): string | undefined {
+  const folded = foldSearchTerm(term), words = folded.match(/[\p{L}\p{N}]+/gu)?.slice(0, 8) ?? [];
+  if (words.length === 0) return undefined;
+  // The last word is a prefix only while it is still being typed; "50%" or "riz " mean the whole word.
+  const typing = /[\p{L}\p{N}]$/u.test(folded);
+  return words.map((word, index) => `"${word}"${typing && index === words.length - 1 ? "*" : ""}`).join(" ");
+}

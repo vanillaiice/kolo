@@ -1,7 +1,9 @@
 import { parseEventPayload } from "@kolo/contracts/events";
+import { writeProductCategories } from "../data/products/product-categories.ts";
 import { upsertCategory, type Category } from "../data/products/categories.ts";
 import { enqueue } from "../data/sync/outbox.ts";
 import { sumAmounts } from "../rules/amounts.ts";
+import { sqlInteger } from "../data/database/safe-values.ts";
 import type { Queryable } from "../data/database/driver.ts";
 import { saveProduct as writeProduct, type SaveProduct } from "../data/products/products.ts";
 import { saveCustomer as writeCustomer, recordCustomerPayment, customerOf, wouldExceedCreditLimit, type SaveCustomer, type CustomerPayment } from "../data/customers/customers.ts";
@@ -251,7 +253,8 @@ function checkBranch(tx: Queryable, context: OperationContext, branchId: string 
 
 /**
  * Counts actual stock in thousandths under inventory.count. Computes a compensating
- * delta against current stock inside the write transaction; a matching count records
+ * delta against current stock (the counted branch's, when the shop has several)
+ * inside the write transaction; a matching count records
  * audit only. Negative observed quantities and fractional indivisible units are refused.
  * An optional caller request ID becomes the movement ID and is kept in the local audit,
  * so adapters can recognise a retried count instead of recounting against later sales.
@@ -262,7 +265,11 @@ export function countStock(context: OperationContext, input: { readonly productI
     checkBranch(tx, context, input.branchId);
     if (!Number.isSafeInteger(input.countedThousandths) || input.countedThousandths < 0 || input.reason.trim() === "" ||
       (product?.["divisible"] === 0 && input.countedThousandths % 1000 !== 0)) throw new WorkspaceError("invalid_input");
-    const current = stockOf(tx, context.businessId, input.productId).onHandThousandths;
+    // A shop with several branches counts one branch's shelves, so the count is
+    // compared with that branch's ledger. With one branch, movements recorded
+    // without a branch are the same shelves and the whole ledger is compared.
+    const branches = sqlInteger(tx.get(`SELECT count(*) AS n FROM branches WHERE business_id = ?`, [context.businessId])!["n"]!);
+    const current = stockOf(tx, context.businessId, input.productId, branches > 1 ? input.branchId : undefined).onHandThousandths;
     const delta = sumAmounts([input.countedThousandths, -current]);
     if (delta !== 0) {
       const at = ports.now(), eventId = nextId(ports);
@@ -313,5 +320,26 @@ export function saveCategory(context: OperationContext, input: Omit<Category, "b
       appendLocalAudit(tx, context, ports, revision, "CATEGORY_SAVED", input.id);
       return result;
     });
+  });
+}
+
+/**
+ * Sets a product's additional categories under products.edit (last write wins, like product
+ * details). The main category stays on the product; it is removed from this set, duplicates are
+ * dropped, at most 20 remain, and every category must belong to the shop. The set, its v2 event and
+ * audit commit together. Returns false when a newer set is already stored.
+ */
+export function setProductCategories(context: OperationContext, input: { readonly productId: string; readonly categoryIds: readonly string[]; readonly updatedAt: string }): boolean {
+  return authorizedOperation(context, ["products.edit"], (_database, tx, ports, revision) => {
+    const product = related(tx, context, "products", input.productId);
+    const main = product?.["category_id"];
+    const categoryIds = [...new Set(input.categoryIds)].filter(id => id !== main).sort();
+    for (const id of categoryIds) related(tx, context, "categories", id);
+    const payload = { product_id: input.productId, category_ids: categoryIds, updated_at: input.updatedAt };
+    try { parseEventPayload("PRODUCT_CATEGORIES_SET", 2, payload); } catch { throw new WorkspaceError("invalid_input"); }
+    const result = writeProductCategories(tx, { businessId: context.businessId, productId: input.productId, categoryIds, updatedAt: input.updatedAt }, context.deviceId);
+    enqueue(tx, { eventId: nextId(ports), ...context, type: "PRODUCT_CATEGORIES_SET", payload, occurredAt: input.updatedAt });
+    appendLocalAudit(tx, context, ports, revision, "PRODUCT_CATEGORIES_SET", input.productId);
+    return result;
   });
 }

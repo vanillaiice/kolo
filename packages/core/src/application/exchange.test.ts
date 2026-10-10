@@ -16,6 +16,7 @@ import { registerExchangeDestination, eventSigningMessage, verifyEvent, sealPend
 import { applyEvent, retryDeferred, reviewQuarantinedEvent } from "./event-application.ts";
 import { createJournalBatch, importJournalBatch, createPeerReceipt, acknowledgeDelivery, eventsForDestination, exchangeStatus } from "./event-delivery.ts";
 import * as commands from "./operations.ts";
+import * as queries from "./queries.ts";
 import { stockOf } from "../data/inventory/movements.ts";
 import { balanceOfAccount } from "../data/finance/cash.ts";
 
@@ -235,6 +236,26 @@ it("category dependencies and last-write-wins edits relay without losing product
   await send(a,b); assert.equal(b.db.get(`SELECT name FROM categories WHERE id=?`,[category])!["name"], "Food");
   assert.equal(b.db.get(`SELECT category_id FROM products WHERE id=?`,[p])!["category_id"],category);
   assert.equal(applyEvent(b.context,await verifyEvent(b.context,categoryEvent,crypto)), "duplicate");
+});
+
+it("additional product categories relay under last-write-wins, keep the main category for reports and replay harmlessly", async () => {
+  const [a,b] = await replicas() as [Replica,Replica], food = randomUUIDv7(), drinks = randomUUIDv7(), promo = randomUUIDv7(), p = randomUUIDv7();
+  for (const [id, name] of [[food, "Food"], [drinks, "Drinks"], [promo, "Promo"]] as const) commands.saveCategory(a.context, { id, name, active: true, createdAt: at, updatedAt: at });
+  commands.saveProduct(a.context, { id: p, categoryId: food, name: "Juice", unit: "unit", divisible: false, sellingPriceMinor: 500, currency: "XAF", taxRateBasisPoints: 0, minimumStock: 0, active: true, createdAt: at, updatedAt: at });
+  assert.equal(commands.setProductCategories(a.context, { productId: p, categoryIds: [promo, food, drinks, drinks], updatedAt: "2026-10-06T06:01:00.000Z" }), true);
+  assert.deepEqual(a.db.all(`SELECT category_id FROM product_categories WHERE product_id=? ORDER BY category_id`, [p]).map(row => row["category_id"]), [drinks, promo].sort(), "the main category and duplicates are dropped");
+  for (const id of [food, drinks, promo]) assert.deepEqual(queries.products(a.context, { categoryId: id }).items.map(item => item.id), [p]);
+  assert.equal(commands.setProductCategories(a.context, { productId: p, categoryIds: [], updatedAt: "2026-10-06T06:00:30.000Z" }), false, "an older set loses");
+  assert.throws(() => commands.setProductCategories(a.context, { productId: p, categoryIds: [randomUUIDv7()], updatedAt: "2026-10-06T06:02:00.000Z" }));
+  await send(a,b);
+  assert.deepEqual(b.db.all(`SELECT category_id FROM product_categories WHERE product_id=? ORDER BY category_id`, [p]).map(row => row["category_id"]), [drinks, promo].sort());
+  assert.equal(b.db.get(`SELECT category_id FROM products WHERE id=?`, [p])!["category_id"], food);
+  commands.setProductCategories(b.context, { productId: p, categoryIds: [promo], updatedAt: "2026-10-06T06:03:00.000Z" });
+  await send(b,a);
+  assert.deepEqual(a.db.all(`SELECT category_id FROM product_categories WHERE product_id=?`, [p]).map(row => row["category_id"]), [promo]);
+  const sets = eventsForDestination(a.context, dest(a,b)).filter(e => e.envelope.event_type === "PRODUCT_CATEGORIES_SET");
+  for (const e of sets) assert.equal(applyEvent(b.context, await verifyEvent(b.context, e, crypto)), "duplicate");
+  assert.deepEqual(b.db.all(`SELECT category_id FROM product_categories WHERE product_id=?`, [p]).map(row => row["category_id"]), [promo], "a replayed older set never overwrites the newer one");
 });
 
 it("partial returns replay in predecessor order, duplicate harmlessly and quarantine competing source chains",async()=>{
