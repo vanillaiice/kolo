@@ -8,14 +8,23 @@ import { newIdOnDevice } from "../auth/local-credentials-on-device.ts";
 import { sqlitePreferences, type PreferenceStorage } from "./preferences.ts";
 import { localSecretKeys } from "@kolo/core/identity/device-reset";
 
+/**
+ * Every connection opens through here. expo-sqlite's close finalizes every statement still linked to
+ * the connection by default, including the FTS5 search index's own internal statements, which FTS5
+ * frees again when it disconnects: a double free that aborts the app (Scudo) on any close after a
+ * search or migration 24's index rebuild. The adapter finalizes its statements itself (the
+ * `getAllSync`/`runSync` helpers do), so the blanket finalize is turned off.
+ */
+function openConnection(name:string):Database{return openNativeDatabase(openDatabaseSync(name,{useNewConnection:true,finalizeUnusedStatementsBeforeClosing:false}));}
+
 /** Opens only device preferences; business activation and restore cannot replace them. */
 export const preferenceStorageOnDevice: PreferenceStorage = {
  read(key) {
-  const database = openNativeDatabase(openDatabaseSync("device-preferences.db", { useNewConnection: true }));
+  const database = openConnection("device-preferences.db");
   try { return sqlitePreferences(database).read(key); } finally { database.close(); }
  },
  write(key, value) {
-  const database = openNativeDatabase(openDatabaseSync("device-preferences.db", { useNewConnection: true }));
+  const database = openConnection("device-preferences.db");
   try { sqlitePreferences(database).write(key, value); } finally { database.close(); }
  },
 };
@@ -33,7 +42,7 @@ export interface SlotControl {
  alias(stage:Database,current:Database):void;
 }
 export function openOnDevice():{readonly database:Database;readonly migration:MigrationResult;readonly files:SnapshotPort;readonly slots:SlotControl;readonly close:()=>void}{
- const open=(name:string):Database=>openNativeDatabase(openDatabaseSync(name,{useNewConnection:true}));
+ const open=(name:string):Database=>openConnection(name);
  const path=(name:string):string=>`${defaultDatabaseDirectory.replace(/^file:\/\//,"").replace(/\/$/,"")}/${name}`;
  const file=(name:string):File=>new File(`file://${path(name)}`);
  const control=open("workspace-slots.db");control.run("PRAGMA synchronous=FULL");
@@ -83,7 +92,7 @@ export function eraseShopsOnDevice():string[]{
  const directory=new Directory(`file://${root}`),keys=new Set<string>();
  const names=directory.list().filter((entry):entry is File=>entry instanceof File).map(entry=>entry.name);
  for(const name of names.filter(item=>/^(kolo\.db|workspace-[0-9a-f-]+\.db)$/.test(item))){
-  try{const database=openNativeDatabase(openDatabaseSync(name,{useNewConnection:true}));try{for(const key of localSecretKeys(database))keys.add(key);}finally{database.close();}}
+  try{const database=openConnection(name);try{for(const key of localSecretKeys(database))keys.add(key);}finally{database.close();}}
   catch{/* An unreadable file still gets deleted; its keys cannot be named. */}
  }
  for(const name of names)if(/^(kolo\.db|workspace-[0-9a-f-]+\.db|stage-[0-9a-f-]+\.db|workspace-slots\.db)(?:-wal|-shm|-journal)?$/.test(name))new File(`file://${root}/${name}`).delete();
