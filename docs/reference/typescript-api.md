@@ -1433,6 +1433,7 @@ export interface JoinCodeView {
     readonly joinId: string;
     readonly code: string;
     readonly link: string;
+    readonly url: string;
     readonly expiresAt: string;
     readonly authorityAllowed: boolean;
 }
@@ -1945,7 +1946,8 @@ Replaces an operator's authenticator secret, for a lost phone. Signs every sessi
 resetTotp(db: Kysely<ServerDatabase>, username: string): Promise<{ readonly secret: string; readonly uri: string; }>;
 ```
 
-Password plus a fresh TOTP code. Repeated failures lock the account for a while; a code is accepted once only.
+Password plus a fresh TOTP code (or the password alone where the operator turned TOTP off on a loopback-only
+dashboard). Repeated failures lock the account for a while; a code is accepted once only.
 Every outcome is audited. Returns a session token for an HttpOnly cookie; only its hash is stored.
 
 ```ts
@@ -1955,6 +1957,7 @@ signIn(db: Kysely<ServerDatabase>, input: {
     readonly code: string;
     readonly address: string;
     readonly now: Date;
+    readonly totp?: boolean;
 }): Promise<{ readonly token: string; readonly admin: Admin; }>;
 ```
 
@@ -1995,6 +1998,7 @@ export interface AdminOptions {
     readonly rateLimitMax?: number;
     readonly now?: () => Date;
     readonly edition?: Edition;
+    readonly totp?: boolean;
 }
 ```
 
@@ -2325,6 +2329,7 @@ export interface ServerConfig {
     readonly admin?: {
         readonly host: string;
         readonly port: number;
+        readonly totp?: boolean;
     } | undefined;
     readonly adminUiDir?: string | undefined;
     readonly edition?: "selfhost" | "hosted";
