@@ -9,6 +9,8 @@ export type ReportKind = "dashboard" | "sales" | "salesByProduct" | "salesByCate
   "fastMoving" | "stockAlerts" | "customerDebt" | "supplierDebt" | "purchases";
 /** Every report kind, in the order the clients list them. */
 export const REPORT_KINDS: readonly ReportKind[] = ["dashboard", "sales", "salesByProduct", "salesByCategory", "salesByAccount", "salesByUser", "cashFlow", "valuation", "fastMoving", "stockAlerts", "customerDebt", "supplierDebt", "purchases"];
+/** Reports of the present state (stock and balances owed). They ignore `from`/`until`, which are not validated for them. */
+export const UNDATED_REPORT_KINDS: ReadonlySet<ReportKind> = new Set(["valuation", "stockAlerts", "customerDebt", "supplierDebt"]);
 /** The permission each report kind is read under. */
 export const REPORT_PERMISSION: Readonly<Record<ReportKind, "reports.financial" | "reports.sales" | "reports.inventory" | "reports.customers" | "reports.suppliers">> = {
   dashboard: "reports.financial", sales: "reports.sales", salesByProduct: "reports.sales", salesByCategory: "reports.sales", salesByAccount: "reports.sales",
@@ -78,12 +80,12 @@ function capped(lines: readonly ReportLine[], rows: number): { lines: ReportLine
 
 /**
  * One report under its core permission over `[from, until)` (ISO instants from shared local-day
- * rules; empty or decade-plus periods are refused). Row lists are bounded by `options.rows`
+ * rules; empty or decade-plus periods are refused). {@link UNDATED_REPORT_KINDS} ignore the period. Row lists are bounded by `options.rows`
  * (default and maximum 500, stock alerts 100) with a `truncated` flag; totals stay exact.
  */
 export function reportView(context: OperationContext, kind: ReportKind, from: string, until: string, options: ViewOptions = {}): ReportResult {
   if (!REPORT_KINDS.includes(kind)) throw new WorkspaceError("invalid_input");
-  period(from, until);
+  if (!UNDATED_REPORT_KINDS.has(kind)) period(from, until);
   const rows = cap(options);
   switch (kind) {
     case "dashboard": {

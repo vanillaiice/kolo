@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
-import { analyticsView, reportView, REPORT_KINDS, REPORT_PERMISSION, type AnalyticsBucket, type AnalyticsResult, type ReportKind, type ReportLine, type ReportResult } from "@kolo/core/application/report-views";
+import { analyticsView, reportView, REPORT_KINDS, REPORT_PERMISSION, UNDATED_REPORT_KINDS, type AnalyticsBucket, type AnalyticsResult, type ReportLine, type ReportResult } from "@kolo/core/application/report-views";
 import { localDayPeriod } from "@kolo/core/domain/entry";
 import { formatMoney, formatQuantity } from "@kolo/core/domain/money";
 import { localeOf, useText, type Language, type TextKey } from "../../app/i18n.tsx";
@@ -16,7 +16,6 @@ const PHONE_ROWS = 100;
 type Preset = "today" | "last7" | "last30" | "thisMonth" | "thisYear";
 const PRESETS: readonly Preset[] = ["today", "last7", "last30", "thisMonth", "thisYear"];
 /** Report kinds whose figures do not depend on a period (current balances and stock). */
-const TIMELESS: ReadonlySet<ReportKind> = new Set(["valuation", "stockAlerts", "customerDebt", "supplierDebt"]);
 function presetStart(preset: Preset): Date {
   const start = new Date();
   if (preset === "last7") start.setDate(start.getDate() - 6);
@@ -68,12 +67,12 @@ export function ReportScreen(): React.JSX.Element {
   const revision = useRevision(["sales", "inventory", "customers", "suppliers", "purchases", "accounts", "expenses"]);
   const { period, control } = usePeriod("report-period", "today");
   const result = useDeferredRecord((): ReportResult | undefined => {
-    const range = TIMELESS.has(kind) ? { from: new Date(0).toISOString(), until: new Date(Date.now() + 86_400_000).toISOString() } : period;
+    const range = UNDATED_REPORT_KINDS.has(kind) ? { from: new Date(0).toISOString(), until: new Date().toISOString() } : period;
     return range === undefined ? undefined : reportView(context, kind, range.from, range.until, { rows: PHONE_ROWS });
   }, [context, kind, period?.from, period?.until, revision]);
   const value = result.value;
   return <Screen title={t(`report.${kind}` as TextKey)} onBack={nav.back}>
-    {!TIMELESS.has(kind) && control}
+    {!UNDATED_REPORT_KINDS.has(kind) && control}
     {result.loading && <ActivityIndicator accessibilityLabel={t("loading")} />}
     {result.failed && <Notice tone="error" text={t("loadFailed")} />}
     {value !== undefined && <ReportBody value={value} />}

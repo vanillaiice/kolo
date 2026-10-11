@@ -11,7 +11,7 @@ import * as commands from "./operations.ts";
 import * as queries from "./queries.ts";
 import * as records from "./records.ts";
 import { productPhotoDigests, setProductPhoto } from "./photos.ts";
-import { analyticsView, reportView, REPORT_KINDS, REPORT_PERMISSION } from "./report-views.ts";
+import { analyticsView, reportView, REPORT_KINDS, REPORT_PERMISSION, UNDATED_REPORT_KINDS } from "./report-views.ts";
 
 const at = "2026-10-06T09:00:00.000Z", secret = "fixture-secret", day = { from: "2026-10-06T00:00:00.000Z", until: "2026-10-07T00:00:00.000Z" };
 const databases: Database[] = [];
@@ -135,6 +135,12 @@ it("report and analytics views bound rows, keep totals exact, refuse bad input a
   for (const bad of [{ from: day.until, until: day.from }, { from: day.from, until: day.from }, { from: "2000-01-01T00:00:00.000Z", until: day.until }, { from: "nonsense", until: day.until }])
     assert.throws(() => reportView(f.context, "sales", bad.from, bad.until), (error: unknown) => error instanceof WorkspaceError && error.code === "invalid_input");
   for (const rows of [0, 501, 1.5]) assert.throws(() => reportView(f.context, "sales", day.from, day.until, { rows }));
+  // Present-state reports ignore the period: mobile asked for them from 1970, which a dated report refuses.
+  for (const kind of REPORT_KINDS) {
+    const since1970 = (): unknown => reportView(f.context, kind, new Date(0).toISOString(), day.until, { rows: 3 });
+    if (UNDATED_REPORT_KINDS.has(kind)) assert.deepEqual(since1970(), reportView(f.context, kind, day.from, day.until, { rows: 3 }), kind);
+    else assert.throws(since1970, (error: unknown) => error instanceof WorkspaceError && error.code === "invalid_input", kind);
+  }
   assert.throws(() => reportView(f.context, "unknown" as never, day.from, day.until));
 
   const owner = analyticsView(f.context, { from: day.from, until: day.until, offsetMinutes: 60 }, { rows: 4 });
