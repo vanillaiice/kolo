@@ -46,9 +46,8 @@ const PROBLEM_KEYS: Record<string, TextKey> = { EMPTY: "EMPTY", OVERPAID: "OVERP
   LINE_DISCOUNT_EXCEEDS_LINE: "LINE_DISCOUNT_EXCEEDS_LINE", INVALID_AMOUNT: "INVALID_AMOUNT", TOO_LARGE: "TOO_LARGE" };
 
 /** Persistent cart summary: item count and total, opening the cart. */
-function CartBar({ draft, onOpen }: { readonly draft: SellDraft; readonly onOpen: () => void }): React.JSX.Element | null {
+function CartBar({ draft, onOpen }: { readonly draft: SellDraft; readonly onOpen: () => void }): React.JSX.Element {
   const { t } = useText(), totals = view(draft.cart);
-  if (draft.cart.lines.length === 0) return null;
   return <Button label={t("cartSummary", { count: draft.cart.lines.length, total: formatMoney(totals.totalMinor) })} onPress={onOpen} />;
 }
 
@@ -104,7 +103,7 @@ export function SellScreen(): React.JSX.Element {
         subtitle={[item.barcode, stock === undefined ? undefined : `${t("stock")} ${formatQuantity(stock)}${stock < 0 ? ` · ${t("negativeStock")}` : ""}`].filter(Boolean).join(" · ")}
         trailing={formatMoney(item.sellingPriceMinor)} onPress={() => { Keyboard.dismiss(); add(item); }} accessibilityLabel={t("addProductLabel", { name: item.name, price: formatMoney(item.sellingPriceMinor) })} />;
     }} />;
-  return <Screen title={t("tab.sell")} eyebrow={businessName} scroll={false} footer={wide ? undefined : <CartBar draft={draft} onOpen={() => nav.push("cart")} />}>
+  return <Screen title={t("tab.sell")} eyebrow={businessName} scroll={false} footer={wide || draft.cart.lines.length === 0 ? undefined : <CartBar draft={draft} onOpen={() => nav.push("cart")} />}>
     {wide ? <View style={{ flex: 1, flexDirection: "row" }}><View style={{ flex: 3 }}>{catalogue}</View><View style={{ flex: 2, borderLeftWidth: 1, borderLeftColor: colors.border }}><CartBody wide /></View></View> : catalogue}
     {!wide && draft.cart.lines.length === 0 && <Text style={[s.muted, { textAlign: "center", padding: spacing.sm }]}>{t("emptyCart")}</Text>}
   </Screen>;
