@@ -1,0 +1,80 @@
+# Running a kolo sync server
+
+For whoever runs a server for one or more shops: self-hosted for your own shops (free, no account, no telemetry) or
+hosted for paying customers ([ADR-031](../adr/ADR-031-hosted-subscriptions-manual-billing.md)). Tills never need the
+server to trade; it only relays their encrypted facts ([ADR-030](../adr/ADR-030-end-to-end-encryption-and-connection-codes.md)).
+
+## Install (Docker Compose)
+
+```sh
+export KOLO_DATABASE_PASSWORD=$(openssl rand -hex 24)   # keep it; the backup restores into the same database user
+export KOLO_PUBLIC_URL=https://sync.example.com          # LAN only: http://192.168.1.20:8080 and KOLO_BIND=0.0.0.0
+docker compose -f infrastructure/compose.selfhost.yml up --build -d
+docker compose -f infrastructure/compose.selfhost.yml exec server node apps/server/dist/main.js admin create <you>
+```
+
+`admin create` prints a password (shown once) and an authenticator QR code. The server migrates before it serves.
+Hosted operators also set `KOLO_EDITION=hosted` and, optionally, `KOLO_GRACE_DAYS` and `KOLO_BILLING_WEBHOOK_SECRET`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `KOLO_PUBLIC_URL` | required | Address tills use; printed into every connection code |
+| `KOLO_BIND`, `KOLO_SYNC_PORT` | `127.0.0.1`, `8080` | Where the sync port is published on the host |
+| `KOLO_ADMIN_PORT` | `8081` | Dashboard, always published on the host's loopback only |
+| `KOLO_EDITION` | `selfhost` | `hosted` makes sync depend on payments |
+| `KOLO_GRACE_DAYS` | `7` | Hosted: days of sync after the paid period |
+| `KOLO_BILLING_WEBHOOK_SECRET` | none | Hosted: enables the signed payment webhook (32+ characters) |
+| `KOLO_TRUST_PROXY` | `false` | `true` behind the reverse proxy below |
+| `KOLO_ADMIN_TOTP` | `on` | `off` signs operators in with the password alone; refused unless the dashboard listens on loopback (not in the Docker image, whose dashboard listens on all container interfaces) |
+
+## HTTPS
+
+Anything beyond a LAN needs TLS. `infrastructure/Caddyfile.example` is a complete Caddy site: it obtains certificates,
+exposes only the sync API, health checks and the payment webhook, and never the dashboard. Set
+`KOLO_TRUST_PROXY=true` behind it. Payloads are signed and business facts are encrypted either way, but TLS hides
+metadata and protects sessions.
+
+## The dashboard
+
+Open it on the server itself, or from your computer through SSH: `ssh -L 8081:127.0.0.1:8081 <server>`, then
+`http://127.0.0.1:8081/admin/`. Codes, shops, suspension, removal, payments (hosted), health and the audit log are there.
+A viewer account (`admin create <name> --role viewer`) can read but not change anything.
+
+## Attaching a shop
+
+Issue a code per shop (dashboard, or `… main.js invite --label "Shop" [--months 3]`) and send it to the owner. They
+paste it on their main till; their other tills follow on their own. A code works once and expires (7 days by default).
+
+## Backups and restore
+
+```sh
+infrastructure/backup.sh /secure/place               # database dump + server identity key, both needed
+infrastructure/restore.sh /secure/place/kolo-…dump /secure/place/kolo-…server-key.json
+```
+
+Back up daily and keep copies off the machine. The key file is a secret: whoever holds it can impersonate the server
+(but cannot read shop data, which only tills can decrypt). Restoring an older backup is safe: tills keep every fact and
+resend what the server is missing on their next pass. Verified 2026-10-11 by a drill: install, attach a till, sync,
+back up, destroy every volume, restore, resync with nothing missing and the original fingerprint.
+
+## Upgrades and rollback
+
+1. Back up (above).
+2. `git pull` (or fetch the new release) and `docker compose -f infrastructure/compose.selfhost.yml up --build -d`.
+   The server applies forward-only migrations before serving; `/readyz` answers 503 `schema_outdated` until they have run.
+3. To roll back, check out the previous release and restore the backup taken in step 1. Never run an older server on a
+   newer schema: it refuses to start serving rather than guess.
+
+A migration that would destroy data never runs silently: for example `0002` refuses to start while unencrypted F6a
+business facts exist until the operator runs `migrate --discard-plaintext`.
+
+## Helping a shop
+
+Ask the owner for the "Support details" on the till's sync screen (desktop: Devices → Sync server; phone: Backup &
+devices → Sync server). It holds the app version, server address and fingerprint, last success, last error, waiting
+count and subscription status, and no keys, codes or business data. On the dashboard, the shop's page shows its tills,
+when each was last seen, how many facts each still has to receive, conflicts and the current key epoch.
+
+Common answers: `server_unreachable` (network or firewall), `hosted_service_inactive` (record a payment),
+`shop_suspended` (resume it), `fingerprint_mismatch` (the till is talking to another server: stop and send a new code),
+facts waiting for the owner's key (the owner's main till must sync once to grant the shop key to a new till).

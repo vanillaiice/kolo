@@ -41,7 +41,7 @@ consult and supersede, per §55.
 
 - [ADR-023: Partial returns and source ordering](ADR-023-partial-returns-and-source-ordering.md): exact compensating returns and competing offline source chains.
 
-- [ADR-024: Licensing and paid cosmetic unlocks](ADR-024-licensing-and-paid-unlocks.md): clients GPL-3.0, server closed for now; draft trademark, offline-signed one-time branding unlock.
+- [ADR-024: Licensing and paid cosmetic unlocks](ADR-024-licensing-and-paid-unlocks.md): clients GPL-3.0, server AGPL-3.0 (amended 2026-10-11); draft trademark, offline-signed one-time branding unlock.
 
 - [ADR-025: Fastify for the optional server](ADR-025-fastify-server.md): replaces NestJS/Express; TypeScript, pg and shared contracts stay.
 
@@ -49,3 +49,7 @@ consult and supersede, per §55.
 
 - [ADR-027: Opt-in large transfer files and optional product photos](ADR-027-large-files-and-product-photos.md): standard/large size profiles, per-computer switch; photo thumbnails in migration 22.
 - [ADR-028](ADR-028-additional-product-categories.md): one main category for reports plus up to 20 others for browsing (migration 23).
+- [ADR-029: Sync server relay, enrollment, sessions and propagated device trust](ADR-029-sync-server-relay.md): owner-signed device trust, migration 25, server-as-destination relay without business application (F6a).
+- [ADR-030: End-to-end encrypted sync and single-use connection codes](ADR-030-end-to-end-encryption-and-connection-codes.md): tills hold the shop key, the server routes sealed facts; per-shop single-use codes replace the enrollment code; operator dashboard (implemented, F6b/F6c).
+- [ADR-031: Hosted subscriptions with manual billing](ADR-031-hosted-subscriptions-manual-billing.md): selfhost/hosted editions, one plan per shop, operator-recorded payments, grace then a transfer-only pause, provider-neutral webhook (F7).
+- [ADR-032: Adding a till with a short code](ADR-032-join-by-code.md): owner shows a 10-character code or QR, the new phone scans it, the owner taps Allow; code-tagged pairing through a server mailbox, file pairing kept offline.

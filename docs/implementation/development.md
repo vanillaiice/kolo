@@ -52,21 +52,28 @@ upgrade, preserve v1 outbox content and report totals, and reject databases newe
 the app. Migration completion is a transaction; do not start the UI against a partial
 schema. A released migration is immutable; fixes are a new migration.
 
-The server will have its own versioned SQL migration runner in F6. Port archived schema
-constraints intentionally; do not run Go migrations from the server by accident. Separate
-deployment migration command from request handling, acquire a migration lock, and
-verify version before declaring sync ready. SQL rollback that destroys new financial
-facts is forbidden; application downgrade requires compatible schema or verified restore.
+The server has its own forward-only PostgreSQL migrations, embedded in `apps/server/src/database.ts`
+and applied by Kysely's migrator under its lock with `npm run migrate -w @kolo/server` (or
+`node apps/server/dist/main.js migrate`). Serving never migrates; `/readyz` and sync answer
+`schema_outdated` until migrations ran. Do not run Go migrations from the server. SQL rollback that
+destroys received facts is forbidden; application downgrade requires a compatible schema or a verified restore.
 
-## Server scaffold deployment
+## Sync server deployment
 
 Development DB: `make db-up` runs PostgreSQL 18 on 5433 with the existing named volume.
 `make db-down` preserves data; no default target resets the database.
 
 ```sh
-# Optional local server configuration
-cp apps/server/.env.example apps/server/.env
-npm run dev:server
+# Local server: configure, migrate once, create an operator, issue a code per shop, then serve
+cp apps/server/.env.example apps/server/.env   # set DATABASE_URL (and KOLO_PUBLIC_URL beyond loopback)
+npm run build:packages && npm run build -w @kolo/admin && npm run build -w @kolo/server && npm run migrate -w @kolo/server
+(cd apps/server && node --env-file=.env dist/main.js admin create <username>)   # prints password + authenticator QR
+(cd apps/server && node --env-file=.env dist/main.js invite --label "Shop name") # paste the code on the owner's till
+npm run dev:server   # sync on :8080, operator dashboard on http://127.0.0.1:8081/admin/
+npm run dev -w @kolo/admin   # dashboard with hot reload on http://localhost:5173/admin/, API proxied to :8081
+
+# Server tests against a disposable PostgreSQL (each test creates and drops its own database)
+KOLO_TEST_DATABASE_URL=postgres://kolo:…@127.0.0.1:5434/kolo_test npm test -w @kolo/server
 
 # Container build from repository root
 docker build -f apps/server/Dockerfile -t kolo-server:foundation .
@@ -78,15 +85,17 @@ npm run smoke:server
 docker compose -f infrastructure/compose.selfhost.yml up --build -d
 ```
 
-Compose requires `KOLO_DATABASE_PASSWORD`. Use a URL-safe generated secret or properly
+Compose requires `KOLO_DATABASE_PASSWORD` and `KOLO_PUBLIC_URL` (printed into connection codes). It migrates
+before serving and keeps the server identity on the `identity` volume: back it up with the database,
+because a new identity breaks every connection code and makes every till reconnect with a new one. The operator
+dashboard is published on the host's loopback (`127.0.0.1:8081`); reach it remotely through an SSH tunnel. Use a URL-safe generated secret or properly
 percent-encode it in a configured database URL; the simple interpolation template does
 not encode reserved characters. Self-host ports bind localhost; public deployment needs
 a TLS reverse proxy and explicit network configuration. Docker's foundation image
 installs only the server production dependency graph and compiled shared/server packages;
 mobile/desktop tooling and root development dependencies stay out of the runtime. Image
-scanning and version/digest pinning are F7 release work. The image runs as Node's non-root user. No migrations/enrollment/
-sync are available yet. Keep existing volumes/backups; do not reuse a real customer
-database for a scaffold test.
+scanning and version/digest pinning are F7 release work. The image runs as Node's non-root user. Keep existing volumes/backups;
+do not reuse a real customer database for a test.
 
 ## Upgrade methods
 

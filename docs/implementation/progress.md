@@ -1190,3 +1190,155 @@ otherwise the product's purchase price. Opening stock entered on a product form 
 own, so a new shop's stock used to be worth 0 until its first delivery. Only a product with neither a
 costed inflow nor a purchase price is reported as uncosted. Dead stock uses the same rule. Tests cover
 opening cost against a later delivery and the purchase-price fallback giving way to a delivery.
+
+### F6a sync server relay and propagated device trust (2026-10-11)
+
+[ADR-029](../adr/ADR-029-sync-server-relay.md). The server is now AGPL-3.0-only (ADR-024 amended).
+
+- **Contracts:** `DEVICE_TRUSTED`/`DEVICE_REVOKED` payloads; `contracts/sync` request/response schemas
+  and enrollment/session signing messages; shared event/batch/receipt signing messages in `delivery`.
+- **Core:** owner devices emit signed trust facts on register/revoke and `publishDeviceRoster` publishes
+  earlier pairings once, so tills verify devices they never paired with. Batch import reports `untrusted`
+  facts (not stored, not acknowledged), retries them after trust in the same batch, and never offers
+  imported facts back to their sender. Migration 25 allows the `SERVER` platform (devices rebuilt under
+  deferred foreign keys), adds roster revisions and `server_endpoints`. `server-sync` connects after
+  fingerprint confirmation and runs bounded push/pull/receipt passes; `http-sync-transport` uses `fetch`.
+- **Server:** Kysely/PostgreSQL forward-only migrations with an explicit `migrate` command;
+  append-only journal, conflicts and receipts (triggers); enrollment code + owner-signed challenge;
+  device-signed sessions stored as hashes; push/pull/receipts/bootstrap/status; tenant from the session
+  only; `@fastify/rate-limit`; persistent `0600` identity file printed as a fingerprint at start.
+  Dockerfile and self-host Compose keep the identity on a volume and migrate before serving.
+- **Desktop:** Devices screen sync panel (check fingerprint, enroll or join, sync now, disconnect,
+  status) in French/English; automatic passes in the main process each minute while signed in with
+  shop-settings access, sooner after local changes, backing off to fifteen minutes.
+
+### Verification
+
+- `npm run check` with `KOLO_TEST_DATABASE_URL`: boundaries, typecheck, docs/links, builds and 812
+  tests (8 contracts, 716 core, 54 desktop, 22 mobile, 12 server against real PostgreSQL 18).
+  Server tests: three real SQLite tills converge through a real listener, including one paired after the
+  others; replayed pushes, identity conflicts, forged proofs, cross-shop isolation, enrollment code and
+  conflicts, revocation, size and rate limits, persistent identity. Core tests add trust propagation,
+  revision ordering, unauthorized roster facts, and a populated schema-24 upgrade with `foreign_key_check`.
+- `npm run bundle:mobile` passed. `npm run smoke:server` passed (image tests against fresh PostgreSQL).
+  Live image run: migrate, serve, fingerprint unchanged across restart with the identity volume.
+- `npm run smoke:desktop` passed. `npm run smoke:desktop:workflow` hangs in its first phase both with
+  and without this change in this environment (checked on the stashed baseline); not investigated here.
+- Desktop end-to-end against the running built server and PostgreSQL (temporary script, not kept):
+  fingerprint check, wrong fingerprint and enrollment code refused with their codes, grouped
+  upper-case fingerprint accepted, enrollment, sale pushed, idle second pass, status, disconnect.
+  This found that the protected key store refused the new claim domains; `kolo.server-enrollment.v1`
+  and `kolo.server-session.v1` are now on its signing allowlist (desktop regression test added).
+  Fixture signers in server tests had not exercised that allowlist.
+- The listen address is `KOLO_HOST` (default `127.0.0.1`). It was `HOST`, but some shells export
+  `HOST` as the machine name, which made `npm run dev:server` fail with `ENOTFOUND`.
+- Not verified: installed Windows/Android tills against a real server, TLS deployment, mobile UI
+  (pending), several server instances (rate limits are per instance).
+
+## 2026-10-11: End-to-end encrypted sync, connection codes and operator dashboard (F6b, F6c)
+
+The user chose end-to-end encryption and single-use connection codes ([ADR-030](../adr/ADR-030-end-to-end-encryption-and-connection-codes.md))
+and asked for both, plus the operator dashboard, to be built.
+
+Implemented in this change:
+
+- **Contracts:** `kolo.sync-batch` v1 with clear or sealed facts, `CLEAR_EVENT_TYPES`, sealed-event and sealed-key
+  additional data, connection-code format/parse, and the `DEVICE_ENCRYPTION_KEY`, `SHOP_KEY_GRANTED`,
+  `SERVER_ENDPOINT_SET`/`CLEARED` payloads.
+- **Core:** migration 26; vault `encryptionKey`/`agree` (X25519 key beside the signing record);
+  `application/sealed-sync` (announce key, owner key grants and rotation, seal/open, sync batches); the sync engine now
+  seals on push, opens on pull, runs a second round when keys change, connects by code or by the owner's shared address,
+  and records per-till opt-out. Delivery gained shared `recordOffer`/`importAuthenticated` helpers and a `locked` outcome.
+- **Server:** migrations `0002_sealed_sync_and_codes` (sealed journal rows, clear-type constraint, connection codes, shop
+  status; refuses F6a plaintext business facts unless `migrate --discard-plaintext`) and `0003_admin` (operators,
+  sessions, append-only audit, purge-only deletion); enrollment by code; suspension/removal enforced on every request;
+  CLI `invite`, `admin create`, `admin reset-totp`, `purge`; `KOLO_PUBLIC_URL`; hourly purge after 30 days.
+- **Operator dashboard:** `apps/admin` (React/Vite, AGPL) served on a separate loopback listener with scrypt + TOTP
+  sign-in (single use, lockout), viewer/admin roles, origin checks, strict CSP; codes with QR, shops, suspend/resume/
+  remove/restore, health and audit with CSV export. Dependencies added: `otpauth` 9.5.2 and `qrcode` 1.5.4 (server).
+- **Desktop:** paste-a-code connection (fingerprint taken from the code), automatic connection from the owner's shared
+  address with a notice, owner share code, waiting-for-key counts, new refusal texts; native X25519/HKDF adapter.
+- **Mobile:** native X25519/HKDF adapters only; the connection screen followed later the same day (next entry).
+
+Also in this change: the server logs one JSON line per request at `KOLO_LOG_LEVEL` (default `info`, never bodies or
+headers), and the desktop sync panel shows progress labels and form spacing.
+
+### Verification
+
+- Server, against real PostgreSQL 18 (`KOLO_TEST_DATABASE_URL`): 19 tests pass, including convergence of three tills
+  that never met with a search of every stored journal, conflict and receipt row for product names, sale numbers, the
+  shop name and event types (none found); held-back facts until a key is granted; replay and re-sealing as duplicates;
+  `plaintext_refused`, forged clear facts and forged sealed facts (refused by every till without blocking the page);
+  cross-shop isolation including opening another shop's sealed facts; codes used once, expired, cancelled, claimed by
+  another device; shared address and opt-out; revocation with epoch rotation the revoked till cannot open; suspension,
+  removal and purge; the plaintext migration refusal and `--discard-plaintext`; operator sign-in, TOTP replay, lockout,
+  idle expiry, reset, viewer refusal, foreign origin, code issue/cancel, shop actions, audit, static path traversal.
+- Core: sealed-sync unit tests (grants, header binding, rotation, forged key/grant/address facts, address revisions);
+  contracts: connection-code fuzzing and sealed shapes; desktop: vault X25519 persistence and agreement, RFC 5869 HKDF
+  vector, code validation and refusal mapping.
+- Live smoke on a throwaway database: `migrate`, `admin create`, `invite`, serve, dashboard page with CSP, TOTP sign-in,
+  code issue with QR, health; the public sync port does not serve the dashboard. Dashboard screenshots checked in Electron.
+- Not proven: installed Android X25519/HKDF through react-native-quick-crypto, Windows vault, packaged desktop against a
+  hosted HTTPS server, and the Docker image build with the dashboard.
+
+## 2026-10-11: Phone server sync and hosted subscriptions (F6 mobile, F7)
+
+The user asked for server sync on the phone, then the server's remaining features; they chose manual billing with one
+plan per shop ([ADR-031](../adr/ADR-031-hosted-subscriptions-manual-billing.md)).
+
+Implemented in this change:
+
+- **Mobile:** Backup & devices → Sync server: paste a connection code, check it (fingerprint from the code), connect;
+  last sync, waiting count, subscription status, sync now, stop (remembered), support details, and on the owner's main
+  till a share code sent through the Android share sheet. A background loop while signed in and in the foreground syncs
+  every minute, soon after local changes and on return to the app, and follows the owner's shared server address.
+  Sync refusals have their own French/English texts. No QR scanning (it would need `expo-camera`).
+- **Core:** `ServerSyncScheduler` (shared by desktop and mobile; the desktop's `AutoSync` re-exports it); client
+  migration 27 and `entitlements` on the transport, read before each transfer so a paused till learns why.
+- **Server:** `KOLO_EDITION`, `KOLO_GRACE_DAYS`, `KOLO_BILLING_WEBHOOK_SECRET`; migration `0004_hosted`; `GET
+  /api/v2/entitlements`; transfer refused with `hosted_service_inactive` after grace; payments recorded in the dashboard
+  (append-only, audited) or by the signed, idempotent generic webhook; codes with paid months; `invite --months`.
+- **Dashboard:** subscription column, shop subscription with payment form and history, paid months on codes, edition.
+- **Desktop:** subscription status and expiry texts, support details.
+- **Self-hosting:** compose settings for edition, ports and proxy; `infrastructure/Caddyfile.example`;
+  `infrastructure/backup.sh`/`restore.sh`; [self-hosting guide](selfhost.md) with upgrade/rollback and support answers.
+
+### Verification
+
+- Server on real PostgreSQL: 24 tests pass, including expiry pausing transfer while tills keep trading, grace, renewal
+  delivering both tills' held facts, early renewal extending from the paid end, codes with months, payment validation
+  and append-only rows, purge of payments, the webhook (signature, staleness, idempotent retry, conflict, absent on
+  self-hosted servers) and the dashboard payment API (viewer refused, history, grace date).
+- Mobile: 23 tests (sync refusal texts in both languages), typecheck and Metro bundle. Desktop: 56 tests.
+- Docker Compose drill on separate ports: clean install, migrate, operator, code, a till syncing 11 facts, backup,
+  `down -v`, fresh empty server with a new identity, restore, original fingerprint back, the same till resyncs with
+  nothing missing and no error.
+- Not proven: the phone screens on an installed Android device against a real server (needs the user's phone and the
+  firewall port), a real payment provider, and HTTPS through the Caddy template.
+
+## 2026-10-11: Adding a till by code, QR scanning and desktop menu order (ADR-032)
+
+Prompted by pairing a real phone: the file flow was judged too long for shops. Implemented:
+
+- **Join by code:** server migration `0005_join` and `/api/v2/join` mailboxes; core `application/join` (`startJoin`,
+  `pollJoin`, `approveJoin`, `endJoin`, `lookupJoin`, `requestJoin`, `finishJoin`); desktop Devices → Add a till shows a
+  code and QR, then the new till's name to Allow or Refuse, with file pairing under "No internet? Use files"; phone
+  welcome screen gets "Join a shop" (scan the QR or type code and address, name the phone, choose its code, wait) and the
+  phone's Add a till gets the same owner flow. After joining, the phone connects to the server it joined through.
+- **QR scanning on the phone** with `expo-camera` (~57.0.6, Expo-matched), for join codes and server connection codes.
+- **Fixes found on the real phone:** Android release builds blocked plain `http://` (config plugin `with-lan-http`; the
+  app still refuses plain HTTP outside loopback and private networks); "Reset this phone" failed the next start after
+  SQLite removed WAL files it then tried to delete; a second authority till of an attached shop was refused
+  (`enrollment_conflict`) instead of joining; an authority till could create a second shop key before receiving the
+  first (keys are now managed after pulling and created only when the shop has none); snapshots carried the source
+  till's own server connection rows; the desktop warned about a missing token when reconnecting an attached shop.
+- **Desktop menu order:** Settings → Menu order (up/down, default) and drag-and-drop in the sidebar, per computer.
+
+### Verification
+
+- Server on real PostgreSQL: join by code end to end (empty till with the real vault and snapshot files receives the
+  shop, connects on its own, gets the shop key and later sales), forged invite tag, forged request tag, refusal,
+  non-authority refused; second authority till joins without a code; all server tests pass.
+- Installed on the user's Pixel 8 Pro (release APK): file pairing into the desktop shop, server check over LAN HTTP after
+  the cleartext fix, then a reset and a real join by code: the phone scanned the desktop's QR with the camera, the owner
+  allowed it on the desktop, the shop opened on the phone and it synced with the LAN server.

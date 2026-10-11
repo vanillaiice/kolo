@@ -15,8 +15,9 @@ it remains in git history (and may exist locally, gitignored, under `archive/leg
 Mobile has a parity reorganization (Sell/Products/Activity/More, all desktop business workflows, reports, analytics, photos, print/PDF); installed Android acceptance remains open; see docs/implementation/mobile-parity.md. Demo is opt-in.
 F1 native acceptance remains pending; see the progress log and native validation guide. Desktop has a migrated
 local setup/unlock/recovery, product/category editing, stock movements/counts, split/credit
-till, customers, suppliers/purchases, accounts/expenses, reports, returns, staff, backup/pairing/exchange and receipt screens behind a validated command bridge. Broader management/transfer UI and Windows acceptance remain. The Fastify server has health/readiness/capabilities,
-not synchronization. F2 provides shared exact rules, strict signed payloads, replay and destination receipts;
+till, customers, suppliers/purchases, accounts/expenses, reports, returns, staff, backup/pairing/exchange and receipt screens behind a validated command bridge. Broader management/transfer UI and Windows acceptance remain. The Fastify server (AGPL-3.0) relays signed facts
+between a shop's tills (F6a, ADR-029): enrollment, signed-challenge sessions, push/pull/receipts over PostgreSQL;
+desktop and mobile connect by pasted connection code (or the owner's shared address) and sync automatically. F6b (ADR-030) made sync end-to-end encrypted: tills seal facts with owner-granted shop keys (migration 26), the server stores only trust/key/address facts in the clear and never applies business rules. F6c is the operator dashboard (`apps/admin`, AGPL) on its own loopback listener: codes, shops, suspension, health, audit. F7 (ADR-031): `KOLO_EDITION=hosted` shops sync while paid (manual payments, grace, transfer-only pause); self-hosting kit in docs/implementation/selfhost.md. ADR-032: with a server, a till is added by a 10-character code/QR and the owner's Allow (file pairing kept offline); desktop menu order is a per-computer setting. Server migrations now `0001`–`0005`. F2 provides shared exact rules, strict signed payloads, replay and destination receipts;
 F3 adds owner-confirmed pairing, encrypted backups/files and mobile transfer screens.
 Android/Windows transfer acceptance remains open; broader desktop workflows remain F5. Active mobile
 forms have keyed French/English text and durable device language selection.
@@ -42,7 +43,7 @@ a capability exists.
   from zero. Permission/tenant checks belong inside operations, not just screens.
 - Preserve origin identity when forwarding. Delivery is per destination. The v1 queue remains for compatibility;
   HTTP v1 sync is restricted to unconverted legacy workspaces.
-- SQLite migrations 1–21 are immutable. Migration 18 adds F3 pairing progress; 19 adds category ordering/indexes, 20 immutable returns, 21 trigger-maintained accent-folded `search_name` keys (SQL pinned by a digest test). Add forward migrations; do not rewrite shipped
+- SQLite migrations 1–27 are immutable. Migration 18 adds F3 pairing progress; 19 adds category ordering/indexes, 20 immutable returns, 21 trigger-maintained accent-folded `search_name` keys (SQL pinned by a digest test), 22 photos, 23 extra categories, 24 full-text search, 25 the `SERVER` device platform, roster revisions and server endpoints, 26 encryption keys, shop-key grants and the shared server address, 27 the reported hosted service status. Server PostgreSQL migrations (`0001`–`0005`) live in `apps/server/src/database.ts` and are forward-only too. Add forward migrations; do not rewrite shipped
   schemas. Keep the Node/Expo synchronous transaction interface synchronous.
 - Go is an archived reference. Port rules/behavior, not repository plumbing.
 

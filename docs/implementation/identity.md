@@ -29,7 +29,9 @@ restoration. See [native validation](f1-native-validation.md).
 | Local user/actor UUID | Owner creates staff; membership carries grants | Attribution and permissions |
 | Installation/device UUID + key pair | Created on install; replacement requires F3 owner proof | Immutable origin and signatures |
 | Local unlock session | Local lock/unlock; independent of billing/network | Allows operations on that device |
-| Cloud account/session | Optional hosted/self-host enrollment | Authenticates network transfer |
+| Cloud account/session | Optional hosted/self-host enrollment (ADR-029/030: owner-signed enrollment with a single-use connection code, device-signed challenge sessions) | Authenticates network transfer |
+| Device encryption key | X25519 key in the native vault beside the signing key, announced by `DEVICE_ENCRYPTION_KEY` (ADR-030) | Receives shop keys sealed by the owner; only agreements leave the vault |
+| Operator account | Server-side only: scrypt password + TOTP, `admin`/`viewer` (F6c) | Runs the server; never a shop identity and never sees shop records |
 | Destination identity | One per paired peer/server | Independent delivery/progress in F2 |
 
 A locally created owner has authority without a server. Cloud session expiry does not

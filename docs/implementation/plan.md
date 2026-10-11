@@ -210,8 +210,65 @@ startup/search latency/memory on target hardware and record budgets/results.
 
 ## F6: Optional Fastify synchronization server
 
-**Dependencies:** F2/F3 format/identity. **Modules:** identity, enrollment, memberships,
-sync, domain appliers, reports, audit, postgres; contracts shared with clients.
+**Split (2026-10-11).** **F6a, the relay, is delivered** ([ADR-029](../adr/ADR-029-sync-server-relay.md)):
+owner-signed device trust, migration 25, enrollment, signed-challenge sessions, push/pull/receipts/
+bootstrap/status over an append-only PostgreSQL journal, the shared client sync engine and desktop
+connection/automatic sync. Tills apply every rule; the server stores and forwards verified facts.
+The mobile connection screen and background sync were delivered the same day; installed Android/Windows acceptance
+against a real server remains. F6b and F6c below were delivered the same day too.
+
+**F6b: connection codes and end-to-end encrypted sync** ([ADR-030](../adr/ADR-030-end-to-end-encryption-and-connection-codes.md),
+decided and delivered 2026-10-11; see the ADR's implementation notes for refinements). Replaces the earlier F6b (server-side business application, centralized reports
+and server Go-fixture parity), which is dropped: the server never reads business records.
+
+1. Connection codes: PostgreSQL migration for hashed single-use codes, `invite` CLI, enrollment by
+   code (single use committed with the shop), till paste/scan screen that pins the fingerprint from
+   the code, and owner-signed `SERVER_ENDPOINT_SET`/`CLEARED` so other tills connect automatically.
+   Remove `KOLO_ENROLLMENT_CODE`. The pending mobile connection screen is built on this flow.
+2. HPKE/X25519 spike on Hermes and Electron; record the chosen implementation.
+3. Device X25519 keys in the native keystores, `DEVICE_TRUSTED` v2, `SHOP_KEY_GRANTED`, epoch
+   rotation on revocation, sealed-event format and server journal version; tills seal on push and
+   open on pull. File exchange is unchanged.
+
+**Acceptance:** a code works once, expires and can be cancelled; a wrong fingerprint is refused;
+a second till connects with no typing. The server database and logs contain no business payload
+(checked by searching a real PostgreSQL dump for known product names and amounts). A revoked till
+cannot read facts sealed after its revocation; a new till reads all history. Lost responses,
+reordering and replay still converge. Cross-shop access stays impossible.
+
+**F6c: operator admin dashboard** (delivered 2026-10-11). For whoever runs the server (hblabs for hosted, the self-hoster
+otherwise), not for shop owners. Depends on F6b step 1.
+
+- **Delivery.** A static React/TypeScript app built in `apps/admin` and served by the server with a
+  JSON admin API, on a separate listener (`KOLO_ADMIN_HOST`/`KOLO_ADMIN_PORT`, default
+  `127.0.0.1:8081`) so the public sync port never exposes it. Remote use goes through a VPN/SSH
+  tunnel or a reverse proxy with its own restrictions.
+- **Access.** Admin accounts created by CLI (`admin create`), password hashed with scrypt plus
+  mandatory TOTP using an established library; passkeys later. HttpOnly, Secure, SameSite=Strict
+  session cookies with idle expiry, origin checks, rate limits and lockout. Roles: `admin`
+  (changes) and `viewer` (read-only).
+- **Connection codes.** Issue with label and expiry, show the code and QR once, list
+  unused/used/expired/cancelled with the shop each attached, cancel.
+- **Shops.** Search and list by display name, status, device count, last sync and storage. Detail:
+  devices (label, platform, trusted/revoked, last seen), delivery backlog per device, rejected and
+  conflicting event counts, key epoch. Suspend/resume: a suspended shop gets 403 `shop_suspended`
+  on sessions, push and pull while its tills keep trading. Remove: two-step confirmation, 30-day
+  soft delete, then purge.
+- **Server health.** Version, schema migrations, database size, journal growth, request/error and
+  rate-limit rates, active sessions.
+- **Audit.** Every admin sign-in and change is written to an append-only `admin_audit` table in the
+  same transaction as the change, with admin, action, target, time and address; viewable and
+  exportable.
+- **Never shown:** business records (they are sealed) or anything that could act as a shop.
+- **Later (F7):** plans, entitlements, payments, expiry and renewal codes.
+
+**Acceptance:** every admin endpoint refuses without a session; viewers cannot change anything;
+every change is audited atomically; suspension blocks sync but not local trading; the admin
+listener is absent from the public port; real-PostgreSQL tests and a browser smoke test pass.
+
+**Dependencies:** F2/F3 format/identity. **Modules:** identity, enrollment, connection codes,
+sync, admin, audit, postgres; contracts shared with clients. The paragraphs below predate ADR-030;
+where they mention server-side appliers or archived fixture parity, those are dropped.
 
 Port Go auth/tenant/domain behavior selectively using fixtures and shared rules, not
 its layering boilerplate. Add versioned SQL migrations and a real PostgreSQL test
@@ -230,6 +287,14 @@ HTTP/repositories. Invalid events are visible and retained. Server behavior matc
 archived fixtures for money, sales, credit, cash and purchases.
 
 ## F7: Hosted subscription and self-hosted edition
+
+**Delivered (2026-10-11), [ADR-031](../adr/ADR-031-hosted-subscriptions-manual-billing.md):** `selfhost`/`hosted`
+editions in one image, one plan per shop with manual payments in the dashboard, codes with paid months, grace then a
+transfer-only pause (`hosted_service_inactive`) that never stops a till, renewal delivering the retained backlog, a
+provider-neutral signed webhook, till-side status and support details, the [self-hosting guide](selfhost.md) with HTTPS
+template, backup/restore scripts and upgrade/rollback procedure. Acceptance evidence: real-PostgreSQL billing tests and a
+Docker Compose install → sync → backup → destroy → restore → resync drill. Remaining: choosing and adding a payment
+provider adapter, owner reminders and subscription invoices.
 
 **Dependencies:** F6 and client endpoint enrollment UI.
 

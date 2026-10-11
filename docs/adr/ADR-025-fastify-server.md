@@ -28,5 +28,5 @@ No client changes: no client imports the server, and the scaffold has no sync ro
 Nest-specific module/guard/pipe structure is replaced by Fastify plugins and hooks;
 authorization still belongs inside operations. Instances stay stateless behind a reverse
 proxy so they can scale horizontally, with PostgreSQL as the expected bottleneck. The
-server is closed source for now (ADR-024) and must move to a private repository before
+server was closed source when this was written; ADR-024 was amended on 2026-10-11 to AGPL-3.0-only, so it no longer must move to a private repository before
 the client repository is published.

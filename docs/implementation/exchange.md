@@ -16,7 +16,7 @@ and exact-digest owner review. `application/event-delivery` implements
 `createPeerReceipt` and `acknowledgeDelivery`.
 
 F3 adds encrypted native files, snapshots, pairing and mobile screens around these
-shared operations. Bluetooth and server v2 ingestion remain later phases. Read [ADR-021](../adr/ADR-021-signed-journal-and-late-event-policy.md)
+shared operations. The F6a server relay is below; Bluetooth remains a later phase. Read [ADR-021](../adr/ADR-021-signed-journal-and-late-event-policy.md)
 for byte encoding, trust, revisions and late-event decisions.
 
 ## Signed containers
@@ -130,6 +130,31 @@ initialize a shop. Secondary membership authority is separately approved. Diagno
 IDs have French/English recovery descriptions. See
 [ADR-022](../adr/ADR-022-encrypted-files-and-approved-snapshots.md) for formats, limits,
 recovery/cancellation rules, activation/crash behavior and remaining native gates.
+
+## F6a sync server and propagated trust
+
+`DEVICE_TRUSTED`/`DEVICE_REVOKED` are owner-signed facts emitted by `registerExchangeDestination`,
+`setExchangeDeviceActive` and, once for earlier pairings, `publishDeviceRoster`. They let a till
+verify devices it never paired with, over files or the server. `importJournalBatch` returns
+`untrusted` for facts whose origin it cannot verify yet (nothing stored, nothing acknowledged),
+retries them after trust facts in the same batch, and records imported facts as held by the sender.
+`application/server-sync` connects to a server whose fingerprint came from a connection code or the owner's shared
+address (`connectServer`) and runs bounded push/pull/receipt passes (`synchronizeServer`) over the `SyncTransport` port;
+`http-sync-transport` implements it with the platform's `fetch`. See
+[ADR-029](../adr/ADR-029-sync-server-relay.md) and the [server API](server-api.md).
+
+## F6b end-to-end encrypted sync
+
+`application/sealed-sync` (ADR-030): `ensureEncryptionKey` announces the device's X25519 key once
+(`DEVICE_ENCRYPTION_KEY`, signed by that device); `maintainShopKeys` runs on the owner's authority device before each
+pass, creating the first shop key, opening a new epoch after a revocation and sealing every key to every trusted till
+(`SHOP_KEY_GRANTED`); `shopKeys` opens this device's grants through the vault's `agree`; `createSyncBatch` seals every
+fact outside `CLEAR_EVENT_TYPES` with the current key; `importSyncBatch` opens sealed facts and hands them to the same
+verification and application path as file imports (`importAuthenticated`). A fact it cannot open is `locked`, never
+stored or acknowledged. Shop keys are never stored in the clear: grants hold them sealed, and they live only in memory
+during a pass. File exchange is unchanged and stays readable by peers without keys. `shareServerEndpoint` and
+`pendingShopServer` carry the owner's server address (`SERVER_ENDPOINT_SET`/`CLEARED`) to other tills; `disconnectServer`
+records a per-till opt-out.
 
 ## F8 Bluetooth framing
 

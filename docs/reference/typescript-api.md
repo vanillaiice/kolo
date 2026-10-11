@@ -23,7 +23,7 @@ class DesktopApplication implements ShopService {
   constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & {
     readonly onActivated: (database: Database) => Promise<void>;
     readonly onReset?: () => void;
-}, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences());
+}, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences(), syncTransport: (url: string) => SyncTransport = sync.httpTransport);
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   initialize(): Promise<void>;
   /** Automatic lock from the host. "away" (minimize, suspend, OS lock) is skipped while the user
@@ -172,6 +172,16 @@ class DesktopApplication implements ShopService {
   saveImportReceipt(input?: unknown): Promise<Result<SavedFile>>;
   openImportReceipt(input?: unknown): Promise<Result<{ readonly recorded: number; }>>;
   retryExchange(input?: unknown): Promise<Result<{ readonly applied: number; }>>;
+  /** Optional sync server; see server-sync.ts. Network work runs in the main process only. */
+  serverState(input: unknown): Promise<Result<{ readonly servers: readonly ServerView[]; readonly canEnroll: boolean; }>>;
+  checkServer(input: unknown): Promise<Result<ServerPreview>>;
+  connectServer(input: unknown): Promise<Result<ServerView>>;
+  syncServer(input: unknown): Promise<Result<ServerSyncSummary>>;
+  disconnectServer(input: unknown): Promise<Result<null>>;
+  startJoinCode(input: unknown): Promise<Result<JoinCodeView>>;
+  pollJoinCode(input: unknown): Promise<Result<JoinStatusView>>;
+  approveJoinCode(input: unknown): Promise<Result<null>>;
+  cancelJoinCode(input: unknown): Promise<Result<null>>;
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): Promise<Result<Receipt>>;
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
@@ -326,6 +336,51 @@ export interface DesktopBridge extends ShopService {
 }
 ```
 
+## [apps/desktop/src/electron/join.ts](../../apps/desktop/src/electron/join.ts)
+
+A join this computer opened: the network session and the candidate stay in the main process.
+
+```ts
+export interface OpenJoin {
+    readonly start: JoinStart;
+    readonly url: string;
+    candidate?: JoinCandidate | undefined;
+}
+```
+
+What join commands need: sync access, the snapshot port for the shop file, and this window's open joins.
+
+```ts
+export interface JoinHost extends SyncHost {
+    readonly files: SnapshotPort;
+    readonly joins: Map<string, OpenJoin>;
+}
+```
+
+Shows a code (and QR link) for one new till on the first connected server.
+
+```ts
+startJoinCode(host: JoinHost, input: unknown): Promise<JoinCodeView>;
+```
+
+Whether the new till has asked yet; its name is shown for the owner to allow.
+
+```ts
+pollJoinCode(host: JoinHost, input: unknown): Promise<JoinStatusView>;
+```
+
+The owner allows the named till: its shop file is built, encrypted to it and handed over through the server.
+
+```ts
+approveJoinCode(host: JoinHost, input: unknown): Promise<null>;
+```
+
+Refuses or abandons a join; the code stops working at once.
+
+```ts
+cancelJoinCode(host: JoinHost, input: unknown): Promise<null>;
+```
+
 ## [apps/desktop/src/electron/local-credentials.ts](../../apps/desktop/src/electron/local-credentials.ts)
 
 Actual Node/OpenSSL implementation of the same native credential policy.
@@ -364,6 +419,12 @@ Native authenticated file encryption; uses the measured credential KDF with inde
 
 ```ts
 const desktopTransferCrypto: TransferCrypto;
+```
+
+Native X25519 and HKDF-SHA256 on top of the file-transfer AES-GCM, for end-to-end encrypted sync (ADR-030).
+
+```ts
+const desktopSealingCrypto: SealingCrypto;
 ```
 
 ## [apps/desktop/src/electron/preferences.ts](../../apps/desktop/src/electron/preferences.ts)
@@ -496,6 +557,59 @@ Records a compensating return named by the request ID; stale predecessors are re
 
 ```ts
 recordReturn(host: Host, input: unknown): { readonly returnId: string; };
+```
+
+## [apps/desktop/src/electron/server-sync.ts](../../apps/desktop/src/electron/server-sync.ts)
+
+What sync commands need from the desktop host. The transport factory is replaceable in tests.
+
+```ts
+export interface SyncHost extends Host {
+    readonly crypto: SealingCrypto;
+    readonly transport: (url: string) => SyncTransport;
+}
+```
+
+Network and server refusals become stable bridge codes; nothing from a response body crosses the bridge.
+
+```ts
+syncTranslated<T>(work: () => Promise<T>): Promise<T>;
+```
+
+Connected servers and whether this device may attach the shop itself.
+
+```ts
+serverState(host: SyncHost, input: unknown): Promise<{ readonly servers: readonly ServerView[]; readonly canEnroll: boolean; }>;
+```
+
+Reads the server a connection code points to and refuses one whose fingerprint differs from the code's.
+
+```ts
+checkServer(host: SyncHost, input: unknown): Promise<ServerPreview>;
+```
+
+Connects with a connection code, then runs a first pass so the result is visible immediately.
+
+```ts
+connectServer(host: SyncHost, input: unknown): Promise<ServerView>;
+```
+
+One manual pass for the chosen server.
+
+```ts
+syncServer(host: SyncHost, input: unknown): Promise<ServerSyncSummary>;
+```
+
+Stops syncing on this computer and remembers it, so the shop's shared address does not reconnect it; data and trust are kept.
+
+```ts
+disconnectServer(host: SyncHost, input: unknown): Promise<null>;
+```
+
+Production transport: Node's fetch from the main process; the renderer never reaches the network.
+
+```ts
+httpTransport(url: string): SyncTransport;
 ```
 
 ## [apps/desktop/src/electron/session-memory.ts](../../apps/desktop/src/electron/session-memory.ts)
@@ -783,7 +897,7 @@ runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void>;
 Stable application failures; native exception text, credentials and paths never cross the bridge.
 
 ```ts
-export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "invalid_photo" | "photo_storage_full";
+export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "invalid_photo" | "photo_storage_full" | "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" | "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" | "no_server" | "join_not_found" | "join_conflict";
 ```
 
 Serializable results make transport and operation failures explicit.
@@ -1278,6 +1392,76 @@ export interface ExchangeView {
 }
 ```
 
+A connected sync server as this computer sees it; `pending` counts facts not yet acknowledged by it. `automatic` is
+true when this computer followed the owner's shared server address. `shareCode` (owner only) lets the shop's other
+tills connect: it carries the address and fingerprint but no single-use token.
+
+```ts
+export interface ServerView {
+    readonly destinationId: string;
+    readonly url: string;
+    readonly fingerprint: string;
+    readonly connectedAt: string;
+    readonly lastAttemptAt: string | null;
+    readonly lastSuccessAt: string | null;
+    readonly lastError: string | null;
+    readonly pending: number;
+    readonly automatic: boolean;
+    readonly shareCode: string | null;
+    readonly service: "unlimited" | "active" | "grace" | "inactive" | null;
+    readonly paidUntil: string | null;
+    readonly graceUntil: string | null;
+}
+```
+
+The server a pasted connection code points to, checked against the fingerprint the code carries.
+
+```ts
+export interface ServerPreview {
+    readonly url: string;
+    readonly fingerprint: string;
+    readonly canEnroll: boolean;
+    readonly hasToken: boolean;
+    readonly attached: boolean;
+}
+```
+
+A code shown to add one till (ADR-032); `link` is what the QR code carries.
+
+```ts
+export interface JoinCodeView {
+    readonly joinId: string;
+    readonly code: string;
+    readonly link: string;
+    readonly expiresAt: string;
+    readonly authorityAllowed: boolean;
+}
+```
+
+Whether the new till has asked to join; its name is shown before the owner allows it.
+
+```ts
+export type JoinStatusView = {
+    readonly state: "waiting" | "expired";
+} | {
+    readonly state: "requested";
+    readonly label: string;
+    readonly platform: string;
+};
+```
+
+One synchronization pass; `untrusted` facts wait for the owner's approval of their device, `locked` facts for a shop key.
+
+```ts
+export interface ServerSyncSummary {
+    readonly pushed: number;
+    readonly rejected: number;
+    readonly pulled: number;
+    readonly untrusted: number;
+    readonly locked: number;
+}
+```
+
 Assessment of a checked exchange file before import.
 
 ```ts
@@ -1649,6 +1833,34 @@ export interface ShopService {
     retryExchange(input: SessionRequest): Promise<Result<{
         readonly applied: number;
     }>>;
+    serverState(input: SessionRequest): Promise<Result<{
+        readonly servers: readonly ServerView[];
+        readonly canEnroll: boolean;
+    }>>;
+    checkServer(input: SessionRequest & {
+        readonly code: string;
+    }): Promise<Result<ServerPreview>>;
+    connectServer(input: SessionRequest & {
+        readonly code: string;
+    }): Promise<Result<ServerView>>;
+    syncServer(input: SessionRequest & {
+        readonly destinationId: string;
+    }): Promise<Result<ServerSyncSummary>>;
+    startJoinCode(input: SessionRequest & {
+        readonly authorityAllowed: boolean;
+    }): Promise<Result<JoinCodeView>>;
+    pollJoinCode(input: SessionRequest & {
+        readonly joinId: string;
+    }): Promise<Result<JoinStatusView>>;
+    approveJoinCode(input: SessionRequest & {
+        readonly joinId: string;
+    }): Promise<Result<null>>;
+    cancelJoinCode(input: SessionRequest & {
+        readonly joinId: string;
+    }): Promise<Result<null>>;
+    disconnectServer(input: SessionRequest & {
+        readonly destinationId: string;
+    }): Promise<Result<null>>;
     listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{
         readonly id: string;
         readonly name: string;
@@ -1670,6 +1882,310 @@ export interface ShopService {
 }
 ```
 
+## [apps/server/src/admin/accounts.ts](../../apps/server/src/admin/accounts.ts)
+
+Operator roles: `admin` changes things, `viewer` only reads.
+
+```ts
+export type AdminRole = "admin" | "viewer";
+```
+
+The signed-in operator, resolved from a session cookie on every request.
+
+```ts
+export interface Admin {
+    readonly adminId: string;
+    readonly username: string;
+    readonly role: AdminRole;
+}
+```
+
+Stable admin failure; the code is the whole client-visible explanation.
+
+```ts
+class AdminError extends Error {
+  status: number;
+  code: string;
+  constructor(status: number, code: string);
+}
+```
+
+Session lifetimes: idle sign-out and an absolute cap.
+
+```ts
+const ADMIN_IDLE_MINUTES: 30;
+const ADMIN_SESSION_HOURS: 12;
+```
+
+Rejects passwords an operator could guess or mistype into something weak.
+
+```ts
+validatePassword(password: string): void;
+```
+
+`scrypt$N$r$p$salt$key`, so parameters can be raised later without breaking existing hashes.
+
+```ts
+hashPassword(password: string): Promise<string>;
+```
+
+A new operator: password hash, a fresh TOTP secret and its `otpauth://` URI for an authenticator app.
+
+```ts
+createAdmin(db: Kysely<ServerDatabase>, input: {
+    readonly username: string;
+    readonly password: string;
+    readonly role: AdminRole;
+}): Promise<{ readonly adminId: string; readonly secret: string; readonly uri: string; }>;
+```
+
+Replaces an operator's authenticator secret, for a lost phone. Signs every session out.
+
+```ts
+resetTotp(db: Kysely<ServerDatabase>, username: string): Promise<{ readonly secret: string; readonly uri: string; }>;
+```
+
+Password plus a fresh TOTP code. Repeated failures lock the account for a while; a code is accepted once only.
+Every outcome is audited. Returns a session token for an HttpOnly cookie; only its hash is stored.
+
+```ts
+signIn(db: Kysely<ServerDatabase>, input: {
+    readonly username: string;
+    readonly password: string;
+    readonly code: string;
+    readonly address: string;
+    readonly now: Date;
+}): Promise<{ readonly token: string; readonly admin: Admin; }>;
+```
+
+Resolves a session token, enforcing idle and absolute expiry and that the account is still active.
+
+```ts
+sessionAdmin(db: Kysely<ServerDatabase>, token: string | undefined, now: Date): Promise<Admin>;
+```
+
+Ends one session; idempotent.
+
+```ts
+signOut(db: Kysely<ServerDatabase>, token: string | undefined, admin: Admin, address: string): Promise<void>;
+```
+
+Appends one audit entry inside the caller's transaction, so a change and its record commit together.
+
+```ts
+audit(tx: Transaction<ServerDatabase> | Kysely<ServerDatabase>, admin: {
+    readonly adminId: string | null;
+    readonly username: string;
+}, action: string, target: string | null, address: string | null, detail: Record<string, unknown> | null): Promise<void>;
+```
+
+## [apps/server/src/admin/admin-app.ts](../../apps/server/src/admin/admin-app.ts)
+
+Everything the operator dashboard needs; it shares the sync server's database, identity and counters.
+
+```ts
+export interface AdminOptions {
+    readonly db: Kysely<ServerDatabase>;
+    readonly key: ServerKey;
+    readonly publicUrl: string | undefined;
+    readonly metrics: Metrics;
+    readonly version: string;
+    readonly uiDir: string | undefined;
+    readonly trustProxy?: boolean;
+    readonly rateLimitMax?: number;
+    readonly now?: () => Date;
+    readonly edition?: Edition;
+}
+```
+
+The operator dashboard: a JSON API under `/admin/api` and the static dashboard under `/admin/`, served on its own
+listener so the public sync port never exposes it. Sessions use an HttpOnly, SameSite=Strict cookie; every change
+also requires a matching `Origin`. Viewers can read only. Every change is audited in its own transaction.
+
+```ts
+createAdminApplication(options: AdminOptions): Promise<FastifyInstance<RawServerDefault, IncomingMessage, ServerResponse<IncomingMessage>, FastifyBaseLogger, FastifyTypeProviderDefault>>;
+```
+
+## [apps/server/src/admin/operations.ts](../../apps/server/src/admin/operations.ts)
+
+Who performed a change and from where; the CLI acts as `cli`.
+
+```ts
+export interface Actor {
+    readonly adminId: string | null;
+    readonly username: string;
+    readonly address: string | null;
+}
+```
+
+The CLI's identity in the audit log.
+
+```ts
+const CLI_ACTOR: Actor;
+```
+
+Days a removed shop is kept, restorable, before its data is purged.
+
+```ts
+const REMOVAL_GRACE_DAYS: 30;
+```
+
+A freshly issued connection code. `code` is shown once; only the token's hash is stored.
+
+```ts
+export interface IssuedCode {
+    readonly codeId: string;
+    readonly code: string;
+    readonly label: string;
+    readonly expiresAt: string;
+}
+```
+
+A connection code as listed, never with its token.
+
+```ts
+export interface CodeView {
+    readonly codeId: string;
+    readonly label: string;
+    readonly createdBy: string;
+    readonly createdAt: string;
+    readonly expiresAt: string;
+    readonly state: "unused" | "used" | "expired" | "cancelled";
+    readonly usedAt: string | null;
+    readonly shopId: string | null;
+    readonly shopName: string | null;
+    readonly includedMonths: number;
+}
+```
+
+Issues a single-use connection code for one shop. The string carries the server's public address, its fingerprint
+and a 128-bit token, so the owner pastes or scans one thing and never retypes a fingerprint (ADR-030).
+
+```ts
+issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publicUrl: string, actor: Actor, input: {
+    readonly label: string;
+    readonly days: number;
+    readonly now: Date;
+    readonly includedMonths?: number;
+}): Promise<IssuedCode>;
+```
+
+Recent codes, newest first, with what became of each.
+
+```ts
+listCodes(db: Kysely<ServerDatabase>, now: Date, limit = 200): Promise<readonly CodeView[]>;
+```
+
+Cancels an unused code. A used code has done its job and cannot be cancelled.
+
+```ts
+cancelCode(db: Kysely<ServerDatabase>, actor: Actor, codeId: string, now: Date): Promise<void>;
+```
+
+A shop as the operator sees it: identity, status and sync health, never business records.
+
+```ts
+export interface ShopView {
+    readonly shopId: string;
+    readonly name: string;
+    readonly status: "active" | "suspended" | "removed";
+    readonly enrolledAt: string;
+    readonly removeAfter: string | null;
+    readonly devices: number;
+    readonly lastSeenAt: string | null;
+    readonly facts: number;
+    readonly bytes: number;
+    readonly service: "unlimited" | "active" | "grace" | "inactive";
+    readonly paidUntil: string | null;
+}
+```
+
+Shops matching `search` (name or ID prefix), most recently active first.
+
+```ts
+listShops(db: Kysely<ServerDatabase>, search = "", limit = 200, edition: Edition = { edition: "selfhost", graceDays: 0 }, now = new Date()): Promise<readonly ShopView[]>;
+```
+
+One shop's devices and delivery health; the key epoch is read from sealed headers, never from content.
+
+```ts
+export interface ShopDetail extends ShopView {
+    readonly ownerId: string;
+    readonly conflicts: number;
+    readonly keyEpoch: number | null;
+    readonly connectionCode: string | null;
+    readonly graceUntil: string | null;
+    readonly payments: Awaited<ReturnType<typeof listPayments>>;
+    readonly deviceList: readonly {
+        readonly deviceId: string;
+        readonly label: string;
+        readonly platform: string;
+        readonly active: boolean;
+        readonly authority: boolean;
+        readonly lastSeenAt: string | null;
+        readonly backlog: number;
+    }[];
+}
+```
+
+```ts
+shopDetail(db: Kysely<ServerDatabase>, shopId: string, edition: Edition = { edition: "selfhost", graceDays: 0 }, now = new Date()): Promise<ShopDetail>;
+```
+
+Changes a shop's status. Suspended and removed shops are refused on their next sync request while their tills keep
+trading; removal is a soft delete restorable for `REMOVAL_GRACE_DAYS`, after which `purgeRemovedShops` deletes it.
+
+```ts
+setShopStatus(db: Kysely<ServerDatabase>, actor: Actor, shopId: string, action: "suspend" | "resume" | "remove" | "restore", now: Date): Promise<void>;
+```
+
+Records a payment taken by the operator and moves the shop's paid-until date; audited in the same transaction.
+
+```ts
+recordShopPayment(db: Kysely<ServerDatabase>, actor: Actor, input: {
+    readonly shopId: string;
+    readonly months: number;
+    readonly amountMinor: number;
+    readonly method: PaymentMethod;
+    readonly reference?: string;
+}, now: Date): Promise<RecordedPayment>;
+```
+
+Deletes every row of shops whose removal grace period has passed. This is the only deletion of append-only rows,
+allowed by a transaction-local setting that names the shop being purged. Returns the purged shop IDs.
+
+```ts
+purgeRemovedShops(db: Kysely<ServerDatabase>, actor: Actor, now: Date): Promise<readonly string[]>;
+```
+
+In-process request counters since start, shared by the public listener and the dashboard.
+
+```ts
+export interface Metrics {
+    readonly startedAt: Date;
+    requests: number;
+    clientErrors: number;
+    serverErrors: number;
+    rateLimited: number;
+}
+```
+
+```ts
+createMetrics(now = new Date()): Metrics;
+```
+
+Server-wide health for the dashboard.
+
+```ts
+serverHealth(db: Kysely<ServerDatabase>, metrics: Metrics, version: string, now: Date, edition: Edition = { edition: "selfhost", graceDays: 0 }): Promise<{ version: string; edition: "selfhost" | "hosted"; graceDays: number; startedAt: string; databaseBytes: number; facts: number; factsLastDay: number; activeSessions: number; shops: { active: number; suspended: number; removed: number; }; ... 4 more ...; migrations: { ...; }[]; }>;
+```
+
+Audit entries, newest first, optionally before an ID for paging.
+
+```ts
+listAudit(db: Kysely<ServerDatabase>, before?: string, limit = 100): Promise<{ id: string; at: string; username: string; action: string; target: string; address: string; detail: Record<string, unknown>; }[]>;
+```
+
 ## [apps/server/src/app.ts](../../apps/server/src/app.ts)
 
 The error body every failed request returns; codes are stable, messages are never echoed.
@@ -1678,14 +2194,122 @@ The error body every failed request returns; codes are stable, messages are neve
 export interface ErrorBody {
     readonly error: {
         readonly code: string;
+        readonly retry?: boolean;
     };
+}
+```
+
+Optional collaborators, injected by tests; production loads the key file named in the configuration.
+
+```ts
+export interface ApplicationOptions {
+    readonly key?: ServerKey;
+    readonly now?: () => Date;
+    readonly rateLimitMax?: number;
+    readonly metrics?: Metrics;
 }
 ```
 
 Build the app without listening, so HTTP behavior can be tested on an ephemeral port or with `inject`.
 
 ```ts
-createApplication(config: ServerConfig): Promise<FastifyInstance<RawServerDefault, IncomingMessage, ServerResponse<IncomingMessage>, FastifyBaseLogger, FastifyTypeProviderDefault>>;
+createApplication(config: ServerConfig, options: ApplicationOptions = {}): Promise<FastifyInstance<RawServerDefault, IncomingMessage, ServerResponse<IncomingMessage>, FastifyBaseLogger, FastifyTypeProviderDefault>>;
+```
+
+## [apps/server/src/billing.ts](../../apps/server/src/billing.ts)
+
+How this deployment bills: self-hosted servers never expire a shop.
+
+```ts
+export interface Edition {
+    readonly edition: "selfhost" | "hosted";
+    readonly graceDays: number;
+}
+```
+
+Payment methods recorded by the operator or a provider.
+
+```ts
+export type PaymentMethod = "cash" | "mtn_momo" | "orange_money" | "bank" | "card" | "other";
+```
+
+```ts
+const PAYMENT_METHODS: readonly PaymentMethod[];
+```
+
+Stable billing refusal; the code is the whole client-visible explanation.
+
+```ts
+class BillingError extends Error {
+  status: number;
+  code: string;
+  constructor(status: number, code: string);
+}
+```
+
+Hosted service status for a paid-until date: `active` while paid, `grace` for `graceDays` after, then `inactive`.
+A shop never paid for is `inactive`. Self-hosted shops are `unlimited`. Local trading never depends on any of it.
+
+```ts
+entitlementOf(edition: Edition, paidUntil: Date | null, now: Date): { edition: "selfhost" | "hosted"; status: "active" | "unlimited" | "grace" | "inactive"; paid_until?: string; grace_until?: string; };
+```
+
+A payment to record: one plan per shop, so only the number of months matters for service.
+
+```ts
+export interface PaymentInput {
+    readonly shopId: string;
+    readonly months: number;
+    readonly amountMinor: number;
+    readonly method: PaymentMethod;
+    readonly reference?: string | undefined;
+    readonly source: "manual" | "webhook" | "code";
+    readonly externalId?: string | undefined;
+    readonly recordedBy: string;
+}
+```
+
+The stored effect of a payment: the paid-until date before and after it.
+
+```ts
+export interface RecordedPayment {
+    readonly paymentId: string;
+    readonly paidUntilBefore: string | null;
+    readonly paidUntilAfter: string;
+    readonly duplicate: boolean;
+}
+```
+
+Records a payment and moves the shop's paid-until date forward by whole calendar months, from today if it had
+lapsed or from its current end otherwise, in the caller's transaction. A repeated `externalId` (a provider retrying
+its webhook) changes nothing and returns the original payment.
+
+```ts
+recordPayment(tx: Transaction<ServerDatabase>, input: PaymentInput, now: Date): Promise<RecordedPayment>;
+```
+
+A shop's payments, newest first.
+
+```ts
+listPayments(db: Kysely<ServerDatabase>, shopId: string): Promise<{ paymentId: string; months: number; amountMinor: number; method: "cash" | "mtn_momo" | "orange_money" | "bank" | "card" | "other"; reference: string; source: "manual" | "webhook" | "code"; recordedBy: string; recordedAt: string; paidUntilAfter: string; }[]>;
+```
+
+A payment provider's webhook, reduced to what kolo needs. Each provider gets one adapter that verifies its own
+signature scheme and maps its payload; nothing else in the server knows which provider is used.
+
+```ts
+export interface BillingAdapter {
+    readonly name: string;
+    verify(rawBody: string, headers: Readonly<Record<string, string | string[] | undefined>>, now: Date): Omit<PaymentInput, "source" | "recordedBy">;
+}
+```
+
+The provider-neutral adapter: `x-kolo-signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">` with the
+shared secret, accepted within five minutes. Body: `{ event_id, shop_id, months, amount_minor, method, reference? }`.
+A small relay in front of any provider (or the provider itself) can send this.
+
+```ts
+genericWebhookAdapter(secret: string): BillingAdapter;
 ```
 
 ## [apps/server/src/config.ts](../../apps/server/src/config.ts)
@@ -1697,13 +2321,563 @@ export interface ServerConfig {
     readonly host: string;
     readonly port: number;
     readonly databaseUrl: string | undefined;
+    readonly publicUrl?: string | undefined;
+    readonly admin?: {
+        readonly host: string;
+        readonly port: number;
+    } | undefined;
+    readonly adminUiDir?: string | undefined;
+    readonly edition?: "selfhost" | "hosted";
+    readonly graceDays?: number;
+    readonly billingWebhookSecret?: string | undefined;
+    readonly keyFile?: string;
+    readonly sessionTtlSeconds?: number;
+    readonly trustProxy?: boolean;
+    readonly logLevel?: LogLevel;
 }
+```
+
+Log levels accepted by `KOLO_LOG_LEVEL`.
+
+```ts
+export type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
 ```
 
 Refuse invalid ports and non-PostgreSQL URLs before starting a listener.
 
 ```ts
 readConfig(environment: NodeJS.ProcessEnv = process.env): ServerConfig;
+```
+
+## [apps/server/src/database.ts](../../apps/server/src/database.ts)
+
+Typed PostgreSQL schema. Every business table is keyed by `business_id`; repositories always bind it.
+
+```ts
+export interface ServerDatabase {
+    shops: {
+        business_id: string;
+        name: string;
+        owner_id: string;
+        enrolled_by: string;
+        enrolled_at: Generated<Date>;
+        status: Generated<"active" | "suspended" | "removed">;
+        status_changed_at: Date | null;
+        remove_after: Date | null;
+        connection_code_id: string | null;
+        paid_until: Date | null;
+    };
+    shop_devices: {
+        business_id: string;
+        device_id: string;
+        public_key: string;
+        label: string;
+        platform: string;
+        authority_allowed: boolean;
+        active: boolean;
+        roster_revision: Generated<string>;
+        updated_at: Generated<Date>;
+        last_seen_at: Date | null;
+    };
+    challenges: {
+        challenge_id: string;
+        purpose: "enrollment" | "session";
+        business_id: string;
+        device_id: string;
+        nonce: string;
+        expires_at: Date;
+        used_at: Date | null;
+    };
+    sessions: {
+        token_hash: string;
+        business_id: string;
+        device_id: string;
+        created_at: Generated<Date>;
+        expires_at: Date;
+    };
+    journal: {
+        seq: Generated<string>;
+        business_id: string;
+        event_id: string;
+        origin_device_id: string;
+        origin_sequence: string;
+        event_type: string | null;
+        event_version: number | null;
+        canonical: string | null;
+        digest: string;
+        signature: string | null;
+        sealed: string | null;
+        subject_device_id: string | null;
+        roster_revision: string | null;
+        received_from: string;
+        received_at: Generated<Date>;
+    };
+    journal_conflicts: {
+        id: Generated<string>;
+        business_id: string;
+        event_id: string;
+        digest: string;
+        canonical: string | null;
+        signature: string | null;
+        sealed: string | null;
+        received_from: string;
+        detected_at: Generated<Date>;
+    };
+    push_batches: {
+        business_id: string;
+        batch_id: string;
+        sender_device_id: string;
+        digest: string;
+        received_at: Generated<Date>;
+    };
+    offered_batches: {
+        business_id: string;
+        batch_id: string;
+        device_id: string;
+        created_at: Date;
+    };
+    offered_batch_events: {
+        business_id: string;
+        batch_id: string;
+        event_id: string;
+        digest: string;
+    };
+    deliveries: {
+        business_id: string;
+        device_id: string;
+        event_id: string;
+        state: "stored" | "applied" | "deferred" | "unsupported";
+        updated_at: Generated<Date>;
+    };
+    receipts: {
+        business_id: string;
+        receipt_id: string;
+        device_id: string;
+        digest: string;
+        canonical: string;
+        signature: string;
+        received_at: Generated<Date>;
+    };
+    connection_codes: {
+        code_id: string;
+        token_hash: string;
+        label: string;
+        created_by: string;
+        created_at: Generated<Date>;
+        expires_at: Date;
+        used_at: Date | null;
+        used_by: string | null;
+        cancelled_at: Date | null;
+        included_months: Generated<number>;
+    };
+    join_sessions: {
+        join_id: string;
+        business_id: string;
+        owner_device_id: string;
+        offer: unknown;
+        request: unknown | null;
+        enrollment: string | null;
+        sealed_password: unknown | null;
+        created_at: Generated<Date>;
+        expires_at: Date;
+    };
+    payments: {
+        payment_id: string;
+        business_id: string;
+        months: number;
+        amount_minor: string;
+        currency: "XAF";
+        method: "cash" | "mtn_momo" | "orange_money" | "bank" | "card" | "other";
+        reference: string | null;
+        source: "manual" | "webhook" | "code";
+        external_id: string | null;
+        recorded_by: string;
+        recorded_at: Generated<Date>;
+        paid_until_before: Date | null;
+        paid_until_after: Date;
+    };
+    admins: {
+        admin_id: string;
+        username: string;
+        role: "admin" | "viewer";
+        password_hash: string;
+        totp_secret: string;
+        totp_last_step: string | null;
+        active: Generated<boolean>;
+        failed_attempts: Generated<number>;
+        locked_until: Date | null;
+        created_at: Generated<Date>;
+        last_login_at: Date | null;
+    };
+    admin_sessions: {
+        token_hash: string;
+        admin_id: string;
+        created_at: Generated<Date>;
+        expires_at: Date;
+        last_seen_at: Date;
+        address: string;
+    };
+    admin_audit: {
+        id: Generated<string>;
+        at: Generated<Date>;
+        admin_id: string | null;
+        username: string;
+        action: string;
+        target: string | null;
+        address: string | null;
+        detail: string | null;
+    };
+}
+```
+
+Forward-only migrations, embedded so a deployed build carries the schema it expects. Never edit a shipped one.
+
+```ts
+const SERVER_MIGRATIONS: Readonly<Record<string, Migration>>;
+```
+
+Opens a bounded pool with connection and statement deadlines.
+
+```ts
+openDatabase(url: string): Kysely<ServerDatabase>;
+```
+
+Applies pending migrations in order inside Kysely's migration lock; refuses unknown newer ones. `discardPlaintext`
+lets migration 0002 delete F6a plaintext business facts; it is set on the one connection the migrations run on.
+
+```ts
+migrateToLatest(db: Kysely<ServerDatabase>, options: {
+    readonly discardPlaintext?: boolean;
+} = {}): Promise<readonly string[]>;
+```
+
+True only when every embedded migration has been applied.
+
+```ts
+schemaCurrent(db: Kysely<ServerDatabase>): Promise<boolean>;
+```
+
+## [apps/server/src/identity.ts](../../apps/server/src/identity.ts)
+
+The server's own device identity: one Ed25519 key for every shop it serves.
+
+```ts
+export interface ServerKey {
+    readonly deviceId: string;
+    readonly publicKey: string;
+    readonly fingerprint: string;
+    sign(message: string): string;
+}
+```
+
+Lowercase hex SHA-256 of UTF-8 text.
+
+```ts
+sha256(message: string): string;
+```
+
+Verifies a detached Ed25519 signature under an SPKI PEM key; malformed keys or signatures are simply invalid.
+
+```ts
+verifySignature(publicKey: string, message: string, signatureHex: string): boolean;
+```
+
+Short key fingerprint, identical to the one a device computes before pinning the server.
+
+```ts
+fingerprintOf(publicKey: string): string;
+```
+
+A fresh in-memory identity, for tests and first start.
+
+```ts
+generateServerKey(): { key: ServerKey; privateKeyPem: string; };
+```
+
+Loads the identity file, or creates it exclusively with owner-only permissions on first start.
+Losing this file changes the server's identity: every device must then confirm it again.
+
+```ts
+loadServerKey(path: string): ServerKey;
+```
+
+## [apps/server/src/sync.fixtures.ts](../../apps/server/src/sync.fixtures.ts)
+
+Test-only fixtures for real PostgreSQL and real SQLite tills; only the network address is local.
+
+```ts
+const adminUrl: string;
+```
+
+```ts
+const at: "2026-10-11T06:00:00.000Z";
+const secret: "fixture-owner-secret";
+```
+
+Node/OpenSSL implementation of the sealing port, as the desktop adapter does it.
+
+```ts
+const crypto: SealingCrypto;
+```
+
+```ts
+export interface Device {
+    db: Database;
+    ports: WorkspacePorts;
+    context: OperationContext;
+    install: Installation;
+    publicKey: string;
+    privateKey: string;
+    destination?: string;
+}
+```
+
+```ts
+export interface Server {
+    app: FastifyInstance;
+    url: string;
+    key: ServerKey;
+    transport: SyncTransport;
+    databaseUrl: string;
+    invite(label?: string, days?: number, months?: number): Promise<{
+        code: string;
+        token: string;
+    }>;
+}
+```
+
+```ts
+owner(name = "Fixture shop"): Promise<Device>;
+```
+
+A device paired with the owner's device only, the way F3 pairing leaves it: it knows the owner, nobody else.
+
+```ts
+paired(source: Device, label: string, authority = false): Promise<Device>;
+```
+
+A fresh, fully migrated PostgreSQL database per server; dropped after the run.
+
+```ts
+freshDatabase(): Promise<string>;
+```
+
+```ts
+started(options: {
+    rateLimitMax?: number;
+    key?: ServerKey;
+    now?: () => Date;
+    edition?: "selfhost" | "hosted";
+    graceDays?: number;
+    webhookSecret?: string;
+} = {}): Promise<Server>;
+```
+
+Owner's main till: a fresh single-use code. Any other till: the shared address only.
+
+```ts
+connect(device: Device, target: Server, token?: string): Promise<string>;
+```
+
+```ts
+const sync: (device: Device, target: Server) => Promise<SyncSummary>;
+```
+
+```ts
+const count: (device: Device, table: string) => number;
+```
+
+```ts
+product(device: Device, name = "Rice"): string;
+```
+
+```ts
+sale(device: Device, productId: string, number = `V-${randomUUIDv7()}`): string;
+```
+
+```ts
+query(target: {
+    databaseUrl: string;
+}, text: string, values: unknown[] = []): Promise<any[]>;
+```
+
+Closes every server and SQLite database and drops the PostgreSQL databases this run created.
+
+```ts
+cleanup(): Promise<void>;
+```
+
+Real Node/OpenSSL credential primitives, as the desktop adapter has them, for tills created fresh in tests.
+
+```ts
+const credentialCrypto: CredentialCrypto;
+```
+
+An in-memory protected vault; the credential port on top of it is the real one.
+
+```ts
+memoryVault(): SecretStore;
+```
+
+## [apps/server/src/sync/join.ts](../../apps/server/src/sync/join.ts)
+
+Opens a mailbox for one join code (ADR-032). Only a shop's active authority till may, and the invite must be signed
+by that till's own key for this shop, so a mailbox can never offer another shop or another till's invitation.
+
+```ts
+createJoin(relay: Relay, scope: Scope, offer: JoinOffer): Promise<{ expires_at: string; }>;
+```
+
+The offer for a code's hash; anyone may read it, and only someone holding the code can check or use it.
+
+```ts
+readJoin(relay: Relay, joinId: string): Promise<{ join_id: string; invite: { invite: { format: "kolo.pairing-invite"; format_version: 1; invite_id: string; business_id: string; business_name: string; owner_id: string; owner_name: string; source_device_id: string; ... 4 more ...; authority_allowed: boolean; }; digest: string; signature: string; }; mac: str...;
+```
+
+Stores the new till's request once; repeating the same request is harmless, a different one is refused.
+
+```ts
+requestJoin(relay: Relay, joinId: string, body: JoinRequestBody): Promise<void>;
+```
+
+The owner's till polls for the request.
+
+```ts
+joinRequestOf(relay: Relay, scope: Scope, joinId: string): Promise<{ request: { request: { format: "kolo.pairing-request"; format_version: 1; request_id: string; invite: { invite: { format: "kolo.pairing-invite"; format_version: 1; invite_id: string; business_id: string; ... 8 more ...; authority_allowed: boolean; }; digest: string; signature: string; }; ... 5 more ...; cre...;
+```
+
+The owner's approval: the encrypted shop file and its sealed password. The mailbox then waits ten more minutes.
+
+```ts
+enrollJoin(relay: Relay, scope: Scope, joinId: string, body: JoinEnrollment): Promise<void>;
+```
+
+The new till fetches its shop once approved; null while the owner has not answered.
+
+```ts
+joinEnrollmentOf(relay: Relay, joinId: string): Promise<{ enrollment: string; sealed_password: { ephemeral_public_key: string; nonce: string; ciphertext: string; tag: string; }; mac: string; }>;
+```
+
+The owner refuses or cancels; the new till then sees the code as gone.
+
+```ts
+cancelJoin(relay: Relay, scope: Scope, joinId: string): Promise<void>;
+```
+
+## [apps/server/src/sync/relay.ts](../../apps/server/src/sync/relay.ts)
+
+Stable HTTP failure; the code is the whole client-visible explanation.
+
+```ts
+class RelayError extends Error {
+  status: number;
+  code: string;
+  retry: boolean | undefined;
+  constructor(status: number, code: string, retry?: boolean);
+}
+```
+
+The authenticated network scope. Tenant and device always come from here, never from a request body.
+
+```ts
+export interface Scope {
+    readonly businessId: string;
+    readonly deviceId: string;
+}
+```
+
+Shared relay dependencies.
+
+```ts
+export interface Relay {
+    readonly db: Kysely<ServerDatabase>;
+    readonly key: ServerKey;
+    readonly sessionTtlSeconds: number;
+    readonly now: () => Date;
+    readonly edition?: Edition;
+}
+```
+
+Issues a single-use challenge. It reveals nothing about whether the shop or device is known.
+
+```ts
+createChallenge(relay: Relay, input: ChallengeRequest): Promise<{ challenge_id: string; nonce: string; expires_at: string; }>;
+```
+
+Attaches an existing local shop, keeping its IDs. The claim must be signed by the device key it names, and a new
+shop needs an unused, unexpired, uncancelled single-use connection code, which is consumed in the same transaction.
+Re-enrolling from the same authority device is idempotent and needs no code, so a lost response is harmless; any
+other device claiming an enrolled shop is a conflict for the owner to resolve.
+
+```ts
+enroll(relay: Relay, input: EnrollmentRequest): Promise<void>;
+```
+
+This shop's hosted service status; available to a signed-in till even when sync is paused, so it can say why.
+
+```ts
+entitlement(relay: Relay, scope: Scope): Promise<{ edition: "selfhost" | "hosted"; status: "active" | "unlimited" | "grace" | "inactive"; paid_until?: string; grace_until?: string; }>;
+```
+
+Refuses data transfer for a hosted shop whose paid period and grace have ended. Its facts stay stored, its tills keep
+trading, and everything waiting flows again once a payment is recorded.
+
+```ts
+requireService(relay: Relay, scope: Scope): Promise<void>;
+```
+
+Exchanges a signed challenge from an active device key for a short bearer token, stored only as a hash.
+
+```ts
+openSession(relay: Relay, input: SessionRequest): Promise<{ token: string; expires_at: string; business_id: string; device_id: string; server_device_id: string; }>;
+```
+
+Resolves a bearer token to its scope; a revoked device loses access on its next request.
+
+```ts
+authenticate(relay: Relay, header: string | undefined): Promise<Scope>;
+```
+
+Ends a network session; idempotent. Local history is untouched.
+
+```ts
+endSession(relay: Relay, header: string | undefined): Promise<void>;
+```
+
+Stores each fact durably and answers per event. Clear facts (trust, keys, server address) are verified against their
+origin's key; sealed facts are accepted from the authenticated, batch-signing sender for any origin the shop's roster
+knows, since only tills can open them and check their inner proof (ADR-030). Plain business facts are refused.
+Unknown origins are retried within the batch, since an owner-signed trust fact may precede them in any order.
+A signed receipt acknowledges exactly the stored and duplicate digests; nothing is applied to business tables here.
+
+```ts
+push(relay: Relay, scope: Scope, signed: SignedSyncBatch): Promise<{ results: { event_id: string; status: "stored" | "duplicate" | "rejected"; code?: "scope_mismatch" | "invalid_event" | "untrusted_device" | "invalid_signature" | "event_identity_conflict" | "plaintext_refused"; retry?: boolean; }[]; receipt?: { ...; }; }>;
+```
+
+A bounded, server-signed page of facts this device has not acknowledged, oldest first, with every
+original proof intact. The cursor only pages within one pass; unacknowledged facts are offered again
+on the next pass from the start, so a fact skipped by the device is never lost behind a cursor.
+
+```ts
+pull(relay: Relay, scope: Scope, cursor: string | undefined, limit: number): Promise<{ has_more: boolean; batch?: { batch: { format: "kolo.sync-batch"; format_version: 1; batch_id: string; business_id: string; sender_device_id: string; receiver_device_id: string; created_at: string; events: ({ ...; } | { ...; })[]; }; digest: string; signature: string; }; cursor?: string; }>;
+```
+
+Owner-signed trust facts, so a device can trust the server's key before verifying a server-signed page.
+
+```ts
+bootstrap(relay: Relay, scope: Scope): Promise<{ events: { envelope: { event_id: string; business_id: string; origin_device_id: string; actor_id: string; origin_sequence: number; event_type: string; event_version: number; occurred_at: string; authority_revision: number; required_permissions: ("products.view" | ... 40 more ... | "cash.move")[]; payload: R...;
+```
+
+Records a device's signed acknowledgment of one offered page; applied never downgrades. Idempotent per receipt.
+
+```ts
+acceptReceipt(relay: Relay, scope: Scope, signed: SignedPeerReceipt): Promise<number>;
+```
+
+This device's backlog and the shop's visible conflicts.
+
+```ts
+status(relay: Relay, scope: Scope): Promise<{ pending: number; delivered: number; conflicts: number; devices: number; }>;
 ```
 
 ## [packages/contracts/src/canonical.ts](../../packages/contracts/src/canonical.ts)
@@ -1779,12 +2953,30 @@ Bounds raw UTF-8 before decoding; per-event schemas/crypto/trust still run after
 decodeSignedJournalBatch(bytes: string): { batch: { format: "kolo.events"; format_version: 2; batch_id: string; business_id: string; sender_device_id: string; receiver_device_id: string; created_at: string; events: { envelope: { event_id: string; ... 10 more ...; branch_id?: string; }; digest: string; signature: string; }[]; }; digest: string; signature: s...;
 ```
 
+Domain-separated UTF-8 bytes hashed and signed for one event envelope.
+
+```ts
+eventSigningMessage(envelope: SignedJournalEvent["envelope"]): string;
+```
+
+Domain-separated UTF-8 bytes hashed and signed for a forwarding batch.
+
+```ts
+batchSigningMessage(batch: JournalBatch): string;
+```
+
+Domain-separated UTF-8 bytes hashed and signed for a receipt.
+
+```ts
+receiptSigningMessage(receipt: PeerReceipt): string;
+```
+
 ## [packages/contracts/src/events.ts](../../packages/contracts/src/events.ts)
 
 Strict v2 payload schemas for every current business/authority event. No credentials/tokens.
 
 ```ts
-const EVENT_PAYLOAD_SCHEMAS: { readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly PURCHASE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly CATEGORY_SAVED: ZodObject<{ category: ZodObject<{ id: ZodUUID; name: ZodString; active: ZodBoolean; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_SAVED: ZodObject<{ product: ZodObject<{ id: ZodUUID; category_id: ZodOptional<ZodUUID>; name: ZodString; unit: ZodString; selling_price_minor: ZodNumber; purchase_price_minor: ZodOptional<ZodNumber>; sku: ZodOptional<ZodString>; barcode: ZodOptional<ZodString>; description: ZodOptional<ZodString>; brand: ZodOptional<ZodString>; divisible: ZodOptional<ZodBoolean>; active: ZodOptional<ZodBoolean>; tax_rate_basis_points: ZodOptional<ZodNumber>; minimum_stock: ZodOptional<ZodNumber>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_CATEGORIES_SET: ZodObject<{ product_id: ZodUUID; category_ids: ZodArray<ZodUUID>; updated_at: ZodISODateTime; }, $strict>; readonly CUSTOMER_SAVED: ZodObject<{ customer: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; credit_limit_minor: ZodOptional<ZodNumber>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_SAVED: ZodObject<{ supplier: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; contact: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly ACCOUNT_SAVED: ZodObject<{ account: ZodObject<{ id: ZodUUID; branch_id: ZodOptional<ZodUUID>; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; number: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SALE_COMPLETED: ZodObject<{ sale: ZodObject<{ id: ZodUUID; number: ZodString; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; name: ZodString; unit_price_minor: ZodNumber; quantity: ZodNumber; discount_minor: ZodOptional<ZodNumber>; tax_rate_basis_points: ZodOptional<ZodNumber>; unit_cost_minor: ZodOptional<ZodNumber>; }, $strict>>; customer_id: ZodOptional<ZodUUID>; credit_transaction_id: ZodOptional<ZodUUID>; discount_minor: ZodOptional<ZodNumber>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly PURCHASE_RECORDED: ZodObject<{ purchase: ZodObject<{ id: ZodUUID; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; unit_cost_minor: ZodNumber; quantity: ZodNumber; }, $strict>>; supplier_id: ZodOptional<ZodUUID>; supplier_transaction_id: ZodOptional<ZodUUID>; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reason: ZodString; occurred_at: ZodISODateTime; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CUSTOMER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; customer_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; supplier_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly STOCK_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CASH_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; ADJUSTMENT: "ADJUSTMENT"; CASH_IN: "CASH_IN"; CASH_OUT: "CASH_OUT"; TRANSFER_IN: "TRANSFER_IN"; TRANSFER_OUT: "TRANSFER_OUT"; }>; amount_minor: ZodNumber; counterpart_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>>; }, $strict>; readonly EXPENSE_RECORDED: ZodObject<{ expense: ZodObject<{ id: ZodUUID; category: ZodEnum<{ OTHER: "OTHER"; RENT: "RENT"; ELECTRICITY: "ELECTRICITY"; WATER: "WATER"; TRANSPORT: "TRANSPORT"; SALARY: "SALARY"; PACKAGING: "PACKAGING"; MAINTENANCE: "MAINTENANCE"; INTERNET: "INTERNET"; MARKETING: "MARKETING"; }>; account_id: ZodUUID; amount_minor: ZodNumber; occurred_at: ZodISODateTime; description: ZodOptional<ZodString>; reference: ZodOptional<ZodString>; reverses_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly WORKSPACE_CREATED: ZodObject<{ business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; accounts: ZodArray<ZodObject<{ id: ZodUUID; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; }, $strict>>; }, $strict>; readonly LEGACY_WORKSPACE_ADOPTED: ZodObject<{ business_id: ZodUUID; owner_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; provenance: ZodLiteral<"unsigned_v1_snapshot">; }, $strict>; readonly MEMBER_CREATED: ZodObject<{ user_id: ZodUUID; name: ZodString; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodLiteral<1>; }, $strict>; readonly PERMISSION_GRANTED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_REVOKED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly MEMBER_SUSPENDED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_REINSTATED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_ACCESS_RESET: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly OWNER_ACCESS_RECOVERED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; };
+const EVENT_PAYLOAD_SCHEMAS: { readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly PURCHASE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly CATEGORY_SAVED: ZodObject<{ category: ZodObject<{ id: ZodUUID; name: ZodString; active: ZodBoolean; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_SAVED: ZodObject<{ product: ZodObject<{ id: ZodUUID; category_id: ZodOptional<ZodUUID>; name: ZodString; unit: ZodString; selling_price_minor: ZodNumber; purchase_price_minor: ZodOptional<ZodNumber>; sku: ZodOptional<ZodString>; barcode: ZodOptional<ZodString>; description: ZodOptional<ZodString>; brand: ZodOptional<ZodString>; divisible: ZodOptional<ZodBoolean>; active: ZodOptional<ZodBoolean>; tax_rate_basis_points: ZodOptional<ZodNumber>; minimum_stock: ZodOptional<ZodNumber>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_CATEGORIES_SET: ZodObject<{ product_id: ZodUUID; category_ids: ZodArray<ZodUUID>; updated_at: ZodISODateTime; }, $strict>; readonly CUSTOMER_SAVED: ZodObject<{ customer: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; credit_limit_minor: ZodOptional<ZodNumber>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_SAVED: ZodObject<{ supplier: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; contact: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly ACCOUNT_SAVED: ZodObject<{ account: ZodObject<{ id: ZodUUID; branch_id: ZodOptional<ZodUUID>; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; number: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SALE_COMPLETED: ZodObject<{ sale: ZodObject<{ id: ZodUUID; number: ZodString; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; name: ZodString; unit_price_minor: ZodNumber; quantity: ZodNumber; discount_minor: ZodOptional<ZodNumber>; tax_rate_basis_points: ZodOptional<ZodNumber>; unit_cost_minor: ZodOptional<ZodNumber>; }, $strict>>; customer_id: ZodOptional<ZodUUID>; credit_transaction_id: ZodOptional<ZodUUID>; discount_minor: ZodOptional<ZodNumber>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly PURCHASE_RECORDED: ZodObject<{ purchase: ZodObject<{ id: ZodUUID; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; unit_cost_minor: ZodNumber; quantity: ZodNumber; }, $strict>>; supplier_id: ZodOptional<ZodUUID>; supplier_transaction_id: ZodOptional<ZodUUID>; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reason: ZodString; occurred_at: ZodISODateTime; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CUSTOMER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; customer_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; supplier_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly STOCK_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CASH_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; ADJUSTMENT: "ADJUSTMENT"; CASH_IN: "CASH_IN"; CASH_OUT: "CASH_OUT"; TRANSFER_IN: "TRANSFER_IN"; TRANSFER_OUT: "TRANSFER_OUT"; }>; amount_minor: ZodNumber; counterpart_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>>; }, $strict>; readonly EXPENSE_RECORDED: ZodObject<{ expense: ZodObject<{ id: ZodUUID; category: ZodEnum<{ OTHER: "OTHER"; RENT: "RENT"; ELECTRICITY: "ELECTRICITY"; WATER: "WATER"; TRANSPORT: "TRANSPORT"; SALARY: "SALARY"; PACKAGING: "PACKAGING"; MAINTENANCE: "MAINTENANCE"; INTERNET: "INTERNET"; MARKETING: "MARKETING"; }>; account_id: ZodUUID; amount_minor: ZodNumber; occurred_at: ZodISODateTime; description: ZodOptional<ZodString>; reference: ZodOptional<ZodString>; reverses_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly WORKSPACE_CREATED: ZodObject<{ business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; accounts: ZodArray<ZodObject<{ id: ZodUUID; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; }, $strict>>; }, $strict>; readonly LEGACY_WORKSPACE_ADOPTED: ZodObject<{ business_id: ZodUUID; owner_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; provenance: ZodLiteral<"unsigned_v1_snapshot">; }, $strict>; readonly MEMBER_CREATED: ZodObject<{ user_id: ZodUUID; name: ZodString; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodLiteral<1>; }, $strict>; readonly PERMISSION_GRANTED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_REVOKED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly MEMBER_SUSPENDED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_REINSTATED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_ACCESS_RESET: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly OWNER_ACCESS_RECOVERED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_TRUSTED: ZodObject<{ device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; SERVER: "SERVER"; }>; public_key: ZodString; }, $strict>; authority_allowed: ZodBoolean; revision: ZodNumber; }, $strict>; readonly DEVICE_REVOKED: ZodObject<{ device_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_ENCRYPTION_KEY: ZodObject<{ device_id: ZodUUID; public_key: ZodString; }, $strict>; readonly SHOP_KEY_GRANTED: ZodObject<{ key_id: ZodUUID; epoch: ZodNumber; device_id: ZodUUID; sealed: ZodObject<{ ephemeral_public_key: ZodString; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>; readonly SERVER_ENDPOINT_SET: ZodObject<{ server_device_id: ZodUUID; url: ZodString; fingerprint: ZodString; revision: ZodNumber; }, $strict>; readonly SERVER_ENDPOINT_CLEARED: ZodObject<{ server_device_id: ZodUUID; revision: ZodNumber; }, $strict>; };
 ```
 
 Current supported event names; unknown signed names/versions can be retained unapplied.
@@ -1837,7 +3029,7 @@ parseJournalEnvelope(input: unknown): { event_id: string; business_id: string; o
 Rejects unknown current payload fields; unsupported signed versions are distinguishable.
 
 ```ts
-parseEventPayload<T extends EventType>(type: T, version: number, input: unknown): output<{ readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<...>>; refunds: ZodArray<...>; debt_transaction_id: ZodOptional<...>; }, $strict>; }, $strict>; ... 22 more ...; readonly OWNER_ACCESS_REC...;
+parseEventPayload<T extends EventType>(type: T, version: number, input: unknown): output<{ readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<...>>; refunds: ZodArray<...>; debt_transaction_id: ZodOptional<...>; }, $strict>; }, $strict>; ... 28 more ...; readonly SERVER_ENDPOINT_...;
 ```
 
 ## [packages/contracts/src/index.ts](../../packages/contracts/src/index.ts)
@@ -1941,6 +3133,352 @@ Resolves defaults plus grants minus revocations; unknown input fails closed.
 resolvePermissions(role: Role, granted: readonly Permission[], revoked: readonly Permission[]): readonly ("products.view" | "products.create" | "products.edit" | "products.price" | "products.archive" | "inventory.view" | "inventory.receive" | "inventory.adjust" | "inventory.count" | ... 32 more ... | "cash.move")[];
 ```
 
+## [packages/contracts/src/sync.ts](../../packages/contracts/src/sync.ts)
+
+Largest base64 ciphertext of one sealed fact: a 1 MiB signed event plus framing, base64-encoded.
+
+```ts
+const MAX_SEALED_CIPHERTEXT: 1500000;
+```
+
+HTTP sync API version served under `/api/v2`.
+
+```ts
+const SYNC_API_VERSION: 2;
+```
+
+Pull page size when the client does not ask for one, and the most a page may hold.
+
+```ts
+const PULL_DEFAULT_LIMIT: 100;
+```
+
+```ts
+const PULL_MAX_LIMIT: 1000;
+```
+
+Public server identity; clients pin `public_key` only after the owner confirms `fingerprint`.
+
+```ts
+const serverIdentitySchema: ZodObject<{ api_version: ZodLiteral<2>; server_device_id: ZodUUID; public_key: ZodString; fingerprint: ZodString; enrollment_open: ZodBoolean; }, $strict>;
+```
+
+A single-use nonce the device signs to enroll its shop or open a network session.
+
+```ts
+const challengeRequestSchema: ZodObject<{ purpose: ZodEnum<{ enrollment: "enrollment"; session: "session"; }>; business_id: ZodUUID; device_id: ZodUUID; }, $strict>;
+```
+
+```ts
+const challengeSchema: ZodObject<{ challenge_id: ZodUUID; nonce: ZodString; expires_at: ZodISODateTime; }, $strict>;
+```
+
+What an owner's authority-capable device signs to attach an existing local shop, keeping its IDs.
+
+```ts
+const enrollmentClaimSchema: ZodObject<{ format: ZodLiteral<"kolo.server-enrollment">; format_version: ZodLiteral<1>; challenge_id: ZodUUID; nonce: ZodString; server_device_id: ZodUUID; business: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; owner_id: ZodUUID; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; }, $strict>;
+```
+
+The single-use connection token travels beside the signed claim; the server stores only its hash. Re-attaching an already attached shop from its enrolling device needs none.
+
+```ts
+const enrollmentRequestSchema: ZodObject<{ claim: ZodObject<{ format: ZodLiteral<"kolo.server-enrollment">; format_version: ZodLiteral<1>; challenge_id: ZodUUID; nonce: ZodString; server_device_id: ZodUUID; business: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; owner_id: ZodUUID; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; }, $strict>; signature: ZodString; connection_code: ZodOptional<ZodString>; }, $strict>;
+```
+
+What a device the shop trusts signs to obtain a short network session; local unlock is unrelated.
+
+```ts
+const sessionClaimSchema: ZodObject<{ format: ZodLiteral<"kolo.server-session">; format_version: ZodLiteral<1>; challenge_id: ZodUUID; nonce: ZodString; server_device_id: ZodUUID; business_id: ZodUUID; device_id: ZodUUID; }, $strict>;
+```
+
+```ts
+const sessionRequestSchema: ZodObject<{ claim: ZodObject<{ format: ZodLiteral<"kolo.server-session">; format_version: ZodLiteral<1>; challenge_id: ZodUUID; nonce: ZodString; server_device_id: ZodUUID; business_id: ZodUUID; device_id: ZodUUID; }, $strict>; signature: ZodString; }, $strict>;
+```
+
+```ts
+const sessionSchema: ZodObject<{ token: ZodString; expires_at: ZodISODateTime; business_id: ZodUUID; device_id: ZodUUID; server_device_id: ZodUUID; }, $strict>;
+```
+
+Facts the server stores and reads in the clear: device trust, device encryption keys, sealed shop-key grants
+and the shop's server address. Every other fact crosses the server sealed with the shop key (ADR-030).
+
+```ts
+const CLEAR_EVENT_TYPES: readonly ["DEVICE_TRUSTED", "DEVICE_REVOKED", "DEVICE_ENCRYPTION_KEY", "SHOP_KEY_GRANTED", "SERVER_ENDPOINT_SET", "SERVER_ENDPOINT_CLEARED"];
+```
+
+True when a fact of this type may cross the server unsealed.
+
+```ts
+isClearEventType(type: string): boolean;
+```
+
+A signed fact encrypted with a shop key. The header is what the server sees: identity, origin position, the
+digest of the inner signed fact (for duplicate detection) and which key sealed it. The header is the
+AES-GCM additional data, so a changed header fails decryption on the till.
+
+```ts
+const sealedEventSchema: ZodObject<{ event_id: ZodUUID; origin_device_id: ZodUUID; origin_sequence: ZodNumber; digest: ZodString; key_id: ZodUUID; epoch: ZodNumber; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>;
+```
+
+One fact in a server batch: clear only for `CLEAR_EVENT_TYPES`, sealed otherwise.
+
+```ts
+const syncEventSchema: ZodUnion<readonly [ZodObject<{ clear: ZodObject<{ envelope: ZodObject<{ event_id: ZodUUID; business_id: ZodUUID; origin_device_id: ZodUUID; actor_id: ZodUUID; origin_sequence: ZodNumber; event_type: ZodString; event_version: ZodNumber; occurred_at: ZodISODateTime; branch_id: ZodNullable<ZodUUID>; authority_revision: ZodNumber; required_permissions: ZodArray<ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>>; payload: ZodRecord<ZodString, ZodJSONSchema>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>; }, $strict>, ZodObject<{ sealed: ZodObject<{ event_id: ZodUUID; origin_device_id: ZodUUID; origin_sequence: ZodNumber; digest: ZodString; key_id: ZodUUID; epoch: ZodNumber; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>]>;
+```
+
+Server sync container, signed by its sender (a till on push, the server on pull).
+
+```ts
+const syncBatchSchema: ZodObject<{ format: ZodLiteral<"kolo.sync-batch">; format_version: ZodLiteral<1>; batch_id: ZodUUID; business_id: ZodUUID; sender_device_id: ZodUUID; receiver_device_id: ZodUUID; created_at: ZodISODateTime; events: ZodArray<ZodUnion<readonly [ZodObject<{ clear: ZodObject<{ envelope: ZodObject<{ event_id: ZodUUID; business_id: ZodUUID; origin_device_id: ZodUUID; actor_id: ZodUUID; origin_sequence: ZodNumber; event_type: ZodString; event_version: ZodNumber; occurred_at: ZodISODateTime; branch_id: ZodNullable<ZodUUID>; authority_revision: ZodNumber; required_permissions: ZodArray<ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>>; payload: ZodRecord<ZodString, ZodJSONSchema>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>; }, $strict>, ZodObject<{ sealed: ZodObject<{ event_id: ZodUUID; origin_device_id: ZodUUID; origin_sequence: ZodNumber; digest: ZodString; key_id: ZodUUID; epoch: ZodNumber; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>]>>; }, $strict>;
+```
+
+```ts
+const signedSyncBatchSchema: ZodObject<{ batch: ZodObject<{ format: ZodLiteral<"kolo.sync-batch">; format_version: ZodLiteral<1>; batch_id: ZodUUID; business_id: ZodUUID; sender_device_id: ZodUUID; receiver_device_id: ZodUUID; created_at: ZodISODateTime; events: ZodArray<ZodUnion<readonly [ZodObject<{ clear: ZodObject<{ envelope: ZodObject<{ event_id: ZodUUID; business_id: ZodUUID; origin_device_id: ZodUUID; actor_id: ZodUUID; origin_sequence: ZodNumber; event_type: ZodString; event_version: ZodNumber; occurred_at: ZodISODateTime; branch_id: ZodNullable<ZodUUID>; authority_revision: ZodNumber; required_permissions: ZodArray<ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>>; payload: ZodRecord<ZodString, ZodJSONSchema>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>; }, $strict>, ZodObject<{ sealed: ZodObject<{ event_id: ZodUUID; origin_device_id: ZodUUID; origin_sequence: ZodNumber; digest: ZodString; key_id: ZodUUID; epoch: ZodNumber; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>]>>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>;
+```
+
+Per-event push outcome. `stored` is durable relay storage, never a claim of business application.
+
+```ts
+const pushResultSchema: ZodObject<{ event_id: ZodUUID; status: ZodEnum<{ stored: "stored"; duplicate: "duplicate"; rejected: "rejected"; }>; code: ZodOptional<ZodEnum<{ scope_mismatch: "scope_mismatch"; invalid_event: "invalid_event"; untrusted_device: "untrusted_device"; invalid_signature: "invalid_signature"; event_identity_conflict: "event_identity_conflict"; plaintext_refused: "plaintext_refused"; }>>; retry: ZodOptional<ZodBoolean>; }, $strict>;
+```
+
+```ts
+const pushResponseSchema: ZodObject<{ results: ZodArray<ZodObject<{ event_id: ZodUUID; status: ZodEnum<{ stored: "stored"; duplicate: "duplicate"; rejected: "rejected"; }>; code: ZodOptional<ZodEnum<{ scope_mismatch: "scope_mismatch"; invalid_event: "invalid_event"; untrusted_device: "untrusted_device"; invalid_signature: "invalid_signature"; event_identity_conflict: "event_identity_conflict"; plaintext_refused: "plaintext_refused"; }>>; retry: ZodOptional<ZodBoolean>; }, $strict>>; receipt: ZodNullable<ZodObject<{ receipt: ZodObject<{ format: ZodLiteral<"kolo.receipt">; format_version: ZodLiteral<1>; receipt_id: ZodUUID; business_id: ZodUUID; sender_device_id: ZodUUID; receiver_device_id: ZodUUID; batch_id: ZodUUID; created_at: ZodISODateTime; entries: ZodArray<ZodObject<{ event_id: ZodUUID; digest: ZodString; state: ZodEnum<{ stored: "stored"; applied: "applied"; deferred: "deferred"; unsupported: "unsupported"; }>; }, $strict>>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>>; }, $strict>;
+```
+
+```ts
+const pullResponseSchema: ZodObject<{ batch: ZodNullable<ZodObject<{ batch: ZodObject<{ format: ZodLiteral<"kolo.sync-batch">; format_version: ZodLiteral<1>; batch_id: ZodUUID; business_id: ZodUUID; sender_device_id: ZodUUID; receiver_device_id: ZodUUID; created_at: ZodISODateTime; events: ZodArray<ZodUnion<readonly [ZodObject<{ clear: ZodObject<{ envelope: ZodObject<{ event_id: ZodUUID; business_id: ZodUUID; origin_device_id: ZodUUID; actor_id: ZodUUID; origin_sequence: ZodNumber; event_type: ZodString; event_version: ZodNumber; occurred_at: ZodISODateTime; branch_id: ZodNullable<ZodUUID>; authority_revision: ZodNumber; required_permissions: ZodArray<ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>>; payload: ZodRecord<ZodString, ZodJSONSchema>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>; }, $strict>, ZodObject<{ sealed: ZodObject<{ event_id: ZodUUID; origin_device_id: ZodUUID; origin_sequence: ZodNumber; digest: ZodString; key_id: ZodUUID; epoch: ZodNumber; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>]>>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>>; cursor: ZodNullable<ZodString>; has_more: ZodBoolean; }, $strict>;
+```
+
+Owner-signed trust facts a device needs before it can authenticate server-signed batches.
+
+```ts
+const bootstrapResponseSchema: ZodObject<{ events: ZodArray<ZodObject<{ envelope: ZodObject<{ event_id: ZodUUID; business_id: ZodUUID; origin_device_id: ZodUUID; actor_id: ZodUUID; origin_sequence: ZodNumber; event_type: ZodString; event_version: ZodNumber; occurred_at: ZodISODateTime; branch_id: ZodNullable<ZodUUID>; authority_revision: ZodNumber; required_permissions: ZodArray<ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>>; payload: ZodRecord<ZodString, ZodJSONSchema>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>>; }, $strict>;
+```
+
+```ts
+const receiptResponseSchema: ZodObject<{ acknowledged: ZodNumber; }, $strict>;
+```
+
+```ts
+const syncStatusSchema: ZodObject<{ pending: ZodNumber; delivered: ZodNumber; conflicts: ZodNumber; devices: ZodNumber; }, $strict>;
+```
+
+Hosted service eligibility for the session's shop (ADR-031). `unlimited` on self-hosted servers; `grace` after the
+paid period while sync still runs; `inactive` when sync is paused. Never a condition for local trading.
+
+```ts
+const entitlementSchema: ZodObject<{ edition: ZodEnum<{ selfhost: "selfhost"; hosted: "hosted"; }>; status: ZodEnum<{ active: "active"; unlimited: "unlimited"; grace: "grace"; inactive: "inactive"; }>; paid_until: ZodNullable<ZodISODateTime>; grace_until: ZodNullable<ZodISODateTime>; }, $strict>;
+```
+
+Stable failure body; never contains payloads, credentials or internals.
+
+```ts
+const syncErrorSchema: ZodObject<{ error: ZodObject<{ code: ZodString; retry: ZodOptional<ZodBoolean>; }, $strict>; }, $strict>;
+```
+
+```ts
+export type ServerIdentity = z.infer<typeof serverIdentitySchema>;
+```
+
+```ts
+export type ChallengeRequest = z.infer<typeof challengeRequestSchema>;
+```
+
+```ts
+export type Challenge = z.infer<typeof challengeSchema>;
+```
+
+```ts
+export type EnrollmentClaim = z.infer<typeof enrollmentClaimSchema>;
+```
+
+```ts
+export type EnrollmentRequest = z.infer<typeof enrollmentRequestSchema>;
+```
+
+```ts
+export type SessionClaim = z.infer<typeof sessionClaimSchema>;
+```
+
+```ts
+export type SessionRequest = z.infer<typeof sessionRequestSchema>;
+```
+
+```ts
+export type Session = z.infer<typeof sessionSchema>;
+```
+
+```ts
+export type PushResult = z.infer<typeof pushResultSchema>;
+```
+
+```ts
+export type PushResponse = z.infer<typeof pushResponseSchema>;
+```
+
+```ts
+export type PullResponse = z.infer<typeof pullResponseSchema>;
+```
+
+```ts
+export type BootstrapResponse = z.infer<typeof bootstrapResponseSchema>;
+```
+
+```ts
+export type SyncStatus = z.infer<typeof syncStatusSchema>;
+```
+
+```ts
+export type Entitlement = z.infer<typeof entitlementSchema>;
+```
+
+```ts
+export type SealedEvent = z.infer<typeof sealedEventSchema>;
+```
+
+```ts
+export type SyncEvent = z.infer<typeof syncEventSchema>;
+```
+
+```ts
+export type SyncBatch = z.infer<typeof syncBatchSchema>;
+```
+
+```ts
+export type SignedSyncBatch = z.infer<typeof signedSyncBatchSchema>;
+```
+
+Domain-separated UTF-8 bytes signed for enrollment.
+
+```ts
+enrollmentSigningMessage(claim: EnrollmentClaim): string;
+```
+
+Domain-separated UTF-8 bytes signed for a network session.
+
+```ts
+sessionSigningMessage(claim: SessionClaim): string;
+```
+
+Short key fingerprint shown on both the server console and the owner's device before pinning.
+
+```ts
+const KEY_FINGERPRINT_PREFIX: "kolo.pairing-key.v1\0";
+```
+
+Domain-separated UTF-8 bytes signed for a server sync batch.
+
+```ts
+syncBatchSigningMessage(batch: SyncBatch): string;
+```
+
+AES-GCM additional data binding a sealed fact's visible header to its shop.
+
+```ts
+sealedEventAad(businessId: string, sealed: Omit<SealedEvent, "nonce" | "ciphertext" | "tag">): string;
+```
+
+AES-GCM additional data binding a sealed shop key to its shop, key and recipient.
+
+```ts
+sealedKeyAad(businessId: string, keyId: string, epoch: number, deviceId: string): string;
+```
+
+Everything a till needs to reach a server: its address, pinned fingerprint and, for a first attachment, a single-use token.
+
+```ts
+export interface ConnectionCode {
+    readonly url: string;
+    readonly fingerprint: string;
+    readonly token?: string;
+}
+```
+
+One copyable string (also rendered as a QR code). The token is omitted when sharing the address with the shop's other tills.
+
+```ts
+formatConnectionCode(code: ConnectionCode): string;
+```
+
+Finds and checks a connection code inside pasted text. Returns undefined for anything malformed;
+the address still has to pass the client's own URL policy.
+
+```ts
+parseConnectionCode(text: string): ConnectionCode;
+```
+
+Join codes (ADR-032): 10 Crockford base32 characters (50 bits) shown as `XXXX-XXXX-XX` on the owner's till. The
+server only ever sees `joinIdOf(code)`; both tills derive a MAC key from the code itself.
+
+```ts
+const JOIN_CODE_ALPHABET: "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+```
+
+Normalizes typed input: case, spaces and dashes are ignored; O→0, I/L→1 as Crockford base32 reads them.
+
+```ts
+normalizeJoinCode(text: string): string;
+```
+
+`K7F2-9QXM-4D`.
+
+```ts
+formatJoinCode(code: string): string;
+```
+
+What the QR code carries: the server address and fingerprint, so the new till needs nothing else.
+
+```ts
+formatJoinLink(input: {
+    readonly url: string;
+    readonly fingerprint: string;
+    readonly code: string;
+}): string;
+```
+
+Reads a scanned or pasted join link.
+
+```ts
+parseJoinLink(text: string): { readonly url: string; readonly fingerprint: string; readonly code: string; };
+```
+
+A join mailbox as created by the owner: the signed invite, tagged with the code-derived key.
+
+```ts
+const joinOfferSchema: ZodObject<{ join_id: ZodString; invite: ZodObject<{ invite: ZodObject<{ format: ZodLiteral<"kolo.pairing-invite">; format_version: ZodLiteral<1>; invite_id: ZodUUID; business_id: ZodUUID; business_name: ZodString; owner_id: ZodUUID; owner_name: ZodString; source_device_id: ZodUUID; source_public_key: ZodString; created_at: ZodISODateTime; expires_at: ZodISODateTime; nonce: ZodString; authority_allowed: ZodBoolean; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>; mac: ZodString; }, $strict>;
+```
+
+The new till's signed request, its X25519 key for the sealed password, both tagged with the code-derived key.
+
+```ts
+const joinRequestSchema: ZodObject<{ request: ZodObject<{ request: ZodObject<{ format: ZodLiteral<"kolo.pairing-request">; format_version: ZodLiteral<1>; request_id: ZodUUID; invite: ZodObject<{ invite: ZodObject<{ format: ZodLiteral<"kolo.pairing-invite">; format_version: ZodLiteral<1>; invite_id: ZodUUID; business_id: ZodUUID; business_name: ZodString; owner_id: ZodUUID; owner_name: ZodString; source_device_id: ZodUUID; source_public_key: ZodString; created_at: ZodISODateTime; expires_at: ZodISODateTime; nonce: ZodString; authority_allowed: ZodBoolean; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>; installation_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; created_at: ZodISODateTime; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>; encryption_public_key: ZodString; mac: ZodString; }, $strict>;
+```
+
+The owner's encrypted shop file and its password sealed to the new till's key.
+
+Joining moves the shop to a phone, so the standard file limit applies (a larger shop pairs by file).
+
+```ts
+const joinEnrollmentSchema: ZodObject<{ enrollment: ZodString; sealed_password: ZodObject<{ ephemeral_public_key: ZodString; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; mac: ZodString; }, $strict>;
+```
+
+```ts
+const joinStateSchema: ZodObject<{ state: ZodEnum<{ waiting: "waiting"; requested: "requested"; approved: "approved"; }>; expires_at: ZodISODateTime; }, $strict>;
+```
+
+```ts
+export type JoinOffer = z.infer<typeof joinOfferSchema>;
+```
+
+```ts
+export type JoinRequestBody = z.infer<typeof joinRequestSchema>;
+```
+
+```ts
+export type JoinEnrollment = z.infer<typeof joinEnrollmentSchema>;
+```
+
 ## [packages/contracts/src/transfer.ts](../../packages/contracts/src/transfer.ts)
 
 ```ts
@@ -2016,11 +3554,11 @@ Version 1 (read-only): uncompressed plaintext. Version 2 (written): `plaintext_b
 encrypted deflate bytes and `content_bytes` the exact decompressed length, both authenticated.
 
 ```ts
-const encryptedHeaderSchema: ZodDiscriminatedUnion<[ZodObject<{ format_version: ZodLiteral<1>; plaintext_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; receipt: "receipt"; enrollment: "enrollment"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>, ZodObject<{ format_version: ZodLiteral<2>; compression: ZodLiteral<"deflate">; plaintext_bytes: ZodNumber; content_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; receipt: "receipt"; enrollment: "enrollment"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>], "format_version">;
+const encryptedHeaderSchema: ZodDiscriminatedUnion<[ZodObject<{ format_version: ZodLiteral<1>; plaintext_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; receipt: "receipt"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>, ZodObject<{ format_version: ZodLiteral<2>; compression: ZodLiteral<"deflate">; plaintext_bytes: ZodNumber; content_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; receipt: "receipt"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>], "format_version">;
 ```
 
 ```ts
-const encryptedFileSchema: ZodObject<{ header: ZodDiscriminatedUnion<[ZodObject<{ format_version: ZodLiteral<1>; plaintext_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; receipt: "receipt"; enrollment: "enrollment"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>, ZodObject<{ format_version: ZodLiteral<2>; compression: ZodLiteral<"deflate">; plaintext_bytes: ZodNumber; content_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; receipt: "receipt"; enrollment: "enrollment"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>], "format_version">; ciphertext: ZodString; tag: ZodString; }, $strict>;
+const encryptedFileSchema: ZodObject<{ header: ZodDiscriminatedUnion<[ZodObject<{ format_version: ZodLiteral<1>; plaintext_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; receipt: "receipt"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>, ZodObject<{ format_version: ZodLiteral<2>; compression: ZodLiteral<"deflate">; plaintext_bytes: ZodNumber; content_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; receipt: "receipt"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>], "format_version">; ciphertext: ZodString; tag: ZodString; }, $strict>;
 ```
 
 ```ts
@@ -2156,10 +3694,10 @@ reviewQuarantinedEvent(context: OperationContext, eventId: string, digest: strin
 
 ## [packages/core/src/application/event-delivery.ts](../../packages/core/src/application/event-delivery.ts)
 
-Pending signed facts for exactly one destination, preserving their original immutable envelope/proof.
+Pending signed facts for exactly one destination, preserving their original immutable envelope/proof. `types` limits the event types returned.
 
 ```ts
-eventsForDestination(context: OperationContext, destinationId: string, limit = 200): readonly { envelope: { event_id: string; business_id: string; origin_device_id: string; actor_id: string; origin_sequence: number; event_type: string; event_version: number; occurred_at: string; authority_revision: number; required_permissions: ("products.view" | ... 40 more ... | "cash.move")[]; payload: Record<......;
+eventsForDestination(context: OperationContext, destinationId: string, limit = 200, types?: readonly string[]): readonly { envelope: { event_id: string; business_id: string; origin_device_id: string; actor_id: string; origin_sequence: number; event_type: string; event_version: number; occurred_at: string; authority_revision: number; required_permissions: ("products.view" | ... 40 more ... | "cash.move")[]; payload: Record<......;
 ```
 
 Counts scoped delivery/application work without changing HTTP v1's independent cloud queue.
@@ -2174,16 +3712,25 @@ Bounded signed forwarding batch; offering never acknowledges delivery. Empty que
 createJournalBatch(context: OperationContext, destinationId: string, crypto: ExchangeCrypto, limit = 200): Promise<{ batch: { format: "kolo.events"; format_version: 2; batch_id: string; business_id: string; sender_device_id: string; receiver_device_id: string; created_at: string; events: { envelope: { event_id: string; ... 10 more ...; branch_id?: string; }; digest: string; signature: string; }[]; }; digest: string; sign...;
 ```
 
-Read-only authentication of the container and every origin; no receipt or application state is written.
+Read-only authentication of the container and every origin it can currently verify; no receipt or application
+state is written. Events whose origin is not yet trusted here are returned separately: trust may arrive in the
+same batch (an owner-signed `DEVICE_TRUSTED`), and they are never stored or acknowledged until verified.
 
 ```ts
 verifyJournalBatch(context: OperationContext, input: unknown, crypto: ExchangeCrypto): Promise<{ batch: { format: "kolo.events"; format_version: 2; batch_id: string; business_id: string; sender_device_id: string; receiver_device_id: string; created_at: string; events: { envelope: { event_id: string; ... 10 more ...; branch_id?: string; }; digest: string; signature: string; }[]; }; digest: string; sign...;
 ```
 
+One imported event's outcome; `untrusted` means its origin was not trusted here and nothing was stored, and
+`locked` that it arrived sealed with a shop key this device has not been granted yet. Neither is acknowledged.
+
+```ts
+export type ImportOutcome = EventOutcome | "untrusted" | "locked";
+```
+
 Authenticates the forwarding sender and every preserved origin before any import work is stored.
 
 ```ts
-importJournalBatch(context: OperationContext, input: unknown, crypto: ExchangeCrypto): Promise<readonly { eventId: string; outcome: EventOutcome; }[]>;
+importJournalBatch(context: OperationContext, input: unknown, crypto: ExchangeCrypto): Promise<readonly { eventId: string; outcome: ImportOutcome; }[]>;
 ```
 
 Signs only exact durable, non-quarantined imports; this can be regenerated after a lost receipt.
@@ -2227,7 +3774,7 @@ registerExchangeDestination(context: OperationContext, input: {
     readonly deviceId: string;
     readonly publicKey: string;
     readonly label: string;
-    readonly platform: "ANDROID" | "IOS" | "DESKTOP";
+    readonly platform: "ANDROID" | "IOS" | "DESKTOP" | "SERVER";
     readonly kind: "peer" | "server";
     readonly authorityAllowed?: boolean;
 }): string;
@@ -2237,6 +3784,14 @@ Owner revokes/reinstates trust for another device; imported history stays immuta
 
 ```ts
 setExchangeDeviceActive(context: OperationContext, deviceId: string, active: boolean): void;
+```
+
+Publishes owner-signed trust for keys this authority device approved before trust propagated
+(for example through earlier pairing), so devices that never met can verify each other's facts.
+New signed facts are created; nothing historical is re-signed. Returns how many were published.
+
+```ts
+publishDeviceRoster(context: OperationContext): number;
 ```
 
 ## [packages/core/src/application/file-exchange.ts](../../packages/core/src/application/file-exchange.ts)
@@ -2271,7 +3826,7 @@ previewBundle(context: OperationContext, text: string, password: string, crypto:
 Imports only an opaque authenticated preview and rechecks current trust/authority before any effects.
 
 ```ts
-importBundle(context: OperationContext, preview: BundlePreview, crypto: TransferCrypto): Promise<readonly { eventId: string; outcome: EventOutcome; }[]>;
+importBundle(context: OperationContext, preview: BundlePreview, crypto: TransferCrypto): Promise<readonly { eventId: string; outcome: ImportOutcome; }[]>;
 ```
 
 Regenerates an encrypted durable receipt, including after a lost/cancelled file save.
@@ -2302,6 +3857,144 @@ Localized diagnostics identify the exact fact and an actionable recovery path, w
 
 ```ts
 exchangeDiagnostics(context: OperationContext, locale: "fr" | "en" = "fr"): readonly { eventId: string; code: string; description: string; action: string; }[];
+```
+
+## [packages/core/src/application/http-sync-transport.ts](../../packages/core/src/application/http-sync-transport.ts)
+
+Minimal `fetch` shape, so mobile, desktop and tests can each supply their platform implementation.
+
+```ts
+export type FetchPort = (url: string, init: {
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+    signal: AbortSignal;
+}) => Promise<{
+    readonly status: number;
+    text(): Promise<string>;
+}>;
+```
+
+HTTP implementation of the sync transport. Responses are bounded and validated against the shared
+contracts before use; the server's error codes are passed through, never its bodies or internals.
+
+```ts
+createHttpSyncTransport(baseUrl: string, options: {
+    readonly fetch?: FetchPort;
+    readonly timeoutMs?: number;
+} = {}): SyncTransport;
+```
+
+## [packages/core/src/application/join.ts](../../packages/core/src/application/join.ts)
+
+Join by code (ADR-032): the existing pairing (signed invite, signed request, owner confirmation, encrypted shop
+snapshot) carried through a short-lived server mailbox instead of files. A 10-character code shown on the owner's till
+replaces the fingerprint and code comparisons: both tills tag their messages with a key derived from it, so a server
+that swapped either message is detected. The shop file's password is random and sealed to the new till's own key, so
+neither the server nor anyone who later learns the code can open it. The owner still approves the named till.
+
+A join the owner's till has opened. `token` is a network session kept only in memory while it waits.
+
+```ts
+export interface JoinStart {
+    readonly code: string;
+    readonly display: string;
+    readonly link: string;
+    readonly joinId: string;
+    readonly expiresAt: string;
+    readonly token: string;
+    readonly inviteId: string;
+    readonly authorityAllowed: boolean;
+}
+```
+
+The till asking to join, verified against the code; shown to the owner before approval.
+
+```ts
+export interface JoinCandidate {
+    readonly label: string;
+    readonly platform: string;
+    readonly requestText: string;
+    readonly encryptionPublicKey: string;
+}
+```
+
+What the new till learns from a code before choosing its own code: whose shop it is joining.
+
+```ts
+export interface JoinInvitation {
+    readonly businessName: string;
+    readonly ownerName: string;
+    readonly authorityAllowed: boolean;
+    readonly inviteText: string;
+}
+```
+
+The server's handle for a code: a hash, so the mailbox never names the code itself.
+
+```ts
+joinIdOf(code: string, crypto: SealingCrypto): Promise<string>;
+```
+
+Owner side: creates an invite for one till, opens its mailbox on the connected server and returns the code to show
+(and the link for the QR code, which also carries the server's address and fingerprint).
+
+```ts
+startJoin(context: OperationContext, transport: SyncTransport, crypto: SealingCrypto, input: {
+    readonly serverDeviceId: string;
+    readonly url: string;
+    readonly fingerprint: string;
+    readonly authorityAllowed: boolean;
+}): Promise<JoinStart>;
+```
+
+Owner side: the till that asked to join, once one has, after checking it holds the code and answers this invite.
+
+```ts
+pollJoin(transport: SyncTransport, crypto: SealingCrypto, start: JoinStart): Promise<JoinCandidate>;
+```
+
+Owner side: approves the named till. Pins its key exactly like file pairing, builds the encrypted shop file with a
+random password, seals that password to the till's own key and posts both.
+
+```ts
+approveJoin(context: OperationContext, transport: SyncTransport, crypto: SealingCrypto, files: SnapshotPort, start: JoinStart, candidate: JoinCandidate): Promise<void>;
+```
+
+Owner side: refuses or abandons a join; the invite can no longer be used.
+
+```ts
+endJoin(context: OperationContext, transport: SyncTransport, start: JoinStart, refused: boolean): Promise<void>;
+```
+
+New till: reads whose shop a code opens. Refuses an invite not tagged with this exact code.
+
+```ts
+lookupJoin(transport: SyncTransport, crypto: SealingCrypto, code: string): Promise<JoinInvitation>;
+```
+
+New till: provisions this device's keys with its own new code, then posts its signed request and encryption key,
+tagged with the join code. Safe to repeat after an interruption: the same request is posted again.
+
+```ts
+requestJoin(code: string, invitation: JoinInvitation, input: {
+    readonly label: string;
+    readonly platform: "ANDROID" | "IOS" | "DESKTOP";
+    readonly secret: string;
+}, ports: WorkspacePorts, transport: SyncTransport, crypto: SealingCrypto): Promise<void>;
+```
+
+New till: once the owner approved, opens the shop file with the sealed password and installs the shop exactly as
+file pairing does. Returns undefined while the owner has not answered.
+
+```ts
+finishJoin(code: string, ports: WorkspacePorts, files: SnapshotPort, transport: SyncTransport, crypto: SealingCrypto): Promise<{ readonly database: Database; readonly installation: Installation; }>;
+```
+
+True while this empty device has a join request waiting for the owner, so the app can resume waiting after a restart.
+
+```ts
+joinPending(database: Database): boolean;
 ```
 
 ## [packages/core/src/application/operations.ts](../../packages/core/src/application/operations.ts)
@@ -3287,6 +4980,293 @@ Partial/full purchase return under purchases.create/pay: stock out, refund cash 
 returnPurchase(context: OperationContext, input: ReturnCommand): void;
 ```
 
+## [packages/core/src/application/sealed-sync.ts](../../packages/core/src/application/sealed-sync.ts)
+
+Native primitives for end-to-end encrypted sync (ADR-030): AES-256-GCM and codecs from the file-transfer
+crypto, plus X25519 and HKDF-SHA256. Adapters use platform/OpenSSL implementations only.
+
+```ts
+export interface SealingCrypto extends TransferCrypto {
+    ephemeralAgreement(recipientPublicKey: string): Promise<{
+        readonly publicKey: string;
+        readonly shared: string;
+    }>;
+    hkdf(ikmHex: string, saltHex: string, info: string, bytes: number): Promise<string>;
+    hmac(keyHex: string, message: string): Promise<string>;
+}
+```
+
+A shop key this device holds. `key` is 32 bytes of hex and only ever lives in memory.
+
+```ts
+export interface ShopKey {
+    readonly keyId: string;
+    readonly epoch: number;
+    readonly key: string;
+}
+```
+
+A 32-byte secret sealed to one device's X25519 key.
+
+```ts
+export type SealedKey = {
+    readonly ephemeral_public_key: string;
+    readonly nonce: string;
+    readonly ciphertext: string;
+    readonly tag: string;
+};
+```
+
+Announces this device's X25519 key once, as a fact signed by this device, so the owner can seal shop keys to it.
+Returns the public key, or undefined on a platform whose vault cannot hold one.
+
+```ts
+ensureEncryptionKey(context: OperationContext): Promise<string>;
+```
+
+Seals a hex secret to one device's X25519 key: ephemeral agreement, HKDF-SHA256, then AES-256-GCM bound to `aad`.
+
+```ts
+sealToDevice(crypto: SealingCrypto, recipientPublicKey: string, keyHex: string, aad: string): Promise<SealedKey>;
+```
+
+Opens a secret sealed to this installation's X25519 key; the private key stays in the vault.
+
+```ts
+openSealedWithVault(ports: WorkspacePorts, keyReference: string, ownPublicKey: string, sealed: SealedKey, aad: string, crypto: SealingCrypto): Promise<string>;
+```
+
+Every shop key granted to this device that it can open. A grant it cannot open is skipped, never fatal.
+
+```ts
+shopKeys(context: OperationContext, crypto: SealingCrypto): Promise<readonly ShopKey[]>;
+```
+
+The key new facts are sealed with: highest epoch, then highest key ID so two owner devices agree.
+
+```ts
+currentShopKey(keys: readonly ShopKey[]): ShopKey;
+```
+
+Owner key management, run in each sync pass (after pulling) on the owner's authority devices and a no-op elsewhere.
+Creates the first shop key when the shop has none, opens a new epoch when a device that held the current key was revoked, and grants
+every key this device holds to every trusted device that announced an encryption key. Returns grants added.
+
+```ts
+maintainShopKeys(context: OperationContext, crypto: SealingCrypto): Promise<number>;
+```
+
+Seals one signed fact with a shop key. The visible header is the AES-GCM additional data.
+
+```ts
+sealEvent(crypto: SealingCrypto, businessId: string, key: ShopKey, event: SignedJournalEvent): Promise<{ event_id: string; origin_device_id: string; origin_sequence: number; digest: string; key_id: string; epoch: number; nonce: string; ciphertext: string; tag: string; }>;
+```
+
+Opens a sealed fact, or returns undefined when this device lacks its key or the content does not match its header.
+Origin proof is still checked afterwards, exactly as for a fact received by file.
+
+```ts
+openSealedEvent(crypto: SealingCrypto, businessId: string, keys: readonly ShopKey[], sealed: SealedEvent): Promise<{ envelope: { event_id: string; business_id: string; origin_device_id: string; actor_id: string; origin_sequence: number; event_type: string; event_version: number; occurred_at: string; authority_revision: number; required_permissions: ("products.view" | ... 40 more ... | "cash.move")[]; payload: Record<...>...;
+```
+
+Signed server batch of this device's pending facts for one server destination. Trust, encryption-key and
+server-address facts travel clear; every other fact is sealed with the current shop key. Without a key only clear
+facts are offered and `waiting` counts the facts held back. Offering never acknowledges delivery.
+
+```ts
+createSyncBatch(context: OperationContext, destinationId: string, crypto: SealingCrypto, keys: readonly ShopKey[], limit = 200): Promise<{ readonly signed?: { batch: { format: "kolo.sync-batch"; format_version: 1; batch_id: string; business_id: string; sender_device_id: string; receiver_device_id: string; created_at: string; events: ({ ...; } | { ...; })[]; }; digest: string; signature: string; }; readonly waiting: number; }>;
+```
+
+Authenticates a server-signed batch, opens the sealed facts this device has keys for and imports them with the
+shared verification and application path. Facts it cannot open, or whose inner proof fails, are `locked`: nothing
+is stored or acknowledged for them, so they are offered again later.
+
+```ts
+importSyncBatch(context: OperationContext, input: unknown, crypto: SealingCrypto, keys: readonly ShopKey[]): Promise<readonly { eventId: string; outcome: ImportOutcome; }[]>;
+```
+
+## [packages/core/src/application/server-sync.ts](../../packages/core/src/application/server-sync.ts)
+
+Network port for the optional sync server. Implementations only move bytes; every proof, trust and
+authority decision stays in the shared operations below. A failure never affects local trading.
+
+```ts
+export interface SyncTransport {
+    identity(): Promise<ServerIdentity>;
+    challenge(input: ChallengeRequest): Promise<Challenge>;
+    enroll(input: EnrollmentRequest): Promise<void>;
+    session(input: SessionRequest): Promise<Session>;
+    endSession(token: string): Promise<void>;
+    bootstrap(token: string): Promise<BootstrapResponse>;
+    push(token: string, batch: SignedSyncBatch): Promise<PushResponse>;
+    pull(token: string, cursor: string | null, limit: number): Promise<PullResponse>;
+    receipt(token: string, receipt: SignedPeerReceipt): Promise<number>;
+    status(token: string): Promise<SyncStatus>;
+    entitlements(token: string): Promise<Entitlement>;
+    joinCreate(token: string, offer: JoinOffer): Promise<{
+        expires_at: string;
+    }>;
+    joinRead(joinId: string): Promise<JoinOffer>;
+    joinRequest(joinId: string, body: JoinRequestBody): Promise<void>;
+    joinPollRequest(token: string, joinId: string): Promise<JoinRequestBody | null>;
+    joinEnroll(token: string, joinId: string, body: JoinEnrollment): Promise<void>;
+    joinPollEnrollment(joinId: string): Promise<JoinEnrollment | null>;
+    joinCancel(token: string, joinId: string): Promise<void>;
+}
+```
+
+Stable network failure; `retry` distinguishes backoff from a condition the owner must resolve.
+
+```ts
+class SyncTransportError extends Error {
+  code: string;
+  status: number;
+  retry: boolean;
+  constructor(code: string, status: number, retry: boolean);
+}
+```
+
+Connected server, read from local SQLite; counts are this device's own delivery progress.
+
+```ts
+export interface ServerConnection {
+    readonly destinationId: string;
+    readonly serverDeviceId: string;
+    readonly url: string;
+    readonly fingerprint: string;
+    readonly connectedAt: string;
+    readonly lastAttemptAt: string | null;
+    readonly lastSuccessAt: string | null;
+    readonly lastError: string | null;
+    readonly pending: number;
+    readonly unsigned: number;
+    readonly source: "code" | "shop";
+    readonly service: Entitlement["status"] | null;
+    readonly paidUntil: string | null;
+    readonly graceUntil: string | null;
+}
+```
+
+One synchronization pass. `untrusted` facts were not stored and are offered again later. `locked` counts facts
+waiting for a shop key: this device's own facts it cannot seal yet and received facts it cannot open yet.
+
+```ts
+export interface SyncSummary {
+    readonly pushed: number;
+    readonly rejected: number;
+    readonly pulled: number;
+    readonly untrusted: number;
+    readonly locked: number;
+}
+```
+
+Normalizes a server address. HTTPS is required except on loopback and private LAN addresses,
+where a self-hosted server may run without a certificate; payloads are signed either way.
+
+```ts
+normalizeServerUrl(input: string): string;
+```
+
+The short fingerprint the owner compares with the one printed by the server before trusting it.
+
+```ts
+keyFingerprint(publicKey: string, crypto: ExchangeCrypto): Promise<string>;
+```
+
+Reads and checks the server's public identity without changing anything locally.
+
+```ts
+previewServer(transport: SyncTransport, crypto: ExchangeCrypto): Promise<{ api_version: 2; server_device_id: string; public_key: string; fingerprint: string; enrollment_open: boolean; }>;
+```
+
+Connects this device to a sync server whose fingerprint came from a connection code or the owner's shared
+address, so nobody retypes it. On the owner's authority-capable device this approves the server key (an
+owner-signed `DEVICE_TRUSTED` fact), attaches the existing shop with its IDs using the code's single-use token,
+publishes earlier pairings and shares the address with the shop's other tills. Any other device needs that owner
+approval first and receives it from the server, owner-signed; it needs no token.
+
+```ts
+connectServer(context: OperationContext, transport: SyncTransport, input: {
+    readonly url: string;
+    readonly fingerprint: string;
+    readonly token?: string;
+    readonly source?: "code" | "shop";
+}, crypto: ExchangeCrypto): Promise<string>;
+```
+
+Owner-signed `SERVER_ENDPOINT_SET`, so the shop's other trusted tills connect to the same server on their own.
+Only the owner's authority device shares; repeating the same address records nothing.
+
+```ts
+shareServerEndpoint(context: OperationContext, input: {
+    readonly serverDeviceId: string;
+    readonly url: string;
+    readonly fingerprint: string;
+}): void;
+```
+
+The owner's shared server address when this device should connect to it on its own: set, not declined here and not already connected.
+
+```ts
+pendingShopServer(context: OperationContext): { readonly url: string; readonly fingerprint: string; readonly serverDeviceId: string; };
+```
+
+One bounded pass: announce this device's encryption key, push this device's pending facts (sealed), pull everything
+others sent, then let the owner's devices create or grant shop keys. Each page is durable before its receipt is sent,
+so a lost response only causes a harmless resend. A second round runs when keys changed during the first, so a
+newly granted till does not wait a whole interval. Outcome and error code are recorded locally; errors are rethrown.
+
+```ts
+synchronizeServer(context: OperationContext, destinationId: string, transport: SyncTransport, crypto: SealingCrypto, options: {
+    readonly batchSize?: number;
+    readonly maxPages?: number;
+} = {}): Promise<SyncSummary>;
+```
+
+Connected servers with local delivery counts, for status display.
+
+```ts
+serverConnections(context: OperationContext, crypto: ExchangeCrypto): Promise<readonly ServerConnection[]>;
+```
+
+Stops syncing with a server on this device and remembers the choice, so the shop's shared address does not
+reconnect it. On the owner's authority device it also withdraws the shared address (`SERVER_ENDPOINT_CLEARED`);
+tills already connected stay connected. Trust in the server key is unchanged; the owner revokes keys separately.
+
+```ts
+disconnectServer(context: OperationContext, destinationId: string): void;
+```
+
+True when this shop already trusts the server's key, meaning the shop was attached before (by this till or the
+owner's): reconnecting then needs no single-use token.
+
+```ts
+knowsServer(context: OperationContext, serverDeviceId: string, publicKey: string): boolean;
+```
+
+True when this unlocked device may enroll the shop itself rather than waiting for the owner.
+
+```ts
+canEnrollServer(context: OperationContext): boolean;
+```
+
+## [packages/core/src/application/sync-scheduler.ts](../../packages/core/src/application/sync-scheduler.ts)
+
+Background sync for any platform, driven by the app's own timer or lifecycle events. Each `tick` first follows the
+owner's shared server address if this device is not connected to it yet, then syncs every connected server. Success
+waits a minute; failure backs off up to fifteen minutes. `soon` brings the next pass forward after a local change or
+when the app returns to the foreground. Passes never overlap and never run without a signed-in context.
+
+```ts
+class ServerSyncScheduler {
+  constructor(crypto: SealingCrypto, transport: (url: string) => SyncTransport, now: () => number = Date.now);
+  /** Something changed locally, or the app came back: sync soon rather than at the next regular pass. */
+  soon(): void;
+  /** Runs a pass if one is due. Failures are recorded on each server's status and never thrown. */
+  tick(context: OperationContext | undefined): Promise<void>;
+}
+```
+
 ## [packages/core/src/backup/encryption.ts](../../packages/core/src/backup/encryption.ts)
 
 Backup/exchange passwords are independent of unlock PINs: 12–256 characters, not entirely digits.
@@ -4110,6 +6090,15 @@ derived and would only enlarge the file), so restore and pairing rebuild it here
 rebuildFullText(tx: Queryable): void;
 ```
 
+## [packages/core/src/data/database/hosted-service-migration.ts](../../packages/core/src/data/database/hosted-service-migration.ts)
+
+Forward-only: what a connected server last said about this shop's hosted service (ADR-031), so the till can warn
+before sync pauses and explain why it did. Local trading never reads it.
+
+```ts
+const HOSTED_SERVICE_MIGRATION: Migration;
+```
+
 ## [packages/core/src/data/database/local-authority-migration.ts](../../packages/core/src/data/database/local-authority-migration.ts)
 
 Forward-only F1 schema. Pending setup stores intent, never credentials.
@@ -4249,6 +6238,16 @@ Checks SQLite numeric output before exposing money, quantity or counts to JavaSc
 sqlInteger(value: unknown): number;
 ```
 
+## [packages/core/src/data/database/sealed-sync-migration.ts](../../packages/core/src/data/database/sealed-sync-migration.ts)
+
+Forward-only end-to-end encrypted sync (ADR-030): each device's X25519 key, owner grants of shop keys sealed
+to those keys, the shop's chosen server address, and how this device came to be connected. Shop keys are
+never stored in the clear: a device re-opens its own grants with the private key held by its native vault.
+
+```ts
+const SEALED_SYNC_MIGRATION: Migration;
+```
+
 ## [packages/core/src/data/database/search-migration.ts](../../packages/core/src/data/database/search-migration.ts)
 
 Forward-only search keys. `search_name` is `name` folded once at write time by the same rules as
@@ -4289,6 +6288,16 @@ column filters typed by a user are inert. Returns undefined when nothing searcha
 
 ```ts
 fullTextQuery(term: string): string;
+```
+
+## [packages/core/src/data/database/server-sync-migration.ts](../../packages/core/src/data/database/server-sync-migration.ts)
+
+Forward-only optional-server support: a `SERVER` device platform, the owner-signed roster revision of each
+trusted key, and the endpoint of a connected sync server. The devices table is rebuilt to widen its platform
+check without rewriting child references.
+
+```ts
+const SERVER_SYNC_MIGRATION: Migration;
 ```
 
 ## [packages/core/src/data/database/transfer-migration.ts](../../packages/core/src/data/database/transfer-migration.ts)
@@ -7075,7 +9084,7 @@ Stable exchange failures; never includes payloads, private keys or native error 
 
 ```ts
 class ExchangeError extends Error {
-  code: "invalid_event" | "invalid_payload" | "untrusted_device" | "invalid_signature" | "conflict" | "return_conflict" | "scope_mismatch" | "permission_denied" | "unsupported_event" | "missing_dependency" | "authority_revision" | "invalid_receipt" | "invalid_destination" | "locked";
+  code: "invalid_event" | "invalid_payload" | "untrusted_device" | "invalid_signature" | "conflict" | "return_conflict" | "scope_mismatch" | "permission_denied" | "unsupported_event" | "missing_dependency" | "authority_revision" | "invalid_receipt" | "invalid_destination" | "fingerprint_mismatch" | "locked";
   constructor(code: ExchangeError["code"]);
 }
 ```
@@ -7115,6 +9124,11 @@ export interface CredentialCrypto {
         readonly publicKey: string;
         readonly privateKey: string;
     }>;
+    encryptionKeyPair?(): Promise<{
+        readonly publicKey: string;
+        readonly privateKey: string;
+    }>;
+    agree?(privateKey: string, peerPublicKey: string): Promise<string>;
 }
 ```
 
@@ -7271,6 +9285,8 @@ export interface CredentialPort {
     recover?(oldReference: string, newReference: string, recoveryCode: string, newSecret: string): Promise<void>;
     hasCredential?(reference: string): Promise<boolean>;
     recoveryCode?(reference: string, secret: string): Promise<string | undefined>;
+    encryptionKey?(keyReference: string): Promise<string>;
+    agree?(keyReference: string, peerPublicKey: string): Promise<string>;
 }
 ```
 

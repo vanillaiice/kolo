@@ -13,6 +13,14 @@ Anyone can fork an open-source app and remove a check. The one-time payment is
 therefore a convenience/support purchase of the official app, not DRM. The license
 and a trademark policy protect the project, not code obfuscation.
 
+## Server licence amendment (2026-10-11)
+
+The user chose **AGPL-3.0-only** for `apps/server`, replacing "closed source for now" below.
+`apps/server/LICENSE` carries the AGPL text and the package declares `AGPL-3.0-only`. Anyone
+offering a modified server over a network must share its source with its users. The server
+no longer has to move to a private repository before the client repository is published.
+The trademark and CLA points below still apply.
+
 ## Licensing decision (2026-10-09)
 
 - **Clients and shared packages** (`apps/desktop`, `apps/mobile`, `packages/*`):
