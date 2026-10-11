@@ -7,6 +7,7 @@ import type { OperationContext, WorkspacePorts } from "@kolo/core/identity/types
 import type { SnapshotPort } from "@kolo/core/backup/types";
 import { DraftStore } from "./draft-store.ts";
 import type { SlotControl } from "../data/database/open-on-device.ts";
+import type { BiometricUnlock } from "../data/auth/biometric-unlock.ts";
 
 /**
  * One unlocked session. Everything below the session provider is keyed by `generation`, so
@@ -32,6 +33,8 @@ export interface Session {
    * or session change is refused with `locked`, and the actor must still be active.
    */
   readonly systemUi: <T>(task: () => Promise<T>) => Promise<T>;
+  /** Fingerprint or face unlock on this phone: the owner's switch and each member's enrollment. */
+  readonly biometric: BiometricUnlock;
   /** Erases every shop and its keystore entries on this phone and starts empty (owner, after confirmation). */
   readonly resetDevice: () => void;
   /** Replaces the active database after an owner restore or pairing completion. */

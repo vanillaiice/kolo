@@ -26,6 +26,7 @@
     "@kolo/core": "0.1.0",
     "expo": "^57.0.15",
     "expo-constants": "~57.0.13",
+    "expo-device": "~57.0.2",
     "expo-file-system": "~57.0.5",
     "expo-image-manipulator": "~57.0.12",
     "expo-image-picker": "~57.0.12",

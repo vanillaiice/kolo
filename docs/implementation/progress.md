@@ -1159,3 +1159,21 @@ Restoring it on the Pixel found:
 
 Verification: `npm run check`, `npm run bundle:mobile`, an installed release build that restores the
 fixture without crashing, and the valuation report from a host restore of the same backup.
+
+### Per-architecture APKs and fingerprint unlock (2026-10-11)
+- **Smaller Android downloads.** A local Expo config plugin (`apps/mobile/plugins/with-abi-splits.js`)
+  builds arm64-v8a (44 MB) and armeabi-v7a (35 MB) APKs plus a universal fallback (87 MB, was 130 MB),
+  with version codes `versionCode × 10 + 0/1/2`. The build and release scripts handle the three files;
+  [releasing](../releasing.md#android-files-per-phone-type) says which file fits which phone. Settings →
+  About shows the phone's architecture (`expo-device`).
+- **Fingerprint or face unlock.** Each member can opt in on a phone (Settings → Fingerprint or face). Their
+  remembered-session reference, never the code, is kept with `expo-secure-store` `requireAuthentication`,
+  so Android releases it only after the system biometric check. The unlock screen offers the prompt once
+  and as a button; success goes through `resumeWorkspace`, which still requires the same active member,
+  device, business and credential. A changed code, owner recovery, restore or newly enrolled fingerprint
+  makes it stale or unreadable: it is forgotten and the code is asked for. Android accepts any fingerprint
+  registered on the phone, so the switch warns against shared phones, and the owner has a per-phone
+  switch that removes every enrollment. Lock keeps the enrollment; device reset removes it.
+  Logic in `src/data/auth/biometric-unlock.ts` (tested with real SQLite preferences); the native port is
+  `biometric-on-device.ts`.
+

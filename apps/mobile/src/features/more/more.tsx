@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
 import Constants from "expo-constants";
+import { supportedCpuArchitectures } from "expo-device";
 import type { Permission } from "@kolo/core/identity/permissions";
+import { rememberMember } from "@kolo/core/identity/workspace";
 import { useText } from "../../app/i18n.tsx";
 import { useNav } from "../../app/navigation.tsx";
 import { usePermissions, useSession } from "../../app/session.tsx";
@@ -35,6 +37,7 @@ export function SettingsScreen(): React.JSX.Element {
   const { t } = useText(), s = useStyles(), nav = useNav(), permissions = usePermissions(), session = useSession();
   return <Screen title={t("settings")} onBack={nav.back}>
     <Section title={t("session")}><Toggle label={t("staySignedIn")} value={session.rememberSession} onChange={session.setRememberSession} hint={t("staySignedInHelp")} /></Section>
+    <BiometricSettings />
     <Section><LanguageControl /><AppearanceControl /><Text style={s.muted}>{t("devicePreferencesHelp")}</Text></Section>
     {permissions.includes("products.view") && <Section title={t("photoStorage")}><PhotoUsage /><Text style={s.muted}>{t("photoStorageHelp")}</Text></Section>}
     <RowGroup><ListRow title={t("about")} onPress={() => nav.push("about")} /></RowGroup>
@@ -42,14 +45,38 @@ export function SettingsScreen(): React.JSX.Element {
   </Screen>;
 }
 
+/**
+ * Fingerprint or face unlock: each member opts in on this phone; the owner can switch it off for the
+ * phone, which forgets every member's enrollment. The system prompt counts as a screen KOLO opened.
+ */
+function BiometricSettings(): React.JSX.Element {
+  const { t } = useText(), s = useStyles(), session = useSession(), action = useAction(), { biometric, context } = session;
+  const [, refresh] = useState(0), update = (): void => refresh(value => value + 1);
+  const supported = biometric.usable() || !biometric.allowed();
+  return <Section title={t("biometricTitle")}>
+    {!biometric.allowed() ? <Text style={s.muted}>{t("biometricOffForPhone")}</Text>
+      : !supported ? <Text style={s.muted}>{t("biometricUnavailable")}</Text>
+      : <Toggle label={t("biometricToggle")} value={biometric.enrolled(context.userId)} hint={t("biometricHelp")}
+          onChange={enabled => { void action.runAsync(async () => {
+            if (enabled) await session.systemUi(() => biometric.enroll(rememberMember(context))); else await biometric.forget(context.userId);
+          }, update); }} />}
+    {session.isOwner && <Toggle label={t("biometricAllowed")} value={biometric.allowed()} hint={t("biometricAllowedHelp")}
+      onChange={enabled => { void action.runAsync(() => biometric.setAllowed(enabled), update); }} />}
+    {action.notice}
+  </Section>;
+}
+
 /** Version, licence and what KOLO does with data on this phone. */
 export function AboutScreen(): React.JSX.Element {
   const { t } = useText(), s = useStyles(), { colors } = useTheme(), nav = useNav();
   const version = Constants.expoConfig?.version ?? "0.0.0";
+  // The first supported architecture names the APK to download (arm64-v8a or armeabi-v7a).
+  const architecture = supportedCpuArchitectures?.[0];
   return <Screen title={t("about")} onBack={nav.back}>
     <View style={{ alignItems: "center", gap: spacing.xs, padding: spacing.lg }}>
       <Text style={{ fontSize: 30, fontWeight: "800", letterSpacing: 3, color: colors.brand }}>KOLO</Text>
-      <Text style={s.muted}>{t("versionLabel", { version })}</Text><Text style={s.muted}>kolo · made by hblabs</Text></View>
+      <Text style={s.muted}>{t("versionLabel", { version })}</Text>
+      {architecture !== undefined && <Text selectable style={s.muted}>{t("architectureLabel", { architecture })}</Text>}<Text style={s.muted}>kolo · made by hblabs</Text></View>
     <Section title={t("licenseTitle")}><Text style={s.body}>{t("licenseText")}</Text></Section>
     <Section title={t("privacyTitle")}><Text style={s.body}>{t("privacyText")}</Text></Section>
     <Section title={t("openSourceTitle")}>{["React Native · MIT", "Expo · MIT", "React · MIT", "react-native-quick-crypto · MIT", "Zod · MIT", "fflate · MIT"].map(line => <Text key={line} style={s.body}>{line}</Text>)}</Section>

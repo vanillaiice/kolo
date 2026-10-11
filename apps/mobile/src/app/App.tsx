@@ -17,6 +17,8 @@ import { eraseShopsOnDevice, openOnDevice, preferenceStorageOnDevice, type SlotC
 import { localCredentialsOnDevice, newIdOnDevice, exchangeCryptoOnDevice } from "../data/auth/local-credentials-on-device.ts";
 import { secretStoreOnDevice } from "../data/auth/store-on-device.ts";
 import { sessionMemory } from "../data/auth/session-memory.ts";
+import { biometricUnlock } from "../data/auth/biometric-unlock.ts";
+import { biometricVaultOnDevice } from "../data/auth/biometric-on-device.ts";
 import { EntryScreen } from "../features/entry/EntryScreen.tsx";
 import { Shell } from "../features/shell/Shell.tsx";
 import { Notice, Page } from "../components/ui.tsx";
@@ -62,6 +64,7 @@ function AppContent(): React.JSX.Element {
   // "Stay signed in" (on by default, as on the desktop): the phone does not lock on background and a
   // cold boot reopens the last unlocked user. Off restores locking on background and cold boot.
   const memory = useMemo(() => sessionMemory(secretStoreOnDevice(), preferenceStorageOnDevice), []);
+  const biometric = useMemo(() => biometricUnlock(biometricVaultOnDevice(), preferenceStorageOnDevice), []);
   const [remember, setRemember] = useState(() => memory.enabled());
   const rememberRef = useRef(remember); rememberRef.current = remember;
   /** Saves or forgets the remembered user; failure only means the next start is locked. A save overtaken by a lock is undone. */
@@ -181,9 +184,9 @@ function AppContent(): React.JSX.Element {
   const lockNow = useCallback((): void => { lock(); void store(undefined); }, [lock, store]);
   /** Erases every shop on this phone and its keystore entries, then boots empty; preferences stay. */
   const resetDevice = useCallback((): void => {
-    resetting.current = true; void store(undefined);
+    resetting.current = true; void store(undefined); void biometric.forgetAll().catch(() => undefined);
     generation.current++; unlockedRef.current = false; setUnlocked(undefined); setBoot({ state: "opening" }); setBootRun(run => run + 1);
-  }, [store]);
+  }, [store, biometric]);
   const changeRemember = useCallback((context: OperationContext, enabled: boolean): void => {
     memory.setEnabled(enabled); setRemember(enabled);
     void store(enabled ? rememberMember(context) : undefined, generation.current);
@@ -204,7 +207,7 @@ function AppContent(): React.JSX.Element {
     return {
       database, ports: boot.ports, files: boot.files, slots: boot.slots, context, generation: unlocked.generation, businessName: actor.businessName, userName: actor.userName,
       isOwner: actor.isOwner, branchId: actor.branchId, canManageStaff, lock: lockNow, activate,
-      rememberSession: remember, setRememberSession: enabled => changeRemember(context, enabled), resetDevice,
+      rememberSession: remember, setRememberSession: enabled => changeRemember(context, enabled), resetDevice, biometric,
       isCurrent: value => value === generation.current,
       systemUi: async task => {
         const owner = unlocked.generation, result = await entrySystemUi(task);
@@ -214,7 +217,7 @@ function AppContent(): React.JSX.Element {
         return result;
       },
     };
-  }, [unlocked, boot, lock, lockNow, activate, remember, changeRemember, entrySystemUi, resetDevice]);
+  }, [unlocked, boot, lock, lockNow, activate, remember, changeRemember, entrySystemUi, resetDevice, biometric]);
 
   if (boot.state !== "ready") return <Page><View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.lg }}>
     {boot.state === "opening" ? <ActivityIndicator color={colors.primary} /> : <><LanguageControl /><Notice tone="error" text={t("bootFailed")} /></>}
@@ -223,7 +226,7 @@ function AppContent(): React.JSX.Element {
     <StatusBar barStyle={scheme === "dark" ? "light-content" : "dark-content"} backgroundColor={colors.surface} />
     {session === undefined
       ? <EntryScreen key={`${boot.installation.state}-${generation.current}`} ports={boot.ports} files={boot.files} slots={boot.slots} state={boot.installation} authority={boot.authority}
-          onChanged={refresh} onUnlocked={onUnlocked} onActivated={activate} systemUi={entrySystemUi} />
+          onChanged={refresh} onUnlocked={onUnlocked} onActivated={activate} systemUi={entrySystemUi} biometric={biometric} />
       : <SessionProvider key={session.generation} session={session}><Shell /></SessionProvider>}
   </>;
 }

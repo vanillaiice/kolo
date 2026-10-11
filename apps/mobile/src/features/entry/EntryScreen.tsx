@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Platform, Text, View } from "react-native";
 import Constants from "expo-constants";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
-import { createWorkspace, adoptLegacyWorkspace, resumeWorkspaceProvisioning, unlockWorkspace } from "@kolo/core/identity/workspace";
+import { createWorkspace, adoptLegacyWorkspace, resumeWorkspace, resumeWorkspaceProvisioning, unlockWorkspace } from "@kolo/core/identity/workspace";
 import { validateLocalSecret } from "@kolo/core/identity/credentials";
 import { ownerRecoveryCode, recoverOwnerAccess } from "@kolo/core/identity/recovery";
 import { WorkspaceError, type InstallationState, type OperationContext, type WorkspacePorts } from "@kolo/core/identity/types";
@@ -16,6 +16,7 @@ import { pickTransferFile, saveTransferFile } from "../../data/transfer/files-on
 import { replaceShop } from "../../data/transfer/replace-shop.ts";
 import { transferFileKind } from "../../data/transfer/file-kind.ts";
 import type { SlotControl } from "../../data/database/open-on-device.ts";
+import type { BiometricUnlock } from "../../data/auth/biometric-unlock.ts";
 import { useText } from "../../app/i18n.tsx";
 import { workspaceErrorText } from "../../app/identity-errors.ts";
 import { failureKey, FormProblem } from "../../components/command.tsx";
@@ -45,10 +46,11 @@ const platform = Platform.OS === "ios" ? "IOS" : "ANDROID";
  * recovery and backup import; replacing it names the current shop and needs typed confirmation,
  * and moves the active slot only when the restore succeeds; the previous shop stays on disk.
  */
-export function EntryScreen({ ports, files, slots, state, authority, onUnlocked, onChanged, onActivated, systemUi }: {
+export function EntryScreen({ ports, files, slots, state, authority, onUnlocked, onChanged, onActivated, systemUi, biometric }: {
   readonly ports: WorkspacePorts; readonly files: SnapshotPort; readonly slots: SlotControl; readonly state: InstallationState; readonly authority: AuthTransport;
   readonly onUnlocked: (context: OperationContext) => void; readonly onChanged: () => void; readonly onActivated: (database: Database) => void;
   readonly systemUi: <T>(task: () => Promise<T>) => Promise<T>;
+  readonly biometric: BiometricUnlock;
 }): React.JSX.Element {
   const { t, language } = useText(), s = useStyles(), { colors } = useTheme();
   const [step, setStep] = useState<Step>(() => firstStep(state, ports.database));
@@ -58,7 +60,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
   const [phone, setPhone] = useState(""), [serverPin, setServerPin] = useState(""), [password, setPassword] = useState(""), [typedName, setTypedName] = useState(""), [fingerprint, setFingerprint] = useState("");
   const [pairingCode, setPairingCode] = useState(""), [acknowledged, setAcknowledged] = useState(false), [replacing, setReplacing] = useState(false);
   const [working, setWorking] = useState<"workingReadFile" | "workingCheckBackup" | "workingRestore">();
-  const [busy, setBusy] = useState(false), [failure, setFailure] = useState<unknown>(), [notice, setNotice] = useState<"recovered" | "joinCancelled">();
+  const [busy, setBusy] = useState(false), [failure, setFailure] = useState<unknown>(), [notice, setNotice] = useState<"recovered" | "joinCancelled" | "biometricGone">();
   const staged = useRef<BackupPreview | undefined>(undefined), mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; if (staged.current !== undefined) void cancelBackupPreview(staged.current); }, []);
   const configured = state.state === "locked" || state.state === "unlocked";
@@ -69,6 +71,24 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
   // After a restore or joining, staff codes belong to the other device; only the owner can give them new ones here.
   const waiting = allActors.filter(actor => !actor.here).length, actors = allActors.filter(actor => actor.here);
   const [actorId, setActorId] = useState(actors[0]?.id);
+  const biometricReady = actorId !== undefined && biometric.usable() && biometric.enrolled(actorId);
+  /** The system fingerprint or face prompt; success resumes the member exactly as "Stay signed in" does. */
+  const unlockWithBiometrics = (userId: string): Promise<void> => run(async () => {
+    const result = await biometric.unlock(userId, t("biometricPrompt"));
+    if (result.kind === "cancelled") return;
+    if (result.kind === "member") {
+      let context: OperationContext | undefined;
+      try { context = resumeWorkspace(result.member, ports); } catch { await biometric.forget(userId); }
+      if (context !== undefined) { onUnlocked(context); return; }
+    }
+    if (mounted.current) setNotice("biometricGone");
+  });
+  // Offer the prompt once when the unlock screen opens for an enrolled member.
+  const prompted = useRef(false);
+  useEffect(() => {
+    if (prompted.current || step.name !== "unlock" || !biometricReady || actorId === undefined) return;
+    prompted.current = true; void unlockWithBiometrics(actorId);
+  });
 
   const go = (next: Step): void => { setFailure(undefined); setNotice(undefined); setStep(next); };
   const clearSecrets = (): void => { setSecret(""); setConfirmation(""); setRecovery(""); setServerPin(""); setPassword(""); };
@@ -147,6 +167,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
         <Button label={t("unlock")} busy={busy} disabled={actorId === undefined || secret === ""} onPress={() => { void run(async () => {
           const context = await unlockWorkspace({ userId: actorId!, secret }, ports); clearSecrets(); onUnlocked(context);
         }); }} />
+        {biometricReady && <Button label={t("unlockWithBiometrics")} variant="secondary" busy={busy} onPress={() => { void unlockWithBiometrics(actorId!); }} />}
       </Section>
       <Button label={t("forgotCode")} variant="ghost" onPress={() => { clearSecrets(); go({ name: "recover" }); }} />
       <Button label={t("importBackup")} variant="secondary" onPress={() => go({ name: "import" })} />
