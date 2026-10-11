@@ -1,17 +1,15 @@
-# Android releases: push a tag mobile-vX.Y.Z matching apps/mobile/app.json and the test-signed APK
-# goes to a draft GitHub pre-release with its checksum. Manual runs build the artifact only.
-# See docs/releasing.md.
+# Android releases are built locally (docs/releasing.md): a cold runner spends over 40 minutes
+# compiling the native modules. This manual workflow still builds the test-signed APK as an
+# artifact, or a draft release when run on a mobile-vX.Y.Z tag.
 name: Android release
 on:
   workflow_dispatch:
-  push:
-    tags: ['mobile-v*']
 permissions:
   contents: write
 jobs:
   android:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
