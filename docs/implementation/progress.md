@@ -1101,3 +1101,61 @@ expo-sqlite Android build; its installed-device behaviour still needs the native
   "kolo <version> · made by hblabs".
 - Mobile Sell no longer draws an empty, padded footer under "Scan or add a product to start" when the
   cart is empty. Verified on the installed Android build.
+
+### Release-gate pass: advisories, Android checks, short sale numbers (2026-10-11)
+- **Advisories.** `npm audit --omit=dev` reports 22 (14 high, 8 moderate), all in Expo/Metro build tooling
+  (`@expo/cli`, Metro, config plugins, `xcode`); none is bundled into the APK. Their roots are `braces` 3.0.3
+  and `node-forge` 1.4.0 (each already the newest published version, so no fix exists) and `uuid` 7.0.3 under
+  `xcode` (the advisory covers `v3`/`v5`/`v6` with a caller buffer; `xcode` calls only `v4`). The audit's
+  suggested fix is Expo 44 / React Native 0.72, a forced downgrade the plan rules out. No change; re-check at
+  the next Expo SDK update.
+- **Installed Android (Pixel 8 Pro, Android 17, release 0.1.2).** Checked over adb: the four destinations
+  and Settings at 200 % system font scale (text wraps, nothing clipped, bottom bar labels fit); dark
+  appearance in French on Sell, Products, Activity and Settings; a system theme change keeps the open screen.
+  Changing the system font scale restarts the activity and returns to Sell. Measurements are in the
+  [parity guide](mobile-parity.md#performance-baseline). Not yet run: TalkBack, photo pick/crop, print/PDF,
+  "Stay signed in" off with Home/app switch, and the 10 000-product fixture on a phone.
+- **Short sale numbers everywhere.** Desktop numbers are `V-<uuid>`, mobile numbers `V-YYYYMMDD-<12 hex>`;
+  the desktop list shortened only its own form and mobile showed every number whole, so desktop and demo
+  sales wrapped over three lines in mobile Activity. Core `domain/receipt-number` `shortReceiptNumber`
+  recognises both and shows `V-` plus the sale ID's last eight hex digits, the same on every device. Desktop
+  receipts list, mobile Activity and the mobile receipt title use it; stored numbers, the desktop receipt
+  detail and printed receipts keep the whole number.
+- **Unit plurals on mobile Products.** The product list and detail joined quantity and unit by hand
+  ("Stock 77 canette"); they now use `formatQuantityWithUnit` like the desktop.
+
+Verification: `npm run check` (new tests: both formats of one sale agree, 200 random UUIDs, malformed
+shapes unchanged) and `npm run bundle:mobile`.
+
+### Large fixture on a phone: two crashes and a broken report fixed (2026-10-11)
+`npm run fixture:mobile` (`apps/desktop/scripts/mobile-fixture-backup.ts`) saves the 10 000-product
+performance fixture as a genuine encrypted backup (password in its README) for restoring on a device.
+Restoring it on the Pixel found:
+
+- **Native abort when closing a shop database.** expo-sqlite's close finalizes every statement still
+  linked to the connection, by default. Those include the FTS5 search index's own prepared statements
+  (migration 24), which FTS5 frees again when it disconnects. The result is a double free (Scudo
+  "invalid chunk state", SIGABRT in `closeDatabase`) whenever a connection closes after a search or an
+  index rebuild: backup check, restore, replacement and device reset. A C program against system SQLite
+  under AddressSanitizer reproduces it (one FTS5 query leaves 8 internal statements; finalizing them all
+  and closing reports a double free). Every mobile connection now opens through one helper with
+  `finalizeUnusedStatementsBeforeClosing: false`; the adapter finalizes its own statements. This is
+  likely also the root of the earlier "crash after importing a backup".
+- **Stock valuation, stock alerts, customer debt and supplier debt never loaded on mobile.** The phone
+  asked for them from 1970, and `reportView` refuses periods longer than 3 700 days. Core now exports
+  `UNDATED_REPORT_KINDS` and skips period validation for those kinds, which ignore it; mobile uses the
+  shared set. A core test runs every kind from 1970: undated kinds equal their one-day result, dated
+  kinds are still refused.
+- **Stock alerts listed products that were fine.** In the alert query, `HAVING quantity<0` resolved
+  `quantity` to the column `m.quantity` (one arbitrary movement) instead of the summed alias, so a
+  product with stock left could alert because of a single sale (desktop and mobile). The sum is now
+  aliased `on_hand`; a regression test fails on the old query.
+- **Restore shows progress.** Reading the file, checking the backup and restoring each show a native
+  spinner with what is happening (`Working` in the mobile UI kit). The step waits one frame first, so
+  the spinner is drawn before the synchronous check starts. This applies to the entry screen and to
+  Backup & devices.
+- Measurements are in the [parity guide](mobile-parity.md#performance-baseline). Follow-up: the backup
+  check takes about 84 s inside an open shop against about 10–16 s from the entry screen.
+
+Verification: `npm run check`, `npm run bundle:mobile`, an installed release build that restores the
+fixture without crashing, and the valuation report from a host restore of the same backup.

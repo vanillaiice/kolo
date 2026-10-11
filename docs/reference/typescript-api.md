@@ -2862,6 +2862,12 @@ Every report kind, in the order the clients list them.
 const REPORT_KINDS: readonly ReportKind[];
 ```
 
+Reports of the present state (stock and balances owed). They ignore `from`/`until`, which are not validated for them.
+
+```ts
+const UNDATED_REPORT_KINDS: ReadonlySet<ReportKind>;
+```
+
 The permission each report kind is read under.
 
 ```ts
@@ -3048,7 +3054,7 @@ export interface ViewOptions {
 ```
 
 One report under its core permission over `[from, until)` (ISO instants from shared local-day
-rules; empty or decade-plus periods are refused). Row lists are bounded by `options.rows`
+rules; empty or decade-plus periods are refused).  ignore the period. Row lists are bounded by `options.rows`
 (default and maximum 500, stock alerts 100) with a `truncated` flag; totals stay exact.
 
 ```ts
@@ -7041,6 +7047,17 @@ toCart(state: CartState, identity: {
     readonly eventId: string;
     readonly creditTransactionId: string;
 }): Cart;
+```
+
+## [packages/core/src/domain/receipt-number.ts](../../packages/core/src/domain/receipt-number.ts)
+
+Short display form of an offline-unique sale number. Desktop numbers are `V-` plus the sale
+UUID; mobile numbers are `V-YYYYMMDD-` plus the UUID's last twelve hex digits. Both end in
+the sale ID's last eight hex digits, so a sale shows the same `V-XXXXXXXX` on every device.
+Other numbers are returned unchanged; receipts and printouts keep the stored number whole.
+
+```ts
+shortReceiptNumber(number: string): string;
 ```
 
 ## [packages/core/src/exchange/types.ts](../../packages/core/src/exchange/types.ts)

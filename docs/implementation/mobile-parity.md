@@ -97,3 +97,18 @@ Host baseline, 2026-10-10 (Node SQLite on the development PC, not a phone): name
 median 2.0 ms, scanner lookup 0.1 ms, page stock+photo batch 0.4 ms, statement page 0.2 ms,
 cash checkout 1.3 ms, dashboard 5 ms, analytics (30 days) 51 ms, stock valuation 169 ms.
 Valuation and analytics run after the screen paints; on a phone they may still take seconds.
+
+Device reference, 2026-10-11 (Pixel 8 Pro, Android 17, 12 GB RAM, release APK 0.1.2, demo shop of
+about 40 products; a high-end phone, not the low-cost budget target): cold launch to first frame
+414–555 ms (`am start -W`, three runs); launch to the interactive Sell list about 1.5 s (screen
+recording, two runs); 183 MB PSS on Sell after launch. The universal APK is 130 MB because it
+carries arm64-v8a, armeabi-v7a, x86 and x86_64 libraries. The fixture below was measured on the same phone.
+
+Fixture on device, 2026-10-11 (same Pixel 8 Pro; `npm run fixture:mobile` backup restored through the
+app: 10 001 products, 100 001 movements, a customer with 2 000 credit sales). Restore: file read about
+3–10 s; "Check selected backup" about 10–16 s from the entry screen and about 84 s from Backup & devices
+inside an open shop; replacement about 3 s. Each step shows a spinner and what it is doing. Unlock to Sell
+list about 2.7 s; cold launch to Sell about 2.0–2.9 s; 178 MB PSS. Typed search: about 0.55–0.65 s
+from keystroke to updated list beyond the 250 ms debounce. Scanner lookup, cash checkout to receipt,
+customer page, statement, reports menu: content in the first changed frame (no visible wait).
+Analytics (30 days) 0.63 s. Times are from screen recordings, so they include rendering.
