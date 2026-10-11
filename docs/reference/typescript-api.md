@@ -5311,7 +5311,7 @@ rewrite of the report, and callers name the method they mean, so a screen
 that changes it changes a report's meaning visibly rather than by accident.
 
 ```ts
-export type CostingMethod = "LATEST_PURCHASE";
+export type CostingMethod = "LATEST_COST";
 ```
 
 What one product's stock is worth.
@@ -5560,7 +5560,7 @@ honest total is below zero until someone counts the shelf. Hiding it would
 make the one figure that reveals the problem the one figure that conceals it.
 
 ```ts
-inventoryValuation(tx: Queryable, businessId: string, method: CostingMethod = "LATEST_PURCHASE"): Valuation;
+inventoryValuation(tx: Queryable, businessId: string, method: CostingMethod = "LATEST_COST"): Valuation;
 ```
 
 How every product moved over a period, best first (§21).
@@ -5605,12 +5605,12 @@ shelves are holding money that is not moving. So this is stock **on hand**
 that sold **nothing** in the period; a product that sold out is not dead, it
 is finished, and one nobody stocks is not dead either.
 
-The value is at latest purchase cost, and absent when nothing says what it
+The value is at latest cost, and absent when nothing says what it
 cost: the same honest gap a valuation reports rather than a zero that would
 make dead stock look free to keep.
 
 ```ts
-deadStock(tx: Queryable, businessId: string, since: string, method: CostingMethod = "LATEST_PURCHASE"): DeadStock[];
+deadStock(tx: Queryable, businessId: string, since: string, method: CostingMethod = "LATEST_COST"): DeadStock[];
 ```
 
 What went in and out of each account over a period (§21).

@@ -68,7 +68,7 @@ export interface PurchaseSummary {
  * rewrite of the report, and callers name the method they mean, so a screen
  * that changes it changes a report's meaning visibly rather than by accident.
  */
-export type CostingMethod = "LATEST_PURCHASE";
+export type CostingMethod = "LATEST_COST";
 
 /** What one product's stock is worth. */
 export interface ValuedProduct {
@@ -124,7 +124,7 @@ export interface DeadStock {
   /** When it last sold, and undefined if it never has. */
   readonly lastSoldAt?: string | undefined;
   /**
-   * What it is worth at its latest purchase cost, and undefined when nothing
+   * What it is worth at its latest cost, and undefined when nothing
    * says what it cost. The gap is honest, as it is in a valuation.
    */
   readonly valueMinor?: number | undefined;
@@ -654,25 +654,28 @@ export function supplierPaymentsBetween(
 /**
  * What one unit cost, per costing method (§8).
  *
- * The latest purchase cost is the unit cost on the most recent movement that
- * brought stock *in*, which reads as replacement cost: what it would take to
- * restock today. It comes from the movement ledger rather than the product's
- * `purchase_price` column, because that column is a field someone edits and
- * this has to be a fact the ledger already holds — the one architectural rule
- * everything else follows from.
+ * The latest cost is the unit cost on the most recent movement that brought
+ * stock *in* with one, a delivery or opening stock, which reads as replacement
+ * cost: what it would take to restock today. The ledger comes first because the
+ * product's `purchase_price` is a field someone edits. When the ledger names no
+ * cost, which is how opening stock entered on a product form arrives, that
+ * purchase price stands in (owner decision, 2026-10-11): a new shop's stock is
+ * then worth what its owner said it cost rather than nothing until the first
+ * delivery. Only a product with neither stays an honest gap.
  *
  * A future FIFO or weighted average is another entry here. The report around it
  * does not change.
  */
 const COST_OF: Record<CostingMethod, string> = {
-  LATEST_PURCHASE: `(SELECT c.unit_cost_minor
-                       FROM inventory_movements c
-                      WHERE c.business_id = p.business_id
-                        AND c.product_id = p.id
-                        AND c.type = 'PURCHASE'
-                        AND c.unit_cost_minor IS NOT NULL
-                      ORDER BY c.occurred_at DESC, c.id DESC
-                      LIMIT 1)`,
+  LATEST_COST: `coalesce((SELECT c.unit_cost_minor
+                            FROM inventory_movements c
+                           WHERE c.business_id = p.business_id
+                             AND c.product_id = p.id
+                             AND c.type IN ('PURCHASE', 'OPENING_BALANCE')
+                             AND c.unit_cost_minor IS NOT NULL
+                           ORDER BY c.occurred_at DESC, c.id DESC
+                           LIMIT 1),
+                         p.purchase_price_minor)`,
 };
 
 /**
@@ -692,7 +695,7 @@ const COST_OF: Record<CostingMethod, string> = {
 export function inventoryValuation(
   tx: Queryable,
   businessId: string,
-  method: CostingMethod = "LATEST_PURCHASE",
+  method: CostingMethod = "LATEST_COST",
 ): Valuation {
   const rows = tx.all(
     `SELECT p.id AS product_id, p.name AS name,
@@ -832,7 +835,7 @@ export function slowMoving(
  * that sold **nothing** in the period; a product that sold out is not dead, it
  * is finished, and one nobody stocks is not dead either.
  *
- * The value is at latest purchase cost, and absent when nothing says what it
+ * The value is at latest cost, and absent when nothing says what it
  * cost: the same honest gap a valuation reports rather than a zero that would
  * make dead stock look free to keep.
  */
@@ -840,7 +843,7 @@ export function deadStock(
   tx: Queryable,
   businessId: string,
   since: string,
-  method: CostingMethod = "LATEST_PURCHASE",
+  method: CostingMethod = "LATEST_COST",
 ): DeadStock[] {
   const rows = tx.all(
     `SELECT p.id AS product_id, p.name AS name,

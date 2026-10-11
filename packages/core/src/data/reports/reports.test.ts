@@ -579,7 +579,7 @@ describe("what the shelves are worth", () => {
     });
 
     const worth = read((tx) => inventoryValuation(tx, BUSINESS));
-    assert.equal(worth.method, "LATEST_PURCHASE");
+    assert.equal(worth.method, "LATEST_COST");
     assert.equal(worth.products.length, 1);
     assert.equal(worth.products[0]?.unitCostMinor, 5_200);
     assert.equal(worth.products[0]?.onHandThousandths, 20_000);
@@ -674,6 +674,43 @@ describe("what the shelves are worth", () => {
     assert.equal(worth.totalMinor, 0);
     assert.equal(worth.uncosted, 0);
     assert.deepEqual(worth.products, []);
+  });
+
+  it("counts opening stock's cost, and the latest costed inflow wins", () => {
+    const opening = (product: string, unitCost: number | null, at: string): void => database.transaction((tx) => {
+      tx.run(
+        `INSERT INTO inventory_movements
+           (id, business_id, product_id, type, quantity, unit_cost_minor, unit_cost_currency, user_id, device_id, occurred_at, recorded_at)
+         VALUES (?, ?, ?, 'OPENING_BALANCE', 10000, ?, ?, ?, ?, ?, ?)`,
+        [nextId("stock"), BUSINESS, product, unitCost, unitCost === null ? null : "XAF", JEAN, DEVICE, at, at],
+      );
+    });
+    opening(RICE, 4_800, "2026-08-13T08:00:00.000Z");
+    assert.equal(read((tx) => inventoryValuation(tx, BUSINESS)).products[0]?.unitCostMinor, 4_800);
+    receive({ lines: [deliveryLine({ quantity: 10_000, unitCostMinor: 5_000 })] });
+    const worth = read((tx) => inventoryValuation(tx, BUSINESS));
+    assert.equal(worth.products[0]?.unitCostMinor, 5_000);
+    assert.equal(worth.totalMinor, 100_000);
+  });
+
+  it("falls back to the product's purchase price when the ledger names no cost, and the ledger wins once it does", () => {
+    // Opening stock entered on a product form carries no cost of its own.
+    database.transaction((tx) => {
+      tx.run(`UPDATE products SET purchase_price_minor = 700 WHERE id = ?`, [SUGAR]);
+      tx.run(
+        `INSERT INTO inventory_movements (id, business_id, product_id, type, quantity, reason, user_id, device_id, occurred_at, recorded_at)
+         VALUES (?, ?, ?, 'OPENING_BALANCE', 12000, 'Initial stock', ?, ?, ?, ?)`,
+        [nextId("stock"), BUSINESS, SUGAR, JEAN, DEVICE, MORNING, RECORDED],
+      );
+    });
+    let sugar = read((tx) => inventoryValuation(tx, BUSINESS)).products.find((p) => p.productId === SUGAR);
+    assert.equal(sugar?.unitCostMinor, 700);
+    assert.equal(sugar?.valueMinor, 8_400);
+    assert.equal(read((tx) => inventoryValuation(tx, BUSINESS)).uncosted, 0);
+    receive({ lines: [deliveryLine({ productId: SUGAR, quantity: 1_000, unitCostMinor: 750 })] });
+    sugar = read((tx) => inventoryValuation(tx, BUSINESS)).products.find((p) => p.productId === SUGAR);
+    assert.equal(sugar?.unitCostMinor, 750);
+    assert.equal(sugar?.valueMinor, 9_750);
   });
 
   it("counts only this business's stock", () => {

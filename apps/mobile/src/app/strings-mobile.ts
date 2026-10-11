@@ -394,7 +394,7 @@ export const mobileStrings = {
   "report.cashFlow": ["Flux de trésorerie", "Cash flow"],
   "report.cashFlow.help": ["Entrées, sorties et soldes par compte", "In, out and balances per account"],
   "report.valuation": ["Valeur du stock", "Stock valuation"],
-  "report.valuation.help": ["Au dernier coût d’achat", "At latest purchase cost"],
+  "report.valuation.help": ["Au dernier coût connu (livraison, stock initial ou prix d’achat)", "At latest known cost (delivery, opening stock or purchase price)"],
   "report.fastMoving": ["Articles les plus vendus", "Fast-moving products"],
   "report.fastMoving.help": ["Par quantité vendue", "By quantity sold"],
   "report.stockAlerts": ["Alertes de stock", "Stock alerts"],

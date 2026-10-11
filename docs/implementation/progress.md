@@ -1182,3 +1182,11 @@ fixture without crashing, and the valuation report from a host restore of the sa
   Logic in `src/data/auth/biometric-unlock.ts` (tested with real SQLite preferences); the native port is
   `biometric-on-device.ts`.
 
+
+### Stock valuation counts opening stock (2026-10-11)
+Owner decision: stock is valued at its latest known cost. The costing method `LATEST_PURCHASE` is now
+`LATEST_COST`: the unit cost of the most recent delivery or opening-stock movement that carries one, and
+otherwise the product's purchase price. Opening stock entered on a product form records no cost of its
+own, so a new shop's stock used to be worth 0 until its first delivery. Only a product with neither a
+costed inflow nor a purchase price is reported as uncosted. Dead stock uses the same rule. Tests cover
+opening cost against a later delivery and the purchase-price fallback giving way to a delivery.
