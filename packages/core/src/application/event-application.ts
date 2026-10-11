@@ -77,7 +77,7 @@ export function reviewQuarantinedEvent(context: OperationContext, eventId: strin
   authorizedOperation(context,["business.settings","users.manage"],(_database,tx,ports,revision) => {
     requireOwner(tx,context);
     const row = tx.get(`SELECT e.event_type,s.digest,a.status,a.reason FROM event_journal e JOIN event_signatures s ON s.event_id=e.event_id JOIN applied_events a ON a.event_id=e.event_id WHERE e.business_id=? AND e.event_id=?`,[context.businessId,eventId]);
-    if (row === undefined || row["digest"] !== digest || row["status"] !== "quarantined" || !["permission_denied","authority_revision"].includes(String(row["reason"])) || /^(WORKSPACE|LEGACY_|MEMBER_|OWNER_|PERMISSION_)/.test(String(row["event_type"]))) throw new ExchangeError("permission_denied");
+    if (row === undefined || row["digest"] !== digest || row["status"] !== "quarantined" || !["permission_denied","authority_revision"].includes(String(row["reason"])) || /^(WORKSPACE|LEGACY_|MEMBER_|OWNER_|PERMISSION_|DEVICE_|SHOP_KEY_|SERVER_ENDPOINT_)/.test(String(row["event_type"]))) throw new ExchangeError("permission_denied");
     tx.run(`INSERT INTO event_reviews(event_id,reviewer_id,business_id,digest,reviewed_at) VALUES (?,?,?,?,?)`,[eventId,context.userId,context.businessId,digest,timestamp(ports)]);
     tx.run(`UPDATE applied_events SET status='stored',reason=NULL WHERE event_id=?`,[eventId]);
     appendLocalAudit(tx,context,ports,revision,"EXCHANGE_EVENT_REVIEWED",eventId,{ digest });

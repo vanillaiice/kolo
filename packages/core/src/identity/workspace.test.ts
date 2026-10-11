@@ -552,7 +552,7 @@ describe("upgrade from shipped schema 14", () => {
       previous.run(`INSERT INTO device_session VALUES (1,'session','old','user','device',?,'2027-01-01T00:00:00.000Z')`, [AT]);
       previous.run(`INSERT INTO sync_outbox (event_id,business_id,user_id,device_id,type,payload,occurred_at,sequence) VALUES ('event','old','user','device','SALE_COMPLETED','{}',?,1)`, [AT]);
       assert.equal(schemaVersion(previous), 14);
-      assert.deepEqual(migrate(previous).applied.map(m => m.version), [15, 16, 17, 18, 19, 20, 21, 22, 23, 24]);
+      assert.deepEqual(migrate(previous).applied.map(m => m.version), [15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
       assert.equal(previous.get(`SELECT session_id FROM device_session`)?.["session_id"], "session");
       assert.equal(previous.get(`SELECT event_id FROM sync_outbox WHERE state = 'pending'`)?.["event_id"], "event");
       assert.equal(currentInstallation(previous).state, "legacy");

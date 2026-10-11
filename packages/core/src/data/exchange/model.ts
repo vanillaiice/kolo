@@ -128,6 +128,11 @@ export function eventModel(event: JournalEnvelope): EventModel {
       add("expenses", expense.id); ref("financial_accounts", expense.account_id); ref("expenses", expense.reverses_id); checkTime(expense.occurred_at);
       if ((expense.amount_minor < 0) !== (expense.reverses_id !== undefined)) fail(); permissions.push("expenses.create"); break;
     }
+    case "DEVICE_ENCRYPTION_KEY": {
+      // A device fact, not an owner fact: any active member on a trusted device may announce that device's own key.
+      parseEventPayload("DEVICE_ENCRYPTION_KEY", event.event_version, event.payload);
+      return { entities, references, permissions, authority: false };
+    }
     default: {
       parseEventPayload(event.event_type as EventType, event.event_version, event.payload);
       permissions.push("users.manage");

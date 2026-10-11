@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { signedJournalEventSchema } from "./events.ts";
+import { parseJournalEnvelope, signedJournalEventSchema, type SignedJournalEvent } from "./events.ts";
 import { canonicalJson, utf8Length } from "./canonical.ts";
 
 const uuid = z.uuid().refine(value => value === value.toLowerCase());
@@ -45,3 +45,10 @@ export function decodeSignedJournalBatch(bytes: string): SignedJournalBatch {
   canonicalJson(result.data, MAX_JOURNAL_BATCH_BYTES);
   return result.data;
 }
+
+/** Domain-separated UTF-8 bytes hashed and signed for one event envelope. */
+export function eventSigningMessage(envelope: SignedJournalEvent["envelope"]): string { return `kolo.event.v2\u0000${canonicalJson(parseJournalEnvelope(envelope))}`; }
+/** Domain-separated UTF-8 bytes hashed and signed for a forwarding batch. */
+export function batchSigningMessage(batch: JournalBatch): string { return `kolo.batch.v2\u0000${canonicalJson(batch, MAX_JOURNAL_BATCH_BYTES)}`; }
+/** Domain-separated UTF-8 bytes hashed and signed for a receipt. */
+export function receiptSigningMessage(receipt: PeerReceipt): string { return `kolo.receipt.v1\u0000${canonicalJson(receipt, MAX_JOURNAL_BATCH_BYTES)}`; }

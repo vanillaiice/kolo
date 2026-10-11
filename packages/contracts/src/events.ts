@@ -27,6 +27,11 @@ const returned = z.strictObject({ id: uuid, original_id: uuid, prior_id: uuid.op
   items: z.array(z.strictObject({ id: uuid, original_item_id: uuid, quantity: positive, movement_id: uuid })).min(1).max(200),
   refunds: z.array(z.strictObject({ id: uuid, account_id: uuid, amount_minor: positive })).max(100), debt_transaction_id: uuid.optional() });
 
+const pem = z.string().min(1).max(1024).refine(value => value.includes("BEGIN PUBLIC KEY"));
+/** A shop key sealed to one device: ephemeral X25519 public key, AES-256-GCM nonce, ciphertext and tag. */
+const sealedKey = z.strictObject({ ephemeral_public_key: pem, nonce: z.string().regex(/^[a-f0-9]{24}$/),
+  ciphertext: z.string().min(1).max(128).regex(/^[A-Za-z0-9+/]+={0,2}$/), tag: z.string().regex(/^[a-f0-9]{32}$/) });
+
 /** Strict v2 payload schemas for every current business/authority event. No credentials/tokens. */
 export const EVENT_PAYLOAD_SCHEMAS = {
   SALE_RETURNED: z.strictObject({ returned }),
@@ -67,6 +72,18 @@ export const EVENT_PAYLOAD_SCHEMAS = {
   MEMBER_REINSTATED: z.strictObject({ user_id: uuid, revision: positive }),
   MEMBER_ACCESS_RESET: z.strictObject({ user_id: uuid, revision: positive }),
   OWNER_ACCESS_RECOVERED: z.strictObject({ user_id: uuid, revision: positive }),
+  /** Owner-approved device or server key, so other devices can verify facts it originates or relays. Higher roster revision wins. */
+  DEVICE_TRUSTED: z.strictObject({ device: z.strictObject({ id: uuid, label: name, platform: z.enum(["ANDROID", "IOS", "DESKTOP", "SERVER"]), public_key: z.string().min(1).max(8192) }),
+    authority_allowed: z.boolean(), revision: positive }),
+  /** Owner revocation of a device key; history it originated stays immutable. Higher roster revision wins. */
+  DEVICE_REVOKED: z.strictObject({ device_id: uuid, revision: positive }),
+  /** A device announces its own X25519 key so the owner can seal shop keys to it. Signed by that device; a key never changes. */
+  DEVICE_ENCRYPTION_KEY: z.strictObject({ device_id: uuid, public_key: pem }),
+  /** Owner grant of one shop key to one device (ADR-030). The highest epoch seals new facts; older keys still open history. */
+  SHOP_KEY_GRANTED: z.strictObject({ key_id: uuid, epoch: positive, device_id: uuid, sealed: sealedKey }),
+  /** The owner's choice of sync server, so the shop's other tills can connect without typing. Higher revision wins. */
+  SERVER_ENDPOINT_SET: z.strictObject({ server_device_id: uuid, url: z.string().min(8).max(2048), fingerprint: z.string().regex(/^[a-f0-9]{32}$/), revision: positive }),
+  SERVER_ENDPOINT_CLEARED: z.strictObject({ server_device_id: uuid, revision: positive }),
 } as const;
 
 /** Current supported event names; unknown signed names/versions can be retained unapplied. */

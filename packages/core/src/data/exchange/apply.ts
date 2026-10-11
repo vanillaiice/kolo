@@ -89,6 +89,7 @@ export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewe
       if (old["reverses_id"] !== null || expense.amount_minor !== -Number(old["amount_minor"]) || expense.account_id !== old["account_id"] || expense.category !== old["category"] || event.branch_id !== old["branch_id"] || tx.get(`SELECT id FROM expenses WHERE reverses_id=?`,[expense.reverses_id]) !== undefined) throw new ExchangeError("invalid_payload");
     }
   }
+  if (event.event_type === "DEVICE_ENCRYPTION_KEY") { applyEncryptionKey(tx,event); return; }
   const applier = appliers.find(a => a.types.includes(event.event_type));
   if (applier === undefined) throw new ExchangeError("unsupported_event");
   applier.apply(strictWriter(tx,event.branch_id,recordedAt),{ eventId:event.event_id,businessId:event.business_id,deviceId:event.origin_device_id,userId:event.actor_id,type:event.event_type,payload:event.payload,occurredAt:event.occurred_at,serverSequence:0,state:"deferred",attempts:0,lastError:null });
@@ -129,6 +130,9 @@ function applyAuthority(tx: Queryable, event: JournalEnvelope): void {
     if (root.business_id !== event.business_id || root.owner_id !== event.actor_id || root.device_id !== event.origin_device_id || root.public_key !== pin["public_key"]) throw new ExchangeError("scope_mismatch");
     return;
   }
+  if (event.event_type === "DEVICE_TRUSTED" || event.event_type === "DEVICE_REVOKED") { applyDeviceTrust(tx,event); return; }
+  if (event.event_type === "SHOP_KEY_GRANTED") { applyShopKeyGrant(tx,event); return; }
+  if (event.event_type === "SERVER_ENDPOINT_SET" || event.event_type === "SERVER_ENDPOINT_CLEARED") { applyServerEndpoint(tx,event); return; }
   if (!("user_id" in payload) || !("revision" in payload)) throw new ExchangeError("unsupported_event");
   const target = tx.get(`SELECT * FROM local_memberships WHERE business_id=? AND user_id=?`,[event.business_id,payload.user_id]);
   if (event.event_type === "MEMBER_CREATED") {
@@ -160,4 +164,68 @@ function applyAuthority(tx: Queryable, event: JournalEnvelope): void {
     if ((event.event_type === "OWNER_ACCESS_RECOVERED") !== (payload.user_id === installation["owner_id"])) throw new ExchangeError("permission_denied");
     tx.run(`UPDATE local_memberships SET revision=? WHERE business_id=? AND user_id=?`,[payload.revision,event.business_id,payload.user_id]);
   } else throw new ExchangeError("unsupported_event");
+}
+
+// Owner roster facts: the higher revision wins, an equal revision must be identical, and a key never changes.
+function applyDeviceTrust(tx: Queryable, event: JournalEnvelope): void {
+  const id = event.event_type === "DEVICE_TRUSTED" ? parseEventPayload("DEVICE_TRUSTED",2,event.payload).device.id : parseEventPayload("DEVICE_REVOKED",2,event.payload).device_id;
+  const pin = tx.get(`SELECT * FROM trusted_exchange_devices WHERE business_id=? AND device_id=?`,[event.business_id,id]);
+  if (event.event_type === "DEVICE_REVOKED") {
+    const { revision } = parseEventPayload("DEVICE_REVOKED",2,event.payload);
+    if (id === event.origin_device_id) throw new ExchangeError("permission_denied");
+    if (pin === undefined) throw new ExchangeError("missing_dependency");
+    if (revision === pin["roster_revision"] && pin["active"] !== 0) throw new ExchangeError("conflict");
+    if (revision > Number(pin["roster_revision"])) tx.run(`UPDATE trusted_exchange_devices SET active=0,roster_revision=?,revision=revision+1 WHERE business_id=? AND device_id=?`,[revision,event.business_id,id]);
+    return;
+  }
+  const { device, authority_allowed, revision } = parseEventPayload("DEVICE_TRUSTED",2,event.payload);
+  if (id === event.origin_device_id) throw new ExchangeError("permission_denied");
+  const row = tx.get(`SELECT business_id,platform FROM devices WHERE id=?`,[id]);
+  if (row !== undefined && row["business_id"] !== event.business_id) throw new ExchangeError("scope_mismatch");
+  if (pin !== undefined && pin["public_key"] !== device.public_key) throw new ExchangeError("conflict");
+  if (row === undefined) tx.run(`INSERT INTO devices(id,business_id,label,platform,created_at,updated_at,last_seen_at) VALUES (?,?,?,?,?,?,?)`,[id,event.business_id,device.label,device.platform,event.occurred_at,event.occurred_at,event.occurred_at]);
+  if (pin === undefined) {
+    tx.run(`INSERT INTO trusted_exchange_devices(business_id,device_id,public_key,authority_allowed,approved_by,roster_revision) VALUES (?,?,?,?,?,?)`,[event.business_id,id,device.public_key,authority_allowed ? 1 : 0,event.actor_id,revision]);
+    return;
+  }
+  if (revision === pin["roster_revision"] && (pin["active"] !== 1 || pin["authority_allowed"] !== (authority_allowed ? 1 : 0))) throw new ExchangeError("conflict");
+  if (revision <= Number(pin["roster_revision"])) return;
+  // Only a change of trust invalidates in-flight verifications; recording the revision alone does not.
+  const changed = pin["active"] !== 1 || pin["authority_allowed"] !== (authority_allowed ? 1 : 0);
+  tx.run(`UPDATE trusted_exchange_devices SET active=1,authority_allowed=?,roster_revision=?,revision=revision+? WHERE business_id=? AND device_id=?`,[authority_allowed ? 1 : 0,revision,changed ? 1 : 0,event.business_id,id]);
+}
+
+// A device announces only its own encryption key, and that key never changes for the device ID.
+function applyEncryptionKey(tx: Queryable, event: JournalEnvelope): void {
+  const { device_id, public_key } = parseEventPayload("DEVICE_ENCRYPTION_KEY",2,event.payload);
+  if (device_id !== event.origin_device_id) throw new ExchangeError("permission_denied");
+  const old = tx.get(`SELECT public_key FROM device_encryption_keys WHERE business_id=? AND device_id=?`,[event.business_id,device_id]);
+  if (old !== undefined) { if (old["public_key"] !== public_key) throw new ExchangeError("conflict"); return; }
+  tx.run(`INSERT INTO device_encryption_keys(business_id,device_id,public_key,event_id) VALUES (?,?,?,?)`,[event.business_id,device_id,public_key,event.event_id]);
+}
+
+// An owner grant of one shop key to one device. The same grant may arrive twice; a different one for the same pair is a conflict.
+function applyShopKeyGrant(tx: Queryable, event: JournalEnvelope): void {
+  const grant = parseEventPayload("SHOP_KEY_GRANTED",2,event.payload), sealed = JSON.stringify(grant.sealed);
+  if (tx.get(`SELECT id FROM devices WHERE id=? AND business_id=?`,[grant.device_id,event.business_id]) === undefined) throw new ExchangeError("missing_dependency");
+  const old = tx.get(`SELECT epoch,sealed FROM shop_key_grants WHERE business_id=? AND key_id=? AND device_id=?`,[event.business_id,grant.key_id,grant.device_id]);
+  if (old !== undefined) { if (old["epoch"] !== grant.epoch || old["sealed"] !== sealed) throw new ExchangeError("conflict"); return; }
+  if (tx.get(`SELECT epoch FROM shop_key_grants WHERE business_id=? AND key_id=? AND epoch<>?`,[event.business_id,grant.key_id,grant.epoch]) !== undefined) throw new ExchangeError("conflict");
+  tx.run(`INSERT INTO shop_key_grants(business_id,key_id,epoch,device_id,sealed,event_id) VALUES (?,?,?,?,?,?)`,[event.business_id,grant.key_id,grant.epoch,grant.device_id,sealed,event.event_id]);
+}
+
+// The owner's chosen server address: the higher revision wins; an equal revision must say the same thing.
+function applyServerEndpoint(tx: Queryable, event: JournalEnvelope): void {
+  const set = event.event_type === "SERVER_ENDPOINT_SET" ? parseEventPayload("SERVER_ENDPOINT_SET",2,event.payload) : undefined;
+  const { server_device_id, revision } = set ?? parseEventPayload("SERVER_ENDPOINT_CLEARED",2,event.payload);
+  const url = set?.url ?? null, fingerprint = set?.fingerprint ?? null;
+  const old = tx.get(`SELECT server_device_id,url,fingerprint,revision FROM shop_server_endpoint WHERE business_id=?`,[event.business_id]);
+  if (old !== undefined && revision < Number(old["revision"])) return;
+  if (old !== undefined && revision === old["revision"]) {
+    if (old["server_device_id"] !== server_device_id || old["url"] !== url || old["fingerprint"] !== fingerprint) throw new ExchangeError("conflict");
+    return;
+  }
+  tx.run(`INSERT INTO shop_server_endpoint(business_id,server_device_id,url,fingerprint,revision) VALUES (?,?,?,?,?)
+    ON CONFLICT(business_id) DO UPDATE SET server_device_id=excluded.server_device_id,url=excluded.url,fingerprint=excluded.fingerprint,revision=excluded.revision`,
+    [event.business_id,server_device_id,url,fingerprint,revision]);
 }

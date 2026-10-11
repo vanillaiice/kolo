@@ -1,7 +1,7 @@
 import { canonicalJson } from "@kolo/contracts/canonical";
 import { parseJournalEnvelope, signedJournalEventSchema, type SignedJournalEvent } from "@kolo/contracts/events";
 import { authorizedOperation, nextId, timestamp, appendLocalAudit } from "../identity/internal-authority.ts";
-import type { OperationContext } from "../identity/types.ts";
+import type { OperationContext, WorkspacePorts } from "../identity/types.ts";
 import { verifiedEvents } from "../exchange/internal-verification.ts";
 import { ExchangeError, type ExchangeCrypto, type VerifiedEvent } from "../exchange/types.ts";
 import type { Queryable, Row } from "../data/database/driver.ts";
@@ -74,11 +74,12 @@ export async function verifyEvent(context: OperationContext, input: unknown, cry
 }
 
 /** Owner-approved peer/server identity; F3 pairing must confirm keys before invoking this operation. */
-export function registerExchangeDestination(context: OperationContext, input: { readonly deviceId: string; readonly publicKey: string; readonly label: string; readonly platform: "ANDROID" | "IOS" | "DESKTOP"; readonly kind: "peer" | "server"; readonly authorityAllowed?: boolean }): string {
+export function registerExchangeDestination(context: OperationContext, input: { readonly deviceId: string; readonly publicKey: string; readonly label: string; readonly platform: "ANDROID" | "IOS" | "DESKTOP" | "SERVER"; readonly kind: "peer" | "server"; readonly authorityAllowed?: boolean }): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(input.deviceId) ||
     typeof input.publicKey !== "string" || input.publicKey.length > 8192 || !input.publicKey.includes("BEGIN PUBLIC KEY") ||
     typeof input.label !== "string" || input.label.trim().length === 0 || input.label.length > 120 ||
-    !["ANDROID","IOS","DESKTOP"].includes(input.platform) || !["peer","server"].includes(input.kind) ||
+    !["ANDROID","IOS","DESKTOP","SERVER"].includes(input.platform) || !["peer","server"].includes(input.kind) || (input.platform === "SERVER") !== (input.kind === "server") ||
+    (input.kind === "server" && input.authorityAllowed === true) ||
     (input.authorityAllowed !== undefined && typeof input.authorityAllowed !== "boolean")) throw new ExchangeError("invalid_destination");
   return authorizedOperation(context, ["business.settings"], (_database, tx, ports, revision) => {
     requireOwner(tx,context);
@@ -90,7 +91,8 @@ export function registerExchangeDestination(context: OperationContext, input: { 
     if (pin !== undefined && (pin["public_key"] !== input.publicKey || pin["authority_allowed"] !== (input.authorityAllowed === true ? 1 : 0))) throw new ExchangeError("conflict");
     const at = timestamp(ports);
     tx.run(`INSERT OR IGNORE INTO devices(id,business_id,label,platform,created_at,updated_at,last_seen_at) VALUES (?,?,?,?,?,?,?)`, [input.deviceId,context.businessId,input.label.trim(),input.platform,at,at,at]);
-    tx.run(`INSERT OR IGNORE INTO trusted_exchange_devices(business_id,device_id,public_key,authority_allowed,approved_by) VALUES (?,?,?,?,?)`, [context.businessId,input.deviceId,input.publicKey,input.authorityAllowed === true ? 1 : 0,context.userId]);
+    const added = tx.run(`INSERT OR IGNORE INTO trusted_exchange_devices(business_id,device_id,public_key,authority_allowed,approved_by) VALUES (?,?,?,?,?)`, [context.businessId,input.deviceId,input.publicKey,input.authorityAllowed === true ? 1 : 0,context.userId]).changes === 1;
+    if (added) publishDeviceTrust(tx,context,ports,revision,input.deviceId);
     const existing = tx.get(`SELECT id FROM exchange_destinations WHERE business_id=? AND receiver_device_id=? AND kind=?`, [context.businessId,input.deviceId,input.kind]);
     if (existing !== undefined) return String(existing["id"]);
     const id = nextId(ports);
@@ -108,7 +110,45 @@ export function setExchangeDeviceActive(context: OperationContext, deviceId: str
     const result = tx.run(`UPDATE trusted_exchange_devices SET active=?,revision=revision+1 WHERE business_id=? AND device_id=?`, [active ? 1 : 0,context.businessId,deviceId]);
     if (result.changes !== 1) throw new ExchangeError("untrusted_device");
     appendLocalAudit(tx,context,ports,revision,active ? "EXCHANGE_DEVICE_REINSTATED" : "EXCHANGE_DEVICE_REVOKED",deviceId);
+    if (pinnedDevice(tx,context.businessId,context.deviceId)["authority_allowed"] === 1) publishDeviceTrust(tx,context,ports,revision,deviceId);
   });
+}
+
+/**
+ * Publishes owner-signed trust for keys this authority device approved before trust propagated
+ * (for example through earlier pairing), so devices that never met can verify each other's facts.
+ * New signed facts are created; nothing historical is re-signed. Returns how many were published.
+ */
+export function publishDeviceRoster(context: OperationContext): number {
+  return authorizedOperation(context, ["business.settings","users.manage"], (_database, tx, ports, revision) => {
+    requireOwner(tx,context);
+    if (pinnedDevice(tx,context.businessId,context.deviceId)["authority_allowed"] !== 1) throw new ExchangeError("permission_denied");
+    const pins = tx.all(`SELECT t.device_id,t.active FROM trusted_exchange_devices t JOIN devices d ON d.id=t.device_id AND d.business_id=t.business_id
+      WHERE t.business_id=? AND t.device_id<>? AND t.roster_revision=0 ORDER BY t.device_id`, [context.businessId,context.deviceId]);
+    let published = 0;
+    for (const pin of pins) {
+      const id = String(pin["device_id"]);
+      // An inactive key must first be known before its revocation can be applied elsewhere.
+      if (pin["active"] === 0) { publishDeviceTrust(tx,context,ports,revision,id,true); published++; }
+      publishDeviceTrust(tx,context,ports,revision,id); published++;
+    }
+    return published;
+  });
+}
+
+/** @internal Appends the next owner-signed roster fact for one pinned key inside the caller's transaction. */
+function publishDeviceTrust(tx: Queryable, context: OperationContext, ports: WorkspacePorts, revision: number, deviceId: string, forceTrusted = false): void {
+  const pin = tx.get(`SELECT t.public_key,t.authority_allowed,t.active,t.roster_revision,d.label,d.platform FROM trusted_exchange_devices t
+    JOIN devices d ON d.id=t.device_id AND d.business_id=t.business_id WHERE t.business_id=? AND t.device_id=?`, [context.businessId,deviceId]);
+  if (pin === undefined) throw new ExchangeError("untrusted_device");
+  const platform = String(pin["platform"]);
+  if (!["ANDROID","IOS","DESKTOP","SERVER"].includes(platform)) return; // Historic WEB rows have no current client to trust.
+  const next = Number(pin["roster_revision"]) + 1;
+  tx.run(`UPDATE trusted_exchange_devices SET roster_revision=? WHERE business_id=? AND device_id=?`, [next,context.businessId,deviceId]);
+  const payload = pin["active"] === 1 || forceTrusted
+    ? { device: { id: deviceId, label: String(pin["label"]), platform, public_key: String(pin["public_key"]) }, authority_allowed: pin["authority_allowed"] === 1, revision: next }
+    : { device_id: deviceId, revision: next };
+  appendLocalAudit(tx,context,ports,revision,pin["active"] === 1 || forceTrusted ? "DEVICE_TRUSTED" : "DEVICE_REVOKED",deviceId,payload);
 }
 
 /** @internal Owner identity is checked separately from a granted management capability. */

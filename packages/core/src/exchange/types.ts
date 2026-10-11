@@ -5,7 +5,7 @@ export interface ExchangeCrypto {
 }
 /** Stable exchange failures; never includes payloads, private keys or native error text. */
 export class ExchangeError extends Error {
-  readonly code: "invalid_event" | "invalid_payload" | "untrusted_device" | "invalid_signature" | "conflict" | "return_conflict" | "scope_mismatch" | "permission_denied" | "unsupported_event" | "missing_dependency" | "authority_revision" | "invalid_receipt" | "invalid_destination" | "locked";
+  readonly code: "invalid_event" | "invalid_payload" | "untrusted_device" | "invalid_signature" | "conflict" | "return_conflict" | "scope_mismatch" | "permission_denied" | "unsupported_event" | "missing_dependency" | "authority_revision" | "invalid_receipt" | "invalid_destination" | "fingerprint_mismatch" | "locked";
   constructor(code: ExchangeError["code"]) { super(code); this.name = "ExchangeError"; this.code = code; }
 }
 /** Durable effect outcomes; deferred/unsupported/quarantined records produce no business effects. */

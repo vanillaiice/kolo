@@ -11,6 +11,10 @@ export interface CredentialCrypto {
   equalHex(left: string, right: string): boolean;
   sign?(privateKey: string, message: string): Promise<string>;
   deviceKey(): Promise<{ readonly publicKey: string; readonly privateKey: string }>;
+  /** Fresh X25519 key pair as SPKI/PKCS#8 PEM, for end-to-end encrypted sync. */
+  encryptionKeyPair?(): Promise<{ readonly publicKey: string; readonly privateKey: string }>;
+  /** Native X25519 agreement; returns the 32-byte shared secret as hex. */
+  agree?(privateKey: string, peerPublicKey: string): Promise<string>;
 }
 
 interface Record {
@@ -68,6 +72,21 @@ export function protectedCredentials(store: SecretStore, crypto: CredentialCrypt
     const salt = crypto.randomHex(16);
     return { salt, verifier: await crypto.derive(secret, salt, CREDENTIAL_ITERATIONS) };
   }
+  // The X25519 key lives beside, never inside, the signing record, so existing records stay valid.
+  async function encryption(reference: string, create: boolean): Promise<{ publicKey: string; privateKey: string } | undefined> {
+    if (await read(reference) === undefined) throw new WorkspaceError("credential_unavailable");
+    const key = `${reference}.x25519`, stored = await store.read(key);
+    if (stored !== undefined) {
+      const record = JSON.parse(stored) as { version?: unknown; publicKey?: unknown; privateKey?: unknown };
+      if (record.version !== 1 || typeof record.publicKey !== "string" || typeof record.privateKey !== "string") throw new WorkspaceError("credential_unavailable");
+      return { publicKey: record.publicKey, privateKey: record.privateKey };
+    }
+    if (!create) return undefined;
+    if (crypto.encryptionKeyPair === undefined) throw new WorkspaceError("credential_unavailable");
+    const pair = await crypto.encryptionKeyPair();
+    await store.write(key, JSON.stringify({ version: 1, publicKey: pair.publicKey, privateKey: pair.privateKey }));
+    return pair;
+  }
   function material(reference: string, record: Record): ProvisionedIdentity {
     return { publicKey: record.publicKey, credentialReference: reference, keyReference: reference };
   }
@@ -104,12 +123,20 @@ export function protectedCredentials(store: SecretStore, crypto: CredentialCrypt
     },
     async sign(reference, message) {
       if (crypto.sign === undefined || typeof message !== "string" || message.length > 8 * 1024 * 1024 + 100 ||
-        !/^kolo\.(event\.v2|receipt\.v1|batch\.v2|snapshot\.v1|pairing-invite\.v1|pairing-request\.v1)\u0000/.test(message)) throw new WorkspaceError("credential_unavailable");
+        !/^kolo\.(event\.v2|receipt\.v1|batch\.v2|snapshot\.v1|pairing-invite\.v1|pairing-request\.v1|server-enrollment\.v1|server-session\.v1|sync-batch\.v1)\u0000/.test(message)) throw new WorkspaceError("credential_unavailable");
       const record = await read(reference);
       if (record === undefined) throw new WorkspaceError("credential_unavailable");
       const signature = await crypto.sign(record.privateKey, message);
       if (!/^[a-f0-9]{128}$/.test(signature)) throw new WorkspaceError("credential_unavailable");
       return signature;
+    },
+    encryptionKey: reference => serialize(async () => (await encryption(reference, true))!.publicKey),
+    async agree(reference, peerPublicKey) {
+      const record = await encryption(reference, false);
+      if (record === undefined || crypto.agree === undefined || typeof peerPublicKey !== "string" || peerPublicKey.length > 1024 || !peerPublicKey.includes("BEGIN PUBLIC KEY")) throw new WorkspaceError("credential_unavailable");
+      const shared = await crypto.agree(record.privateKey, peerPublicKey);
+      if (!/^[a-f0-9]{64}$/.test(shared) || /^0+$/.test(shared)) throw new WorkspaceError("credential_unavailable");
+      return shared;
     },
     async verify(reference, secret) {
       const record = await read(reference);

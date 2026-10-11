@@ -56,13 +56,14 @@ export function authorizedOperation<T>(context: OperationContext, permissions: r
   });
 }
 
-/** @internal Appends an immutable local audit fact inside the caller's transaction. No secret payloads. */
-export function appendLocalAudit(tx: Queryable, context: OperationContext, ports: WorkspacePorts, revision: number, action: string, entityId: string, payload: Record<string, unknown> = {}): void {
+/** @internal Appends an immutable local audit fact inside the caller's transaction and returns its event ID. No secret payloads. */
+export function appendLocalAudit(tx: Queryable, context: OperationContext, ports: WorkspacePorts, revision: number, action: string, entityId: string, payload: Record<string, unknown> = {}): string {
   const eventId = nextId(ports), at = timestamp(ports);
   tx.run(`INSERT INTO local_audit (event_id, business_id, user_id, device_id, action,
     entity_id, authority_revision, occurred_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   [eventId, context.businessId, context.userId, context.deviceId, action, entityId, revision, at, JSON.stringify(payload)]);
   captureAuthorityFact(tx, { eventId, ...context, action, entityId, at, payload });
+  return eventId;
 }
 
 /** @internal Reads current scoped active authority. */

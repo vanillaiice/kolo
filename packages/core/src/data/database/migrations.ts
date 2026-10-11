@@ -4,6 +4,9 @@ import { FULL_TEXT_MIGRATION } from "./full-text-migration.ts";
 import { RETURNS_MIGRATION } from "./returns-migration.ts";
 import { SEARCH_MIGRATION } from "./search-migration.ts";
 import { TRANSFER_MIGRATION } from "./transfer-migration.ts";
+import { SERVER_SYNC_MIGRATION } from "./server-sync-migration.ts";
+import { SEALED_SYNC_MIGRATION } from "./sealed-sync-migration.ts";
+import { HOSTED_SERVICE_MIGRATION } from "./hosted-service-migration.ts";
 /**
  * The local schema and how a device gets to it.
  *
@@ -992,6 +995,9 @@ export const MIGRATIONS: readonly Migration[] = [
   PHOTOS_MIGRATION,
   PRODUCT_CATEGORIES_MIGRATION,
   FULL_TEXT_MIGRATION,
+  SERVER_SYNC_MIGRATION,
+  SEALED_SYNC_MIGRATION,
+  HOSTED_SERVICE_MIGRATION,
 ];
 
 /** The version the code in this build expects. */

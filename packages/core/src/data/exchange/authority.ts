@@ -8,7 +8,8 @@ export interface AuthorityFact { readonly eventId: string; readonly businessId: 
 
 /** @internal Captures new authority changes only, never retroactively signs historical audit rows. */
 export function captureAuthorityFact(tx: Queryable, fact: AuthorityFact): void {
-  const actions = ["WORKSPACE_CREATED", "LEGACY_WORKSPACE_ADOPTED", "MEMBER_CREATED", "PERMISSION_GRANTED", "PERMISSION_REVOKED", "MEMBER_SUSPENDED", "MEMBER_REINSTATED", "MEMBER_ACCESS_RESET", "OWNER_ACCESS_RECOVERED"];
+  const actions = ["WORKSPACE_CREATED", "LEGACY_WORKSPACE_ADOPTED", "MEMBER_CREATED", "PERMISSION_GRANTED", "PERMISSION_REVOKED", "MEMBER_SUSPENDED", "MEMBER_REINSTATED", "MEMBER_ACCESS_RESET", "OWNER_ACCESS_RECOVERED", "DEVICE_TRUSTED", "DEVICE_REVOKED",
+    "DEVICE_ENCRYPTION_KEY", "SHOP_KEY_GRANTED", "SERVER_ENDPOINT_SET", "SERVER_ENDPOINT_CLEARED"];
   if (!actions.includes(fact.action)) return;
   const installation = tx.get(`SELECT * FROM local_installation WHERE id = 1`);
   if (installation?.["business_id"] !== fact.businessId || installation["device_id"] !== fact.deviceId) return;
@@ -27,6 +28,8 @@ export function captureAuthorityFact(tx: Queryable, fact: AuthorityFact): void {
     archiveLegacyHistory(tx,fact.businessId);
     payload = { business_id: fact.businessId, owner_id: fact.userId, device_id: fact.deviceId,
       public_key: installation["public_key"], provenance: "unsigned_v1_snapshot" };
+  } else if (["DEVICE_TRUSTED", "DEVICE_REVOKED", "DEVICE_ENCRYPTION_KEY", "SHOP_KEY_GRANTED", "SERVER_ENDPOINT_SET", "SERVER_ENDPOINT_CLEARED"].includes(fact.action)) {
+    payload = { ...fact.payload }; // Shaped by the operation that records it (trust, encryption keys, server address).
   } else {
     const target = tx.get(`SELECT m.revision,m.role,u.name FROM local_memberships m JOIN users u ON u.id=m.user_id AND u.business_id=m.business_id
       WHERE m.business_id = ? AND m.user_id = ?`, [fact.businessId,fact.entityId])!;
@@ -38,7 +41,8 @@ export function captureAuthorityFact(tx: Queryable, fact: AuthorityFact): void {
     actor_id: fact.userId, origin_sequence: allocateOrigin(tx,fact.businessId,fact.deviceId), event_type: fact.action,
     event_version: 2, occurred_at: fact.at, branch_id: null,
     authority_revision: fact.actorRevision ?? journalContext(tx)?.revision ?? Number(actor["revision"]),
-    required_permissions: ["users.manage"], payload: JSON.parse(JSON.stringify(payload)) as JournalEnvelope["payload"] };
+    // A device announces its own encryption key whoever is signed in; every other authority fact is the owner's.
+    required_permissions: fact.action === "DEVICE_ENCRYPTION_KEY" ? [] : ["users.manage"], payload: JSON.parse(JSON.stringify(payload)) as JournalEnvelope["payload"] };
   appendEvent(tx,event,"local");
   tx.run(`INSERT INTO applied_events(event_id,business_id,status,updated_at) VALUES (?,?,'applied',?)`, [event.event_id,event.business_id,event.occurred_at]);
 }

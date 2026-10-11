@@ -54,6 +54,10 @@ export interface CredentialPort {
   hasCredential?(reference: string): Promise<boolean>;
   /** Reveals the recovery code only after credential proof; never persists it in SQLite. */
   recoveryCode?(reference: string, secret: string): Promise<string | undefined>;
+  /** This installation's X25519 public key (SPKI PEM) for sealed shop keys, created on first use in the native vault. */
+  encryptionKey?(keyReference: string): Promise<string>;
+  /** X25519 agreement with a peer public key; returns the shared secret as hex. The private key never leaves the vault. */
+  agree?(keyReference: string, peerPublicKey: string): Promise<string>;
 }
 
 /** Injected local dependencies; IDs must be fresh UUIDv7 and clock ISO UTC. */

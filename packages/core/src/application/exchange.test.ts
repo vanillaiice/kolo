@@ -220,7 +220,7 @@ it("bounded retries rotate past unsupported facts so they cannot starve later ap
 it("relayed durable-deferred receipts count a pending dependency once at each destination",async()=>{
  const [a,b,c]=await replicas(3) as [Replica,Replica,Replica],p=product(a);sale(a,p);await sealPendingEvents(a.context,crypto);
  const e=eventsForDestination(a.context,dest(a,b)).find(e=>e.envelope.event_type==="SALE_COMPLETED")!;assert.equal(applyEvent(b.context,await verifyEvent(b.context,e,crypto)),"deferred");
- const batch=await send(b,c),receipt=await createPeerReceipt(c.context,batch.batch.batch_id,crypto);assert.ok(receipt);assert.equal(receipt.receipt.entries[0]!.state,"deferred");
+ const batch=await send(b,c),receipt=await createPeerReceipt(c.context,batch.batch.batch_id,crypto);assert.ok(receipt);assert.equal(receipt.receipt.entries.find(entry=>entry.event_id===e.envelope.event_id)!.state,"deferred");
  await acknowledgeDelivery(b.context,dest(b,c),receipt,crypto);assert.equal(exchangeStatus(b.context,dest(b,c))["deferred"],1);assert.equal(exchangeStatus(b.context,dest(b,c))["pending"],0);assert.equal(count(b,"sales"),0);assert.equal(count(c,"sales"),0);
 });
 
