@@ -1,12 +1,11 @@
 import { useState } from "react";
 import type { Cursor } from "@kolo/core/application/queries";
 import { formatMoney, formatQuantity } from "@kolo/core/domain/money";
+import { shortReceiptNumber } from "@kolo/core/domain/receipt-number";
 import type { ShopService } from "../../shared/service.ts";
 import { BackToList, Pager, ReadState, useRead, useRevealDetail, useText } from "./ui.tsx";
 import { ReturnForm } from "./ReturnForm.tsx";
 
-/** Offline-unique numbers are `V-` plus a UUID; lists show its last eight characters, the receipt shows it whole. */
-export function shortReceiptNumber(number:string):string{const match=/^V-[0-9a-f-]{28}([0-9a-f]{8})$/i.exec(number);return match===null?number:`V-${match[1]!.toUpperCase()}`;}
 /** Saved receipts come from persisted historical facts, never from the cart draft. */
 export function Receipts({service,sessionId,revision,initialId,canReturn,shopName,onNewSale}:{readonly service:ShopService;readonly sessionId:string;readonly revision:number;readonly initialId:string|undefined;readonly canReturn:boolean;readonly shopName:string|null;readonly onNewSale:()=>void}):React.JSX.Element{
   const {t,language}=useText(),[selected,setSelected]=useState(initialId),[cursor,setCursor]=useState<{after:Cursor;revision:number}>(),[returning,setReturning]=useState<string>();

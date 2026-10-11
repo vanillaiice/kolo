@@ -5,6 +5,7 @@ import { expense as expenseRead, purchase as purchaseRead } from "@kolo/core/app
 import { recordExpense, recordPurchase } from "@kolo/core/application/operations";
 import { previewReturn, returnableItems, returnPurchase, returnSale } from "@kolo/core/application/returns";
 import type { Row } from "@kolo/core/data/database/driver";
+import { shortReceiptNumber } from "@kolo/core/domain/receipt-number";
 import type { Account } from "@kolo/core/data/finance/accounts";
 import type { Product } from "@kolo/core/data/products/products";
 import type { Supplier } from "@kolo/core/data/suppliers/suppliers";
@@ -39,7 +40,7 @@ export function ActivityScreen(): React.JSX.Element {
   return <Screen title={t("tab.activity")} scroll={false} actions={create === undefined ? undefined : <Button label={t("new")} variant="ghost" onPress={create} />}>
     {tab === undefined ? <EmptyState title={t("noPermission")} /> : tab === "sales"
       ? <PagedList<ReceiptSummary> key="sales" searchable={false} revision={revision} identify={item => item.id} load={page => receipts(context, page)} header={switcher} empty={{ title: t("noSales") }}
-          render={item => <ListRow title={item.number} subtitle={[formatDate(item.occurredAt, language), item.customerName].filter(Boolean).join(" · ")} trailing={formatMoney(item.totalMinor)}
+          render={item => <ListRow title={shortReceiptNumber(item.number)} subtitle={[formatDate(item.occurredAt, language), item.customerName].filter(Boolean).join(" · ")} trailing={formatMoney(item.totalMinor)}
             onPress={() => nav.push("receipt", { saleId: item.id })} />} />
       : tab === "purchases"
       ? <PagedList<ReturnType<typeof purchases>["items"][number]> key="purchases" searchable={false} revision={revision} identify={item => item.id} load={page => purchases(context, page)} header={switcher} empty={{ title: t("noPurchases") }}
@@ -62,7 +63,7 @@ export function ReceiptScreen(): React.JSX.Element {
   const labels: ReceiptLabels = { receipt: t("receipt"), customer: t("customer"), discount: t("discountLabel"), total: t("total"), paid: t("paid"), due: t("due"), returned: t("returned"),
     date: formatDate(saved.occurredAt, language), footer: t("receiptFooter") };
   const output = (work: () => Promise<void>): void => { void action.runAsync(() => session.systemUi(work)); };
-  return <Screen title={`${t("receipt")} ${saved.number}`} onBack={fresh === true ? undefined : nav.back} footer={fresh === true ? <Button label={t("newSale")} onPress={() => nav.popTo("sell")} /> : undefined}>
+  return <Screen title={`${t("receipt")} ${shortReceiptNumber(saved.number)}`} onBack={fresh === true ? undefined : nav.back} footer={fresh === true ? <Button label={t("newSale")} onPress={() => nav.popTo("sell")} /> : undefined}>
     {fresh === true && <Notice tone="success" text={t("saleSaved")} />}
     <Section>
       <Text style={[s.heading, { textAlign: "center" }]}>{session.businessName}</Text>
