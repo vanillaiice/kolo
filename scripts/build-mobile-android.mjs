@@ -18,6 +18,11 @@ run(process.platform === "win32" ? "gradlew.bat" : "./gradlew", [":app:assembleR
 const version = JSON.parse(readFileSync(join(mobile, "app.json"), "utf8")).expo.version;
 const output = join(root, "release/mobile");
 mkdirSync(output, { recursive: true });
-const artifact = join(output, `KOLO-${version}-android-test.apk`);
-cpSync(join(mobile, "android/app/build/outputs/apk/release/app-release.apk"), artifact);
-process.stdout.write(`Android test APK: ${artifact}\nThis uses generated test signing, not a production Play Store identity.\n`);
+// One APK per architecture plus a universal fallback (apps/mobile/plugins/with-abi-splits.js).
+const built = join(mobile, "android/app/build/outputs/apk/release");
+for (const abi of ["arm64-v8a", "armeabi-v7a", "universal"]) {
+  const artifact = join(output, `KOLO-${version}-android-${abi}.apk`);
+  cpSync(join(built, `app-${abi}-release.apk`), artifact);
+  process.stdout.write(`Android APK (${abi}): ${artifact}\n`);
+}
+process.stdout.write("These use generated test signing, not a production Play Store identity.\n");

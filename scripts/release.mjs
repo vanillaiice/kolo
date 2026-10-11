@@ -17,8 +17,8 @@ const json = path => JSON.parse(readFileSync(join(root, path), "utf8"));
 const targets = {
   android: { version: () => json("apps/mobile/app.json").expo.version, prefix: "mobile-v", directory: "release/mobile", title: "KOLO Android",
     build: ["npm", ["run", "build:mobile:android"]], sums: "SHA256SUMS-android.txt", hashed: name => name.endsWith(".apk"),
-    uploads: (name, version) => name === `KOLO-${version}-android-test.apk`,
-    notes: "Android test build with generated test signing: install by allowing unknown sources. Not a Play Store build." },
+    uploads: (name, version) => /^KOLO-.+-android-(arm64-v8a|armeabi-v7a|universal)\.apk$/.test(name) && name.startsWith(`KOLO-${version}-android-`),
+    notes: "Android test build with generated test signing: install by allowing unknown sources. Not a Play Store build. Most phones: android-arm64-v8a. Older or Android Go phones: android-armeabi-v7a. Not sure: android-universal (larger, works everywhere). KOLO shows its type in Settings → About." },
   linux: { version: () => json("apps/desktop/package.json").version, prefix: "desktop-v", directory: "release/desktop", title: "KOLO Desktop",
     build: ["npm", ["run", "dist:desktop:linux"]], sums: "SHA256SUMS-linux.txt", hashed: name => /\.(AppImage|deb)$/.test(name),
     uploads: (name, version) => name.startsWith(`KOLO-${version}-linux-`) || name === "latest-linux.yml",

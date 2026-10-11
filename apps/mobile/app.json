@@ -46,7 +46,8 @@
             "backgroundColor": "#0c3426"
           }
         }
-      ]
+      ],
+      "./plugins/with-abi-splits.js"
     ],
     "experiments": {
       "typedRoutes": false
