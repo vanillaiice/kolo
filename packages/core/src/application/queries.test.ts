@@ -190,3 +190,13 @@ it("report-only capabilities read bounded debts and negative-stock alerts, inclu
   assert.throws(()=>queries.customers(f.context));assert.equal(queries.debtPage(f.context,"customer",{limit:1}).items[0]?.amountMinor,500);
   assert.equal(queries.stockAlertPage(f.context,{limit:1}).items[0]?.quantity,-1000);
 });
+
+it("stock alerts judge the summed stock, not one movement: a product sold down to 9 alerts only at or below its reorder level",async()=>{
+  const f=await fixture(),plenty=f.product(),reorder=f.product(),short=f.product();
+  const sell=(productId:string)=>commands.completeSale(f.context,{id:randomUUIDv7(),number:randomUUIDv7(),lines:[{id:randomUUIDv7(),movementId:randomUUIDv7(),productId,name:"Line",unitPriceMinor:500,quantity:1000}],
+    payments:[{id:randomUUIDv7(),accountId:f.account.id,amountMinor:500}],occurredAt:at,eventId:randomUUIDv7()});
+  for(const productId of [plenty,reorder]){commands.adjustStock(f.context,{id:randomUUIDv7(),productId,type:"ADJUSTMENT",quantity:10000,reason:"opening",occurredAt:at},randomUUIDv7());sell(productId);}
+  sell(short);f.db.run(`UPDATE products SET minimum_stock=9000 WHERE id=?`,[reorder]);
+  const alerts=new Map(queries.stockAlertPage(f.context).items.map(item=>[item.id,item.quantity]));
+  assert.equal(alerts.has(plenty),false);assert.equal(alerts.get(reorder),9000);assert.equal(alerts.get(short),-1000);assert.equal(alerts.size,2);
+});

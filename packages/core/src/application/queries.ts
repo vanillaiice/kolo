@@ -268,8 +268,8 @@ export function stockAlertPage(context: OperationContext, query: PageQuery = {})
     const {limit,term}=options(query),values:SqlValue[]=[context.businessId];let where="p.business_id=? AND p.active=1";
     if(term!==""){where+=` AND p.search_name LIKE ? ESCAPE '\\'`;values.push(likePattern(term));}
     if(query.after!==undefined){where+=" AND (p.name,p.id)>(?,?)";values.push(query.after.name,query.after.id);}values.push(limit+1);
-    const rows=tx.all(`SELECT p.id,p.name,coalesce(sum(m.quantity),0) AS quantity FROM products p LEFT JOIN inventory_movements m ON m.business_id=p.business_id AND m.product_id=p.id
-      WHERE ${where} GROUP BY p.id,p.name,p.minimum_stock HAVING quantity<0 OR (p.minimum_stock>0 AND quantity<=p.minimum_stock) ORDER BY p.name,p.id LIMIT ?`,values),shown=rows.slice(0,limit),last=shown.at(-1);
-    return {items:shown.map(row=>({id:String(row["id"]),name:String(row["name"]),quantity:sqlInteger(row["quantity"]!)})),next:rows.length>limit&&last!==undefined?{name:String(last["name"]),id:String(last["id"])}:undefined};
+    const rows=tx.all(`SELECT p.id,p.name,coalesce(sum(m.quantity),0) AS on_hand FROM products p LEFT JOIN inventory_movements m ON m.business_id=p.business_id AND m.product_id=p.id
+      WHERE ${where} GROUP BY p.id,p.name,p.minimum_stock HAVING on_hand<0 OR (p.minimum_stock>0 AND on_hand<=p.minimum_stock) ORDER BY p.name,p.id LIMIT ?`,values),shown=rows.slice(0,limit),last=shown.at(-1);
+    return {items:shown.map(row=>({id:String(row["id"]),name:String(row["name"]),quantity:sqlInteger(row["on_hand"]!)})),next:rows.length>limit&&last!==undefined?{name:String(last["name"]),id:String(last["id"])}:undefined};
   });
 }
