@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, AppState, StatusBar, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import * as SplashScreen from "expo-splash-screen";
 import { currentInstallation, recoverWorkspaceSetup, lockWorkspace, unlockedActor, rememberMember, resumeWorkspace, type RememberedMember } from "@kolo/core/identity/workspace";
 import { sealPendingEvents } from "@kolo/core/application/exchange";
 import { resumeOwnerRecovery } from "@kolo/core/identity/recovery";
@@ -26,6 +27,10 @@ import { API_BASE_URL } from "./config.ts";
 import { seedDemoShop } from "./dev-seed.ts";
 import { LanguageControl } from "../components/controls.tsx";
 
+// The native launch screen (logo on brand green) stays up until the shop database has opened.
+void SplashScreen.preventAutoHideAsync().catch(() => undefined);
+const hideSplash = (): void => { void SplashScreen.hideAsync().catch(() => undefined); };
+
 type Boot = { state: "opening" } | { state: "failed" } |
   { state: "ready"; ports: WorkspacePorts; files: SnapshotPort; slots: SlotControl; installation: InstallationState; authority: AuthTransport };
 /** Every domain a business commit can touch; any of them may leave an unsigned event to seal. */
@@ -42,6 +47,9 @@ const SEAL_DELAY_MS = 400, SEAL_RETRY_MS = 60_000;
 function AppContent(): React.JSX.Element {
   const { t } = useText(), { colors, scheme } = useTheme();
   const [boot, setBoot] = useState<Boot>({ state: "opening" });
+  useEffect(() => { if (boot.state !== "opening") hideSplash(); }, [boot.state]);
+  // A slow first open (large migration) falls back to the in-app spinner rather than a frozen logo.
+  useEffect(() => { const timer = setTimeout(hideSplash, 8000); return () => clearTimeout(timer); }, []);
   const [unlocked, setUnlocked] = useState<{ context: OperationContext; generation: number }>();
   const generation = useRef(0);
   const activeDatabase = useRef<Database | undefined>(undefined);

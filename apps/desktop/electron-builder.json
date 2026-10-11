@@ -3,7 +3,8 @@
   "productName": "KOLO",
   "directories": {
     "app": ".packaging/desktop",
-    "output": "release/desktop"
+    "output": "release/desktop",
+    "buildResources": "apps/desktop/build"
   },
   "files": [
     "dist/**/*",
@@ -25,7 +26,8 @@
     "target": [
       "nsis",
       "portable"
-    ]
+    ],
+    "icon": "apps/desktop/build/icon.png"
   },
   "nsis": {
     "oneClick": false,
@@ -46,6 +48,7 @@
     "executableName": "kolo",
     "category": "Office",
     "synopsis": "Offline shop management: sales, stock, credit and reports",
-    "maintainer": "hblabs <vanillaiice@tutanota.com>"
+    "maintainer": "hblabs <vanillaiice@tutanota.com>",
+    "icon": "apps/desktop/build/icon.png"
   }
 }

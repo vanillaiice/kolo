@@ -4,12 +4,18 @@
     "slug": "kolo",
     "version": "0.1.2",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "scheme": "kolo",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "android": {
       "package": "cm.kolo.app",
-      "versionCode": 3
+      "versionCode": 3,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/monochrome-icon.png",
+        "backgroundColor": "#0c3426"
+      }
     },
     "plugins": [
       "expo-sqlite",
@@ -27,7 +33,20 @@
           "microphonePermission": false
         }
       ],
-      "react-native-quick-crypto"
+      "react-native-quick-crypto",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#0c3426",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#0c3426"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": false

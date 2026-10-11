@@ -101,8 +101,10 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
           event.senderFrame === window.webContents.mainFrame && isRendererUrl(event.senderFrame?.url, rendererPath);
       };
       for (const [channel, handler] of Object.entries(desktopHandlers(() => application!, () => desktopStatus(database!), trusted))) ipcMain.handle(channel, handler);
-      window = new BrowserWindow({ width: 1280, height: 850, minWidth: 880, minHeight: 620, backgroundColor: windowBackground(),
+      window = new BrowserWindow({ width: 1280, height: 850, minWidth: 880, minHeight: 620, backgroundColor: windowBackground(), show: false,
         webPreferences: { preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: false } });
+      // Shown after the first paint, so the entry screen appears whole instead of an empty frame.
+      window.once("ready-to-show", () => { if (window !== undefined && !window.isDestroyed()) window.show(); });
       const updateWindowTheme = (): void => { if (window !== undefined && !window.isDestroyed()) window.setBackgroundColor(windowBackground()); };
       nativeTheme.on("updated", updateWindowTheme);
       window.on("closed", () => nativeTheme.removeListener("updated", updateWindowTheme));
@@ -119,6 +121,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
       window.webContents.on("will-navigate", event => event.preventDefault());
       interval = setInterval(() => { void application?.seal(); }, 3000);
       await window.loadFile(rendererPath);
+      if (!window.isVisible()) window.show();
       loaded = true;
       if (benchmarkSmoke) {
         const { benchmarkDesktop } = await import("./benchmark.js");

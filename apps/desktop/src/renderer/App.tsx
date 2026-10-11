@@ -43,7 +43,7 @@ export function App({service}:{readonly service:ShopService}):React.JSX.Element{
       {view===undefined?<main id="main-content" tabIndex={-1} className="auth-card"><p className="brand">KOLO</p><h1>{t("opening")}</h1><ErrorText message={error}/>{error&&<button className="secondary" onClick={refresh}>{t("retry")}</button>}</main>:
         view.state!=="unlocked"||view.sessionId===null||view.actor===null?<main id="main-content" tabIndex={-1} className="auth-layout"><header className="entry-header"><span className="brand">KOLO<span className="brand-mark" aria-hidden="true">.</span></span><span className="entry-offline"><span className="status-dot"/>{t("offline")}</span></header>
           <Workspace service={service} view={view} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})} onLegal={setLegal}/>
-          <footer className="entry-legal"><span>kolo · hblabs</span><LegalLinks onOpen={setLegal}/></footer></main>:
+          <footer className="entry-legal"><span>kolo {__KOLO_VERSION__} · made by hblabs</span><LegalLinks onOpen={setLegal}/></footer></main>:
           <Shop key={view.sessionId} service={service} view={view} sessionId={view.sessionId} revision={revision} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})}
             preferences={{appearance,onAppearance:setAppearance,language,onLanguage:setLanguage,onLegal:setLegal}}/>
       }

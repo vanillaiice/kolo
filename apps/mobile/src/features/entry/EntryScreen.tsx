@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Platform, Text, View } from "react-native";
+import Constants from "expo-constants";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { createWorkspace, adoptLegacyWorkspace, resumeWorkspaceProvisioning, unlockWorkspace } from "@kolo/core/identity/workspace";
 import { validateLocalSecret } from "@kolo/core/identity/credentials";
@@ -100,6 +101,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
       {body}{status}
       {options.preferences === true && <Section><LanguageControl /><AppearanceControl /></Section>}
       <Text style={[s.muted, { textAlign: "center" }]}>{t("offlineLine")}</Text>
+      <Text style={[s.muted, { textAlign: "center", fontSize: 12 }]}>kolo {Constants.expoConfig?.version ?? "0.0.0"} · made by hblabs</Text>
     </KeyboardAwareScrollView></Page>;
 
   switch (step.name) {
