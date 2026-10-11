@@ -10,7 +10,14 @@ export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later"
   "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" |
   "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" |
   /** Product photo failures: not a WebP/JPEG within limits, or the shop's photo storage is full. */
-  "invalid_photo" | "photo_storage_full";
+  "invalid_photo" | "photo_storage_full" |
+  /** Sync server failures: unreachable or refusing, a fingerprint that does not match, an address that is not allowed,
+   *  a connection code that is malformed, unknown, used or expired, a shop already attached from another till, a
+   *  device the owner has not yet approved, or a shop the operator suspended or removed. */
+  "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" |
+  "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" |
+  /** Adding a till by code: no server connected, the code expired or was refused. */
+  "no_server" | "join_not_found" | "join_conflict";
 /** Serializable results make transport and operation failures explicit. */
 export type Result<T> = { readonly ok: true; readonly value: T } |
   { readonly ok: false; readonly error: { readonly code: FailureCode; readonly retryAt?: string } };
@@ -191,6 +198,28 @@ export interface ExchangeView {
   readonly batches: readonly { readonly batchId: string; readonly senderDeviceId: string; readonly createdAt: string }[];
   readonly diagnostics: readonly { readonly eventId: string; readonly code: string; readonly description: string; readonly action: string }[];
 }
+/**
+ * A connected sync server as this computer sees it; `pending` counts facts not yet acknowledged by it. `automatic` is
+ * true when this computer followed the owner's shared server address. `shareCode` (owner only) lets the shop's other
+ * tills connect: it carries the address and fingerprint but no single-use token.
+ */
+export interface ServerView {
+  readonly destinationId: string; readonly url: string; readonly fingerprint: string; readonly connectedAt: string;
+  readonly lastAttemptAt: string | null; readonly lastSuccessAt: string | null; readonly lastError: string | null; readonly pending: number;
+  readonly automatic: boolean; readonly shareCode: string | null;
+  /** Hosted service as the server last reported it; null on a server not yet reached. Trading never depends on it. */
+  readonly service: "unlimited" | "active" | "grace" | "inactive" | null; readonly paidUntil: string | null; readonly graceUntil: string | null;
+}
+/** The server a pasted connection code points to, checked against the fingerprint the code carries. */
+export interface ServerPreview { readonly url: string; readonly fingerprint: string; readonly canEnroll: boolean; readonly hasToken: boolean;
+  /** The shop already trusts this server, so reconnecting needs no single-use token. */
+  readonly attached: boolean; }
+/** A code shown to add one till (ADR-032); `link` is what the QR code carries. */
+export interface JoinCodeView { readonly joinId: string; readonly code: string; readonly link: string; readonly url: string; readonly expiresAt: string; readonly authorityAllowed: boolean; }
+/** Whether the new till has asked to join; its name is shown before the owner allows it. */
+export type JoinStatusView = { readonly state: "waiting" | "expired" } | { readonly state: "requested"; readonly label: string; readonly platform: string };
+/** One synchronization pass; `untrusted` facts wait for the owner's approval of their device, `locked` facts for a shop key. */
+export interface ServerSyncSummary { readonly pushed: number; readonly rejected: number; readonly pulled: number; readonly untrusted: number; readonly locked: number; }
 /** Assessment of a checked exchange file before import. */
 export interface BundleView { readonly total: number; readonly ready: number; readonly duplicate: number; readonly deferred: number; readonly review: number; }
 /** Whether a native save dialog wrote the prepared file (false when the user cancelled). */
@@ -403,6 +432,24 @@ export interface ShopService {
   openImportReceipt(input: SessionRequest & { readonly destinationId: string; readonly password: string }): Promise<Result<{ readonly recorded: number }>>;
   /** Owner: retries deferred received events. */
   retryExchange(input: SessionRequest): Promise<Result<{ readonly applied: number }>>;
+  /** Connected sync servers and whether this device can attach the shop itself (owner's authority device). */
+  serverState(input: SessionRequest): Promise<Result<{ readonly servers: readonly ServerView[]; readonly canEnroll: boolean }>>;
+  /** Reads the server a pasted connection code points to and checks its fingerprint; changes nothing. */
+  checkServer(input: SessionRequest & { readonly code: string }): Promise<Result<ServerPreview>>;
+  /** Connects with a pasted connection code; the owner's main till uses its single-use token to attach the shop. */
+  connectServer(input: SessionRequest & { readonly code: string }): Promise<Result<ServerView>>;
+  /** Runs one synchronization pass now; passes also run automatically while signed in. */
+  syncServer(input: SessionRequest & { readonly destinationId: string }): Promise<Result<ServerSyncSummary>>;
+  /** Shows a code and QR code that add one till through the connected server. */
+  startJoinCode(input: SessionRequest & { readonly authorityAllowed: boolean }): Promise<Result<JoinCodeView>>;
+  /** Whether the new till has asked to join yet. */
+  pollJoinCode(input: SessionRequest & { readonly joinId: string }): Promise<Result<JoinStatusView>>;
+  /** Allows the till that asked: it receives the shop, encrypted to its own key. */
+  approveJoinCode(input: SessionRequest & { readonly joinId: string }): Promise<Result<null>>;
+  /** Refuses or abandons a join; the code stops working. */
+  cancelJoinCode(input: SessionRequest & { readonly joinId: string }): Promise<Result<null>>;
+  /** Stops syncing with a server on this computer; local data is unchanged. */
+  disconnectServer(input: SessionRequest & { readonly destinationId: string }): Promise<Result<null>>;
   /** Bounded account names for cash checkout, without disclosing financial balances. */
   listCashAccounts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly name: string }>>>;
   /** Atomic cash sale; identical retries return the original saved sale ID. */

@@ -1,10 +1,12 @@
 import { nativeTransferCrypto } from "@kolo/core/backup/native-crypto";
 import type { SafeStorage } from "electron";
-import { pbkdf2, randomBytes, timingSafeEqual, generateKeyPair, randomUUIDv7, sign, verify, createHash, createCipheriv, createDecipheriv } from "node:crypto";
+import { pbkdf2, randomBytes, timingSafeEqual, generateKeyPair, randomUUIDv7, sign, verify, createHash, createCipheriv, createDecipheriv,
+  createPrivateKey, createPublicKey, createHmac, diffieHellman, generateKeyPairSync, hkdf } from "node:crypto";
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { protectedCredentials, type CredentialCrypto } from "@kolo/core/identity/credentials";
 import type { ExchangeCrypto } from "@kolo/core/exchange/types";
+import type { SealingCrypto } from "@kolo/core/application/sealed-sync";
 import type { CredentialPort } from "@kolo/core/identity/types";
 import type { SecretStore } from "@kolo/core/data/auth/secure-store";
 
@@ -26,6 +28,14 @@ export const desktopCredentialCrypto: CredentialCrypto = {
     generateKeyPair("ed25519", { publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } },
       (error, publicKey, privateKey) => { if (error !== null) reject(new Error("native key generation unavailable")); else resolve({ publicKey, privateKey }); });
   }),
+  encryptionKeyPair: () => new Promise((resolve, reject) => {
+    generateKeyPair("x25519", { publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } },
+      (error, publicKey, privateKey) => { if (error !== null) reject(new Error("native key generation unavailable")); else resolve({ publicKey, privateKey }); });
+  }),
+  agree: async (privateKey, peerPublicKey) => {
+    try { return diffieHellman({ privateKey: createPrivateKey(privateKey), publicKey: createPublicKey(peerPublicKey) }).toString("hex"); }
+    catch { throw new Error("native agreement unavailable"); }
+  },
 };
 
 /** The narrow Electron safeStorage dependency, injected so Node tests need no Electron process. */
@@ -101,3 +111,17 @@ export const desktopTransferCrypto = nativeTransferCrypto({
  cipher:(key,nonce)=>createCipheriv("aes-256-gcm",Buffer.from(key,"hex"),Buffer.from(nonce,"hex"),{authTagLength:16}),
  decipher:(key,nonce)=>createDecipheriv("aes-256-gcm",Buffer.from(key,"hex"),Buffer.from(nonce,"hex"),{authTagLength:16}),
 });
+
+/** Native X25519 and HKDF-SHA256 on top of the file-transfer AES-GCM, for end-to-end encrypted sync (ADR-030). */
+export const desktopSealingCrypto: SealingCrypto = {
+  ...desktopTransferCrypto,
+  ephemeralAgreement: async recipientPublicKey => {
+    const pair = generateKeyPairSync("x25519");
+    const shared = diffieHellman({ privateKey: pair.privateKey, publicKey: createPublicKey(recipientPublicKey) });
+    return { publicKey: pair.publicKey.export({ type: "spki", format: "pem" }).toString(), shared: shared.toString("hex") };
+  },
+  hkdf: (ikm, salt, info, bytes) => new Promise((resolve, reject) => {
+    hkdf("sha256", Buffer.from(ikm, "hex"), Buffer.from(salt, "hex"), info, bytes, (error, key) => { if (error !== null) reject(new Error("native derivation unavailable")); else resolve(Buffer.from(key).toString("hex")); });
+  }),
+  hmac: async (key, message) => createHmac("sha256", Buffer.from(key, "hex")).update(message, "utf8").digest("hex"),
+};

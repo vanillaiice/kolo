@@ -1,5 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "module": "preserve", "moduleResolution": "bundler", "jsx": "react-jsx", "noEmit": true },
-  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/shared/**/*.ts", "src/electron/ipc.ts", "vite.config.ts"]
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/shared/**/*.ts", "src/electron/ipc.ts", "vite.config.ts"],
+  "exclude": ["src/renderer/**/*.test.ts"]
 }

@@ -1,6 +1,7 @@
 import { AuthPage } from "./AuthPage.tsx";
 import { useEffect, useState } from "react";
-import type { BackupFileView, BundleView, InviteView, PairingRequestView, ShopService } from "../../shared/service.ts";
+import type { BackupFileView, BundleView, InviteView, JoinCodeView, JoinStatusView, PairingRequestView, ServerPreview, ServerSyncSummary, ServerView, ShopService } from "../../shared/service.ts";
+import QRCode from "qrcode";
 import type { TextKey } from "../text.ts";
 import { ErrorText, Field, ReadState, useAction, useRead, useText } from "./ui.tsx";
 
@@ -91,8 +92,9 @@ export function Devices({service,sessionId,revision}:{readonly service:ShopServi
     <div className="section-heading"><div><p className="eyebrow">{t("devices")}</p><h1>{t("devicesHelp")}</h1></div></div>
     <div className="devices-grid">
       <div className="panel"><h2>{t("backupTitle")}</h2><SaveBackup service={service} sessionId={sessionId}/></div>
-      <div className="panel"><h2>{t("pairTitle")}</h2><Pair service={service} sessionId={sessionId}/></div>
+      <div className="panel"><h2>{t("pairTitle")}</h2><AddTill service={service} sessionId={sessionId} revision={revision}/></div>
       <div className="panel wide"><h2>{t("exchangeTitle")}</h2><Exchange service={service} sessionId={sessionId} revision={revision}/></div>
+      <div className="panel wide"><h2>{t("syncTitle")}</h2><SyncServer service={service} sessionId={sessionId} revision={revision}/></div>
       <div className="panel wide"><h2>{t("restoreTitle")}</h2><Restore service={service} sessionId={sessionId} onDone={()=>undefined}/></div>
     </div>
   </section>;
@@ -107,6 +109,52 @@ function SaveBackup({service,sessionId}:{service:ShopService;sessionId:string}):
     <label className="check" htmlFor="backup-photos"><input id="backup-photos" type="checkbox" checked={includePhotos} onChange={event=>setIncludePhotos(event.target.checked)}/>{t("includePhotos")}</label>
     <p className="hint">{t("includePhotosHelp")}</p></fieldset>
     <ErrorText message={action.error}/><Saved saved={saved}/><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):t("saveBackup")}</button></form>;
+}
+/** Adding a till: by code through the connected server, or by files when there is no server. */
+function AddTill({service,sessionId,revision}:{service:ShopService;sessionId:string;revision:number}):React.JSX.Element{
+  const {t}=useText(),state=useRead(()=>service.serverState({sessionId}),[service,sessionId,revision]);
+  if(state.data===undefined)return <p className="muted">{t("loadingServer")}</p>;
+  if(state.data.servers.length===0)return <><p className="hint">{t("joinNeedsServer")}</p><Pair service={service} sessionId={sessionId}/></>;
+  return <><JoinByCode service={service} sessionId={sessionId}/><details className="support"><summary>{t("pairByFiles")}</summary><Pair service={service} sessionId={sessionId}/></details></>;
+}
+/**
+ * The owner's side of joining by code (ADR-032): a short code and its QR code, then the new till's name to allow.
+ * Nothing to compare or type on this computer.
+ */
+function JoinByCode({service,sessionId}:{service:ShopService;sessionId:string}):React.JSX.Element{
+  const {t}=useText(),action=useAction();
+  const [authority,setAuthority]=useState(false),[join,setJoin]=useState<JoinCodeView>(),[status,setStatus]=useState<JoinStatusView>(),[qr,setQr]=useState<string>(),[done,setDone]=useState<string>();
+  useEffect(()=>{if(join===undefined){setQr(undefined);return;}let live=true;void QRCode.toString(join.link,{type:"svg",margin:1,errorCorrectionLevel:"M"}).then(svg=>{if(live)setQr(`data:image/svg+xml;base64,${btoa(svg)}`);});return()=>{live=false;};},[join]);
+  // Ask the server every two seconds until the new till asks, the code expires or the owner answers.
+  useEffect(()=>{
+    if(join===undefined||status?.state==="requested"||status?.state==="expired")return;
+    const timer=setInterval(()=>{void service.pollJoinCode({sessionId,joinId:join.joinId}).then(result=>{if(result.ok)setStatus(result.value);else{setStatus({state:"expired"});}});},2000);
+    return()=>clearInterval(timer);
+  },[service,sessionId,join,status]);
+  const start=():void=>{setDone(undefined);setStatus(undefined);void action.run(()=>service.startJoinCode({sessionId,authorityAllowed:authority})).then(value=>{if(value!==undefined)setJoin(value);});};
+  const stop=(refused:boolean):void=>{const current=join;setJoin(undefined);setStatus(undefined);if(current!==undefined)void service.cancelJoinCode({sessionId,joinId:current.joinId});if(refused)setDone(undefined);};
+  const allow=():void=>{if(join===undefined||status?.state!=="requested")return;const label=status.label;void action.run(()=>service.approveJoinCode({sessionId,joinId:join.joinId})).then(value=>{if(value!==undefined){setJoin(undefined);setStatus(undefined);setDone(label);}});};
+  if(join===undefined)return <div className="transfer-step">
+    <p className="hint">{t("joinCodeHelp")}</p>
+    <label className="check"><input type="checkbox" checked={authority} onChange={event=>setAuthority(event.target.checked)}/>{t("allowStaff")}</label>
+    <button className="primary" disabled={action.busy} onClick={start}>{t(action.busy?"preparing":"showJoinCode")}</button>
+    {done!==undefined&&<p role="status" className="notice success">{t("tillJoined")} {done}</p>}
+    <ErrorText message={action.error}/></div>;
+  return <div className="transfer-step join-code">
+    {status?.state==="requested"?<>
+      <p className="notice">{t("allowTillQuestion")} <strong>{status.label}</strong> ({status.platform==="DESKTOP"?t("computer"):t("phone")})</p>
+      <div className="actions"><button className="primary" disabled={action.busy} onClick={allow}>{t(action.busy?"preparing":"allowTill")}</button>
+        <button className="secondary" disabled={action.busy} onClick={()=>stop(true)}>{t("refuseTill")}</button></div>
+      {action.busy&&<p className="hint">{t("preparingShopHelp")}</p>}
+    </>:status?.state==="expired"?<><p className="notice error">{t("joinExpired")}</p><button className="secondary" onClick={()=>{stop(false);}}>{t("close")}</button></>:<>
+      <p className="hint">{t("joinScanHelp")}</p>
+      {qr!==undefined&&<img className="join-qr" src={qr} alt={t("joinQrAlt")}/>}
+      <code className="join-big-code">{join.code}</code>
+      <p className="hint">{t("joinAddress")} <code>{join.url}</code></p>
+      <p className="hint">{t("joinWaiting")}</p>
+      <button className="text-button" onClick={()=>stop(true)}>{t("cancel")}</button>
+    </>}
+    <ErrorText message={action.error}/></div>;
 }
 function Pair({service,sessionId}:{service:ShopService;sessionId:string}):React.JSX.Element{
   const {t}=useText(),action=useAction();
@@ -141,6 +189,50 @@ function Exchange({service,sessionId,revision}:{service:ShopService;sessionId:st
       {(state.data?.batches.length??0)>0&&<><h3>{t("receivedBatches")}</h3><ul className="plain-list">{state.data!.batches.map(batch=><li key={batch.batchId}><span>{new Date(batch.createdAt).toLocaleString(language==="fr"?"fr-FR":"en-GB")}</span>
         <button className="text-button" disabled={action.busy} onClick={()=>{setNotice(undefined);void action.run(()=>service.saveImportReceipt({sessionId,batchId:batch.batchId,password})).then(value=>{if(value!==undefined)done(t(value.saved?"fileSavedNotice":"fileNotSaved"));});}}>{t("saveReceipt")}</button></li>)}</ul></>}
       {(state.data?.diagnostics.length??0)>0&&<><h3>{t("diagnostics")}</h3><ul className="plain-list diagnostics">{state.data!.diagnostics.map((item,index)=><li key={`${item.eventId}-${index}`}><strong>{item.description}</strong><span>{item.action}</span><small>{item.code}</small></li>)}</ul></>}
+    </ReadState>
+    {notice!==undefined&&<p role="status" className="notice success">{notice}</p>}<ErrorText message={action.error}/></div>;
+}
+/** Optional sync server: paste a connection code, check it, connect, then see and drive the automatic exchange. */
+function SyncServer({service,sessionId,revision}:{service:ShopService;sessionId:string;revision:number}):React.JSX.Element{
+  const {t,language}=useText(),action=useAction();
+  const [refresh,setRefresh]=useState(0),[code,setCode]=useState(""),[preview,setPreview]=useState<ServerPreview>(),[notice,setNotice]=useState<string>(),[copied,setCopied]=useState(false);
+  const state=useRead(()=>service.serverState({sessionId}),[service,sessionId,revision,refresh]);
+  const when=(value:string|null):string=>value===null?t("neverSynced"):new Date(value).toLocaleString(language==="fr"?"fr-FR":"en-GB");
+  const grouped=(value:string):string=>value.replace(/(.{4})(?!$)/g,"$1 ");
+  const check=async():Promise<void>=>{setPreview(undefined);setNotice(undefined);const value=await action.run(()=>service.checkServer({sessionId,code}));if(value!==undefined)setPreview(value);};
+  const connect=async():Promise<void>=>{
+    if(preview===undefined)return;
+    const value=await action.run(()=>service.connectServer({sessionId,code}));
+    if(value!==undefined){setPreview(undefined);setCode("");setRefresh(item=>item+1);}
+  };
+  const share=async(text:string):Promise<void>=>{try{await navigator.clipboard.writeText(text);setCopied(true);}catch{setCopied(false);}};
+  // Plain facts an operator needs to help; no keys, codes or business data.
+  const supportText=(server:ServerView):string=>[`kolo ${__KOLO_VERSION__}`,`server ${server.url}`,`fingerprint ${server.fingerprint}`,`connected ${server.connectedAt}${server.automatic?" (shop address)":""}`,
+    `last success ${server.lastSuccessAt??"never"}`,`last attempt ${server.lastAttemptAt??"never"}`,`last error ${server.lastError??"none"}`,`waiting ${server.pending}`,`service ${server.service??"unknown"}${server.paidUntil===null?"":` until ${server.paidUntil}`}`].join("\n");
+  const summary=(value:ServerSyncSummary):string=>`${t("syncDone")} · ${value.pushed} ${t("sentCount")} · ${value.pulled} ${t("receivedCount")}${value.untrusted>0?` · ${value.untrusted} ${t("waitingApprovalCount")}`:""}${value.locked>0?` · ${value.locked} ${t("waitingKeyCount")}`:""}`;
+  return <div className="transfer-step"><p className="hint">{t("syncHelp")}</p><p className="hint">{t("syncPrivacy")}</p>
+    <ReadState loading={state.loading&&state.data===undefined} error={state.error} empty={false} emptyText="" retry={state.retry}>
+      {(state.data?.servers.length??0)>0?<><div className="table-wrap"><table><tbody>{state.data!.servers.map(server=><tr key={server.destinationId}>
+        <td><strong>{server.url}</strong><small><code>{grouped(server.fingerprint)}</code></small>
+          {server.automatic&&<small>{t("connectedAutomatically")}</small>}
+          {server.service==="active"&&server.paidUntil!==null&&<small>{t("servicePaidUntil")} {when(server.paidUntil)}</small>}
+          {server.service==="grace"&&<small className="error">{t("serviceGrace")} {when(server.graceUntil)}</small>}
+          {server.service==="inactive"&&<small className="error">{t("serviceInactive")}</small>}
+          <small>{t("lastSync")} {when(server.lastSuccessAt)} · {server.pending} {t("waitingOperations")}</small>
+          {server.lastError!==null&&<small className="error">{t("lastSyncError")} {when(server.lastAttemptAt)}</small>}</td>
+        <td className="row-actions" aria-busy={action.busy}><button className="text-button" disabled={action.busy} onClick={()=>{setNotice(undefined);void action.run(()=>service.syncServer({sessionId,destinationId:server.destinationId})).then(value=>{setRefresh(item=>item+1);if(value!==undefined)setNotice(summary(value));});}}>{t(action.busy?"syncingServer":"syncNow")}</button>
+          <button className="text-button" disabled={action.busy} onClick={()=>{setNotice(undefined);void action.run(()=>service.disconnectServer({sessionId,destinationId:server.destinationId})).then(()=>setRefresh(item=>item+1));}}>{t("disconnectServer")}</button></td></tr>)}</tbody></table></div>
+        {state.data!.servers.slice(0,1).map(server=><details key={`support-${server.destinationId}`} className="support"><summary>{t("supportDetails")}</summary>
+          <code className="share-code">{supportText(server)}</code><button className="text-button" onClick={()=>{void share(supportText(server));}}>{t("copySupport")}</button></details>)}
+        {state.data!.servers.filter(server=>server.shareCode!==null).slice(0,1).map(server=><div key={server.destinationId} className="file-summary"><strong>{t("shareServerTitle")}</strong><span>{t("shareServerHelp")}</span>
+          <code className="share-code">{server.shareCode}</code><button className="secondary" onClick={()=>{void share(server.shareCode!);}}>{t(copied?"copied":"copyCode")}</button></div>)}</>
+      :<form onSubmit={event=>{event.preventDefault();void (preview===undefined?check():connect());}}><fieldset disabled={action.busy}>
+        <label className="field" htmlFor="sync-code">{t("connectionCode")}<textarea id="sync-code" rows={3} value={code} maxLength={8192} spellCheck={false} autoComplete="off" onChange={event=>{setCode(event.target.value);setPreview(undefined);}}/></label>
+        <p className="hint">{t(state.data?.canEnroll===true?"connectionCodeOwnerHelp":"connectionCodeTillHelp")}</p>
+        {preview!==undefined&&<div className="file-summary"><strong>{t("serverChecked")}</strong><span>{preview.url}</span><span>{t("serverFingerprintShown")} <code>{grouped(preview.fingerprint)}</code></span>
+          {preview.canEnroll&&!preview.hasToken&&!preview.attached&&<span className="error">{t("codeNeedsToken")}</span>}
+          {!preview.canEnroll&&<span>{t("secondaryServerHelp")}</span>}</div>}
+      </fieldset><button className={preview===undefined?"secondary":"primary"} type="submit" disabled={action.busy||code.trim()===""}>{t(action.busy?(preview===undefined?"checkingServer":"connectingServer"):(preview===undefined?"checkServer":"connectServer"))}</button></form>}
     </ReadState>
     {notice!==undefined&&<p role="status" className="notice success">{notice}</p>}<ErrorText message={action.error}/></div>;
 }

@@ -8,7 +8,7 @@ import { DesktopApplication } from "./application.js";
 import { desktopSessionMemory } from "./session-memory.js";
 import { desktopHandlers } from "./handlers.js";
 import { isRendererUrl } from "./renderer-origin.js";
-import { localCredentialsOnDesktop, desktopExchangeCrypto, desktopTransferCrypto } from "./local-credentials.js";
+import { localCredentialsOnDesktop, desktopSealingCrypto, desktopTransferCrypto } from "./local-credentials.js";
 import { pickDesktopTransferFile, saveDesktopTransferFile } from "./transfer-files.js";
 import type { TransferDialogs } from "./transfer.js";
 import { nodeWorkspaceFiles } from "@kolo/core/data/database/node-sqlite";
@@ -82,7 +82,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
         if (window !== undefined && !window.isDestroyed()) window.webContents.send("kolo:changed");
       };
       const serve = async (next: Database): Promise<DesktopApplication> => {
-        const created = new DesktopApplication({ database: next, credentials, newId: randomUUIDv7, now: () => new Date().toISOString() }, desktopExchangeCrypto,
+        const created = new DesktopApplication({ database: next, credentials, newId: randomUUIDv7, now: () => new Date().toISOString() }, desktopSealingCrypto,
           { files: fileSlots!, dialogs, crypto: desktopTransferCrypto, onReset: () => { setImmediate(() => { void resetComputer(); }); }, onActivated: async activated => {
             migrate(activated); const previous = application, previousDatabase = database;
             application = await serve(activated); database = activated;

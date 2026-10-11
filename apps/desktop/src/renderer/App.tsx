@@ -16,11 +16,15 @@ import { LegalDialog, LegalLinks } from "./components/Legal.tsx";
 import type { LegalKind } from "./legal.ts";
 import { call, ErrorText, Field, TextContext, useAction, useText, type Message } from "./components/ui.tsx";
 import { text, type Language } from "./text.ts";
+import { dropNav, saveNavOrder, storedNavOrder, type NavId } from "./nav-order.ts";
 
 /** Reusable DOM application: platform operations enter only through the injected service. */
 export function App({service}:{readonly service:ShopService}):React.JSX.Element{
   const [language,setLanguage]=useState<Language>(()=>{try{return localStorage.getItem("kolo.language")==="en"?"en":"fr";}catch{return "fr";}});
   const [appearance,setAppearance]=useState<Appearance>(storedAppearance),[legal,setLegal]=useState<LegalKind>();
+  const [navOrder,setNavOrder]=useState<NavId[]>(storedNavOrder);
+  // Saved only when the person reorders, so a later default reaches computers that never chose their own.
+  const changeNavOrder=useCallback((order:NavId[]):void=>{setNavOrder(order);saveNavOrder(order);},[]);
   const [view,setView]=useState<WorkspaceView>(),[error,setError]=useState<Message>(),[revision,setRevision]=useState(0);
   const [recovery,setRecovery]=useState<{key:string;sessionId:string}>();
   const refreshSequence=useRef(0),mounted=useRef(false);
@@ -45,7 +49,7 @@ export function App({service}:{readonly service:ShopService}):React.JSX.Element{
           <Workspace service={service} view={view} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})} onLegal={setLegal}/>
           <footer className="entry-legal"><span>kolo {__KOLO_VERSION__} · made by hblabs</span><LegalLinks onOpen={setLegal}/></footer></main>:
           <Shop key={view.sessionId} service={service} view={view} sessionId={view.sessionId} revision={revision} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})}
-            preferences={{appearance,onAppearance:setAppearance,language,onLanguage:setLanguage,onLegal:setLegal}}/>
+            preferences={{appearance,onAppearance:setAppearance,language,onLanguage:setLanguage,onLegal:setLegal,navOrder,onNavOrder:changeNavOrder}}/>
       }
       {view!==undefined&&error&&<div className="connection-error"><ErrorText message={error}/><button className="secondary" onClick={refresh}>{t("retry")}</button></div>}
       {legal!==undefined&&<LegalDialog key={legal} initial={legal} onClose={()=>setLegal(undefined)}/>}
@@ -54,13 +58,16 @@ export function App({service}:{readonly service:ShopService}):React.JSX.Element{
   </TextContext.Provider>;
 }
 function Shop({service,view,sessionId,revision,refresh,onRecoveryKey,preferences}:{service:ShopService;view:WorkspaceView;sessionId:string;revision:number;refresh:()=>void;onRecoveryKey:(key:string,sessionId:string)=>void;preferences:Omit<React.ComponentProps<typeof Settings>,"service"|"sessionId"|"canChangeFiles"|"canViewProducts">}):React.JSX.Element{
-  const {t}=useText(),action=useAction();
+  const {t}=useText(),action=useAction(),[dragging,setDragging]=useState<NavId>();
   const permissions=view.actor!.permissions,canTill=permissions.includes("sales.create")&&permissions.includes("products.view"),canProducts=permissions.includes("products.view"),canReceipts=permissions.includes("sales.view")||permissions.includes("sales.view_own"),canCustomers=permissions.includes("customers.view"),canPurchases=permissions.includes("purchases.view")||permissions.includes("suppliers.view"),canFinance=permissions.includes("finance.accounts.view")&&permissions.includes("cash.view")||permissions.includes("expenses.view"),canReports=permissions.some(permission=>permission.startsWith("reports.")),canAnalytics=permissions.includes("reports.sales"),canStaff=permissions.includes("users.view"),canDevices=view.actor!.isOwner&&permissions.includes("business.settings");
   const [selected,setSelected]=useState<"till"|"products"|"customers"|"purchases"|"finance"|"analytics"|"reports"|"staff"|"devices"|"receipts"|"settings">(canTill?"till":canProducts?"products":"receipts"),[receiptId,setReceiptId]=useState<string>(),[keyForm,setKeyForm]=useState(false),[secret,setSecret]=useState("");
   const section=selected==="till"&&canTill||selected==="products"&&canProducts||selected==="customers"&&canCustomers||selected==="purchases"&&canPurchases||selected==="finance"&&canFinance||selected==="analytics"&&canAnalytics||selected==="reports"&&canReports||selected==="staff"&&canStaff||selected==="devices"&&canDevices||selected==="receipts"&&canReceipts||selected==="settings"?selected:canTill?"till":canProducts?"products":canReceipts?"receipts":undefined;
   return <>
     <aside className="sidebar"><div className="brand">KOLO<span className="brand-mark" aria-hidden="true">.</span></div><div className="shop-label"><span className="eyebrow">{t("local")}</span><strong>{view.shopName}</strong></div>
-      <nav aria-label="KOLO">{([{id:"till",allowed:canTill,mark:"▦"},{id:"products",allowed:canProducts,mark:"▤"},{id:"customers",allowed:canCustomers,mark:"◍"},{id:"purchases",allowed:canPurchases,mark:"⬓"},{id:"finance",allowed:canFinance,mark:"◈"},{id:"analytics",allowed:canAnalytics,mark:"◐"},{id:"reports",allowed:canReports,mark:"▥"},{id:"staff",allowed:canStaff,mark:"◎"},{id:"devices",allowed:canDevices,mark:"⇄"},{id:"receipts",allowed:canReceipts,mark:"▧"},{id:"settings",allowed:true,mark:"⚙"}] as const).filter(item=>item.allowed).map(item=><button className={`nav-item ${section===item.id?"selected":""}`} aria-current={section===item.id?"page":undefined} key={item.id} onClick={()=>{setSelected(item.id);if(item.id==="receipts")setReceiptId(undefined);}}><span aria-hidden="true">{item.mark}</span>{t(item.id)}</button>)}</nav>
+      <nav aria-label="KOLO">{([{id:"till",allowed:canTill,mark:"▦"},{id:"products",allowed:canProducts,mark:"▤"},{id:"customers",allowed:canCustomers,mark:"◍"},{id:"purchases",allowed:canPurchases,mark:"⬓"},{id:"finance",allowed:canFinance,mark:"◈"},{id:"analytics",allowed:canAnalytics,mark:"◐"},{id:"reports",allowed:canReports,mark:"▥"},{id:"staff",allowed:canStaff,mark:"◎"},{id:"devices",allowed:canDevices,mark:"⇄"},{id:"receipts",allowed:canReceipts,mark:"▧"},{id:"settings",allowed:true,mark:"⚙"}] as const).filter(item=>item.allowed).sort((left,right)=>preferences.navOrder.indexOf(left.id)-preferences.navOrder.indexOf(right.id)).map(item=><button className={`nav-item ${section===item.id?"selected":""} ${dragging===item.id?"dragging":""}`} aria-current={section===item.id?"page":undefined} key={item.id}
+        draggable onDragStart={event=>{setDragging(item.id);event.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDragging(undefined)}
+        onDragOver={event=>{if(dragging!==undefined){event.preventDefault();event.dataTransfer.dropEffect="move";}}} onDrop={event=>{event.preventDefault();if(dragging!==undefined)preferences.onNavOrder(dropNav(preferences.navOrder,dragging,item.id));setDragging(undefined);}}
+        onClick={()=>{setSelected(item.id);if(item.id==="receipts")setReceiptId(undefined);}}><span aria-hidden="true">{item.mark}</span>{t(item.id)}</button>)}</nav>
       <div className="sidebar-footer"><span className="status-dot"/>{t("offline")}</div>
     </aside>
     <main id="main-content" tabIndex={-1} className="main-content"><header className="topbar"><span>{view.shopName}</span><div className="topbar-actions"><span className="user-name">{view.actor?.name}</span>{view.actor?.isOwner&&<button className="text-button" onClick={()=>setKeyForm(!keyForm)}>{t("viewKey")}</button>}<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.lock()).then(()=>refresh());}}>{t("lock")}</button></div></header>

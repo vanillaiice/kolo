@@ -24,6 +24,10 @@ import * as reports from "./reports.ts";
 import * as returns from "./returns.ts";
 import * as staff from "./staff.ts";
 import * as transfer from "./transfer.ts";
+import * as sync from "./server-sync.ts";
+import type { SealingCrypto } from "@kolo/core/application/sealed-sync";
+import * as join from "./join.ts";
+import type { SyncTransport } from "@kolo/core/application/server-sync";
 import type { Database } from "@kolo/core/data/database/driver";
 import { migrate } from "@kolo/core/data/database/migrations";
 import { createHash } from "node:crypto";
@@ -70,12 +74,20 @@ export class DesktopApplication implements ShopService {
   private readonly crypto: ExchangeCrypto | undefined;
   readonly #memory: SessionMemory | undefined;
   readonly #preferences: DevicePreferences;
+  readonly #syncTransport: (url: string) => SyncTransport;
+  readonly #autoSync: sync.AutoSync | undefined;
+  readonly #sealingCrypto: SealingCrypto | undefined;
+  /** Joins this window opened; their network sessions end with the signed-in session. */
+  readonly #joins = new Map<string, join.OpenJoin>();
   #remember = false;
-  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void>; readonly onReset?: () => void }, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences()) {
+  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void>; readonly onReset?: () => void }, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences(), syncTransport: (url: string) => SyncTransport = sync.httpTransport) {
     this.#transfer = files; this.#memory = memory; this.#preferences = preferences;
+    // Server sync needs the sealing primitives (X25519, HKDF); file exchange needs only signatures.
+    this.#sealingCrypto = crypto !== undefined && "hkdf" in crypto && "ephemeralAgreement" in crypto ? crypto as SealingCrypto : undefined;
+    this.#syncTransport = syncTransport; this.#autoSync = this.#sealingCrypto === undefined ? undefined : new sync.AutoSync(this.#sealingCrypto, syncTransport);
     this.ports = ports; this.crypto = crypto; this.#host = { ports, actor: (data, required) => this.#actor(data, required) };
     lockWorkspace(ports.database);
-    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority"], () => this.#notify());
+    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority"], () => { this.#autoSync?.soon(); this.#notify(); });
   }
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   async initialize(): Promise<void> {
@@ -103,6 +115,8 @@ export class DesktopApplication implements ShopService {
     try { await this.#track(sealPendingEvents(this.#context, this.crypto)); }
     catch { /* Unsigned committed events remain durable and retry on the next unlocked tick. */ }
     finally { this.#sealing = false; }
+    // Connected servers sync in the background on their own schedule; trading never waits for it.
+    if (!this.#closed) await this.#track(this.#autoSync?.tick(this.#context) ?? Promise.resolve()).catch(() => undefined);
   }
   /** Invalidation-only subscription; observer errors cannot change command success. */
   onChanged(listener: () => void): () => void { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
@@ -674,6 +688,16 @@ export class DesktopApplication implements ShopService {
   saveImportReceipt(input?: unknown): ReturnType<ShopService["saveImportReceipt"]> { return this.#file(host => transfer.saveImportReceipt(host, input)); }
   openImportReceipt(input?: unknown): ReturnType<ShopService["openImportReceipt"]> { return this.#file(host => transfer.openImportReceipt(host, input)); }
   retryExchange(input?: unknown): ReturnType<ShopService["retryExchange"]> { return this.#file(host => transfer.retryExchange(host, input)); }
+  /** Optional sync server; see server-sync.ts. Network work runs in the main process only. */
+  serverState(input: unknown): ReturnType<ShopService["serverState"]> { return this.#sync(host => sync.serverState(host, input)); }
+  checkServer(input: unknown): ReturnType<ShopService["checkServer"]> { return this.#sync(host => sync.checkServer(host, input)); }
+  connectServer(input: unknown): ReturnType<ShopService["connectServer"]> { return this.#sync(host => sync.connectServer(host, input)); }
+  syncServer(input: unknown): ReturnType<ShopService["syncServer"]> { return this.#sync(host => sync.syncServer(host, input)); }
+  disconnectServer(input: unknown): ReturnType<ShopService["disconnectServer"]> { return this.#sync(host => sync.disconnectServer(host, input)); }
+  startJoinCode(input: unknown): ReturnType<ShopService["startJoinCode"]> { return this.#join(host => join.startJoinCode(host, input)); }
+  pollJoinCode(input: unknown): ReturnType<ShopService["pollJoinCode"]> { return this.#join(host => join.pollJoinCode(host, input)); }
+  approveJoinCode(input: unknown): ReturnType<ShopService["approveJoinCode"]> { return this.#join(host => join.approveJoinCode(host, input)); }
+  cancelJoinCode(input: unknown): ReturnType<ShopService["cancelJoinCode"]> { return this.#join(host => join.cancelJoinCode(host, input)); }
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): ReturnType<ShopService["getReceipt"]> {
     return this.#run(() => { const data = object(input, ["sessionId", "saleId"]); return receipt(this.#actor(data), uuid(data["saleId"])); });
@@ -681,6 +705,20 @@ export class DesktopApplication implements ShopService {
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
   listReceipts(input: unknown): ReturnType<ShopService["listReceipts"]> {
     return this.#run(() => { const data = object(input, ["sessionId", "term", "after", "limit"]); return receipts(this.#actor(data), page(data)); });
+  }
+  #sync<T>(work: (host: sync.SyncHost) => Promise<T>): Promise<Result<T>> {
+    return this.#run(() => {
+      const crypto = this.#sealingCrypto;
+      if (crypto === undefined) throw new CommandError("unavailable");
+      return sync.syncTranslated(() => work({ ...this.#host, crypto, transport: this.#syncTransport }));
+    });
+  }
+  #join<T>(work: (host: join.JoinHost) => Promise<T>): Promise<Result<T>> {
+    return this.#run(() => {
+      const crypto = this.#sealingCrypto, files = this.#transfer?.files;
+      if (crypto === undefined || files === undefined) throw new CommandError("unavailable");
+      return sync.syncTranslated(() => transfer.translated(() => work({ ...this.#host, crypto, transport: this.#syncTransport, files, joins: this.#joins })));
+    });
   }
   /** Runs a transfer command against the file host; credential/file work excludes setup, unlock and other file work. */
   #file<T>(work: (host: transfer.TransferHost) => Promise<T>, exclusive = true): Promise<Result<T>> {
@@ -740,7 +778,7 @@ export class DesktopApplication implements ShopService {
   }
   #invalidate(advance = true): void {
     if (advance) this.#epoch++;
-    lockWorkspace(this.ports.database); this.#context = undefined; this.#sessionId = undefined;
+    lockWorkspace(this.ports.database); this.#context = undefined; this.#sessionId = undefined; this.#joins.clear();
     // A checked file is tied to the session that checked it; locking forgets it.
     if (this.#staged !== undefined && this.#staged.kind !== "invite" && this.#staged.kind !== "backup") { this.#staged = undefined; }
   }

@@ -3,6 +3,7 @@ import type { Language } from "../text.ts";
 import { useState } from "react";
 import { ErrorText, Field, useAction, useRead, useText } from "./ui.tsx";
 import { LegalLinks } from "./Legal.tsx";
+import { moveNav, NAV_IDS, type NavId } from "../nav-order.ts";
 import type { LegalKind } from "../legal.ts";
 
 /** Window appearance choice; "system" follows the operating system's light/dark setting. */
@@ -19,10 +20,12 @@ export function applyAppearance(value: Appearance): void {
 }
 
 /** Per-computer display and session preferences, available to every signed-in user. */
-export function Settings({ service, sessionId, canChangeFiles, canViewProducts, appearance, onAppearance, language, onLanguage, onLegal }: {
+export function Settings({ service, sessionId, canChangeFiles, canViewProducts, appearance, onAppearance, language, onLanguage, onLegal, navOrder, onNavOrder }: {
   readonly service: ShopService; readonly sessionId: string; readonly canChangeFiles: boolean; readonly canViewProducts: boolean;
   readonly appearance: Appearance; readonly onAppearance: (value: Appearance) => void;
   readonly language: Language; readonly onLanguage: (value: Language) => void; readonly onLegal: (kind: LegalKind) => void;
+  /** This computer's sidebar order; also changed by dragging menu items. */
+  readonly navOrder: readonly NavId[]; readonly onNavOrder: (order: NavId[]) => void;
 }): React.JSX.Element {
   const { t } = useText(), action = useAction();
   const preferences = useRead(() => service.sessionPreferences({ sessionId }), [service, sessionId]);
@@ -54,6 +57,12 @@ export function Settings({ service, sessionId, canChangeFiles, canViewProducts, 
       <div className="panel"><h2 id="language-title">{t("language")}</h2><p className="hint">{t("languageHelp")}</p>
         <div className="segmented" role="radiogroup" aria-labelledby="language-title">{(["fr", "en"] as const).map(item =>
           <label key={item} className={language === item ? "selected" : ""}><input type="radio" name="language" value={item} checked={language === item} onChange={() => onLanguage(item)}/>{item === "fr" ? "Français" : "English"}</label>)}</div>
+      </div>
+      <div className="panel"><h2 id="menu-order-title">{t("menuOrder")}</h2><p className="hint">{t("menuOrderHelp")}</p>
+        <ol className="menu-order" aria-labelledby="menu-order-title">{navOrder.map((id, index) => <li key={id}><span>{t(id)}</span>
+          <button className="text-button" aria-label={`${t("moveUp")} : ${t(id)}`} disabled={index === 0} onClick={() => onNavOrder(moveNav(navOrder, id, -1))}>↑</button>
+          <button className="text-button" aria-label={`${t("moveDown")} : ${t(id)}`} disabled={index === navOrder.length - 1} onClick={() => onNavOrder(moveNav(navOrder, id, 1))}>↓</button></li>)}</ol>
+        <button className="secondary" disabled={navOrder.every((id, index) => NAV_IDS[index] === id)} onClick={() => onNavOrder([...NAV_IDS])}>{t("resetMenuOrder")}</button>
       </div>
       {canChangeFiles && <ResetPanel service={service} sessionId={sessionId}/>}
       <div className="panel about-panel"><h2>{t("about")}</h2><p className="hint">{t("aboutHelp")}</p>
