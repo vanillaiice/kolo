@@ -21,7 +21,7 @@ export interface RouteMap {
   reports: undefined; report: { readonly kind: ReportKind }; analytics: undefined;
   staff: undefined; staffMember: { readonly userId: string }; staffNew: undefined;
   devices: undefined; backupCreate: undefined; backupRestore: undefined; addTill: undefined; exchangeSend: undefined; exchangeReceive: undefined;
-  exchangeConfirm: undefined; exchangeStatus: undefined; recoveryKey: undefined;
+  exchangeConfirm: undefined; exchangeStatus: undefined; recoveryKey: undefined; serverSync: undefined;
   settings: undefined; about: undefined; reset: undefined;
 }
 export type RouteName = keyof RouteMap;

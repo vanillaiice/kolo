@@ -4,6 +4,11 @@ import { cancelBackupPreview, createBackup, previewBackup, restoreWorkspace, typ
 import { confirmPairing, createPairingInvite, previewPairingInvite, previewPairingRequest } from "@kolo/core/application/pairing";
 import { exchangeDestinations, exchangeDiagnostics, exportBundle, exportReceipt, importBundle, importReceipt, previewBundle, receivedBatches, type BundlePreview } from "@kolo/core/application/file-exchange";
 import { exchangeStatus } from "@kolo/core/application/event-delivery";
+import { serverConnections } from "@kolo/core/application/server-sync";
+import { approveJoin, endJoin, pollJoin, startJoin, type JoinCandidate, type JoinStart } from "@kolo/core/application/join";
+import { syncTransportOnDevice } from "../../data/sync/sync-on-device.ts";
+import { syncFailureKey } from "../../app/failures.ts";
+import { sealingCryptoOnDevice } from "../../data/auth/local-credentials-on-device.ts";
 import { retryDeferred } from "@kolo/core/application/event-application";
 import { ownerRecoveryCode } from "@kolo/core/identity/recovery";
 import { validateLocalSecret } from "@kolo/core/identity/credentials";
@@ -45,10 +50,20 @@ function PreparedFile({ document, onSave, busy }: { readonly document: TransferD
 
 /** Backup & devices: each owner file task on its own screen. */
 export function DevicesScreen(): React.JSX.Element {
-  const { t } = useText(), s = useStyles(), nav = useNav(), { context } = useSession(), revision = useRevision(["authority"]);
+  const { t, language } = useText(), s = useStyles(), nav = useNav(), { context } = useSession(), revision = useRevision(["authority"]);
   const pending = useMemo(() => { try { return exchangeDestinations(context).reduce((sum, peer) => sum + (exchangeStatus(context, peer.id)["pending"] ?? 0), 0); } catch { return 0; } }, [context, revision]);
+  const [server, setServer] = useState<string>();
+  useEffect(() => {
+    let live = true;
+    void serverConnections(context, sealingCryptoOnDevice).then(servers => { if (live) setServer(servers[0] === undefined ? t("serverNotConnected")
+      : t("lastSyncAt", { when: servers[0].lastSuccessAt === null ? t("neverSynced") : formatDate(servers[0].lastSuccessAt, language) })); }, () => undefined);
+    return () => { live = false; };
+  }, [context, revision, language, t]);
   return <Screen title={t("devicesTitle")} onBack={nav.back}>
     <Text style={s.muted}>{t("transferHelp")}</Text>
+    <RowGroup title={t("serverSyncTitle")}>
+      <ListRow title={t("serverSyncTitle")} subtitle={server} onPress={() => nav.push("serverSync")} />
+    </RowGroup>
     <RowGroup title={t("backupTitle")}>
       <ListRow title={t("createBackup")} subtitle={t("createBackupHelp")} onPress={() => nav.push("backupCreate")} />
       <ListRow title={t("restoreBackup")} subtitle={t("restoreBackupHelp")} onPress={() => nav.push("backupRestore")} />
@@ -132,15 +147,64 @@ export function BackupRestoreScreen(): React.JSX.Element {
   </Screen>;
 }
 
-/** Add a till: an invite with its fingerprint, then the new till's request approved with the compared code. */
+/**
+ * Add a till by code (ADR-032): show a code, the new phone types it with the server address, the owner allows it by name.
+ * Needs a connected server; the file steps remain for shops without one.
+ */
+function AddTillByCode({ allowStaff }: { readonly allowStaff: boolean }): React.JSX.Element {
+  const { t } = useText(), s = useStyles(), { colors } = useTheme(), { context, files } = useSession();
+  const [server, setServer] = useState<{ url: string; fingerprint: string; serverDeviceId: string } | null>(), [join, setJoin] = useState<JoinStart>();
+  const [candidate, setCandidate] = useState<JoinCandidate>(), [busy, setBusy] = useState(false), [message, setMessage] = useState<{ tone: "error" | "success" | "warning"; text: string }>();
+  useEffect(() => { void serverConnections(context, sealingCryptoOnDevice).then(list => setServer(list[0] === undefined ? null : { url: list[0].url, fingerprint: list[0].fingerprint, serverDeviceId: list[0].serverDeviceId }), () => setServer(null)); }, [context]);
+  useEffect(() => {
+    if (join === undefined || candidate !== undefined || server == null) return;
+    let live = true;
+    const timer = setInterval(() => {
+      if (Date.parse(join.expiresAt) <= Date.now()) { live = false; clearInterval(timer); setJoin(undefined); setMessage({ tone: "warning", text: t("joinCodeExpired") }); return; }
+      void pollJoin(syncTransportOnDevice(server.url), sealingCryptoOnDevice, join).then(value => { if (live && value !== undefined) setCandidate(value); }, error => { if (live) setMessage({ tone: "error", text: t(syncFailureKey(error)) }); });
+    }, 2000);
+    return () => { live = false; clearInterval(timer); };
+  }, [join, candidate, server, t]);
+  useEffect(() => () => { if (join !== undefined && server != null) void endJoin(context, syncTransportOnDevice(server.url), join, true).catch(() => undefined); }, [join, server, context]);
+  const work = async (task: () => Promise<void>): Promise<void> => { if (busy) return; setBusy(true); setMessage(undefined); try { await task(); } catch (error) { setMessage({ tone: "error", text: t(syncFailureKey(error)) }); } finally { setBusy(false); } };
+  if (server === undefined) return <Working text={t("loading")} />;
+  if (server === null) return <Text style={s.muted}>{t("noServerForCode")}</Text>;
+  const notice = message === undefined ? null : <Notice tone={message.tone} text={message.text} />;
+  if (join === undefined) return <>
+    <Text style={s.muted}>{t("addTillByCodeHelp")}</Text>{notice}
+    <Button label={t("showJoinCode")} busy={busy} onPress={() => { void work(async () => { setCandidate(undefined); setJoin(await startJoin(context, syncTransportOnDevice(server.url), sealingCryptoOnDevice, { ...server, authorityAllowed: allowStaff })); }); }} />
+  </>;
+  if (candidate !== undefined) return <>
+    <Text style={s.body}>{t("allowTillQuestion", { label: candidate.label })}</Text>{notice}
+    <Button label={t("allowTill")} busy={busy} onPress={() => { void work(async () => {
+      await approveJoin(context, syncTransportOnDevice(server.url), sealingCryptoOnDevice, files, join, candidate);
+      await endJoin(context, syncTransportOnDevice(server.url), join, false);
+      setJoin(undefined); setCandidate(undefined); setMessage({ tone: "success", text: t("tillJoinedNotice", { label: candidate.label }) });
+    }); }} />
+    <Button label={t("refuseTill")} variant="secondary" disabled={busy} onPress={() => { void work(async () => { await endJoin(context, syncTransportOnDevice(server.url), join, true); setJoin(undefined); setCandidate(undefined); }); }} />
+  </>;
+  return <>
+    <Text selectable style={[s.mono, { fontSize: 34, fontWeight: "700", letterSpacing: 4, textAlign: "center", color: colors.text, paddingVertical: spacing.md }]}>{join.display}</Text>
+    <Text selectable style={[s.mono, { textAlign: "center" }]}>{server.url}</Text>
+    <Text style={s.muted}>{t("joinCodeWaiting")}</Text>{notice}
+    <Button label={t("cancel")} variant="secondary" onPress={() => { void work(async () => { await endJoin(context, syncTransportOnDevice(server.url), join, true); setJoin(undefined); }); }} />
+  </>;
+}
+
+/** Add a till: by code through the server, or (no internet) an invite file with its fingerprint and the compared code. */
 export function AddTillScreen(): React.JSX.Element {
   const { t } = useText(), s = useStyles(), { colors } = useTheme(), nav = useNav(), { context, files } = useSession(), action = useAction(), io = useFiles();
   const [allowStaff, setAllowStaff] = useState(false), [fingerprint, setFingerprint] = useState<string>(), [document, setDocument] = useState<TransferDocument>();
   const [request, setRequest] = useState<{ text: string; view: Awaited<ReturnType<typeof previewPairingRequest>> }>(), [code, setCode] = useState(""), [password, setPassword] = useState(""), [confirmation, setConfirmation] = useState("");
   const saved = (ok: boolean): void => action.show({ tone: ok ? "success" : "warning", key: ok ? "fileSaved" : "notSaved" });
+  const [byFiles, setByFiles] = useState(false);
   return <Screen title={t("addTill")} onBack={nav.back} footer={action.notice}>
-    <Section title={t("stepInvite")}>
+    <Section title={t("addTillByCode")}>
       <Toggle label={t("allowStaffManagement")} value={allowStaff} onChange={setAllowStaff} />
+      <AddTillByCode allowStaff={allowStaff} />
+    </Section>
+    <Toggle label={t("pairByFiles")} value={byFiles} onChange={setByFiles} />
+    {byFiles && <><Section title={t("stepInvite")}>
       <Button label={t("createInvite")} busy={action.busy} onPress={() => { void action.runAsync(async () => {
         const doc = await createPairingInvite(context, crypto, allowStaff); setDocument(doc); setFingerprint((await previewPairingInvite(doc.text, crypto)).fingerprint); return io.save(doc);
       }, saved); }} />
@@ -160,7 +224,7 @@ export function AddTillScreen(): React.JSX.Element {
         }, saved); }} />
       </>}
     </Section>
-    <PreparedFile document={document} busy={action.busy} onSave={() => { void action.runAsync(() => io.save(document), saved); }} />
+    <PreparedFile document={document} busy={action.busy} onSave={() => { void action.runAsync(() => io.save(document), saved); }} /></>}
   </Screen>;
 }
 

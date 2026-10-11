@@ -8,6 +8,7 @@ import { AccountFormScreen, AccountScreen, AccountsScreen, CashCountScreen, Mone
 import { AnalyticsScreen, ReportScreen, ReportsScreen } from "../reports/reports.tsx";
 import { StaffMemberScreen, StaffNewScreen, StaffScreen } from "../staff/staff.tsx";
 import { AddTillScreen, BackupCreateScreen, BackupRestoreScreen, DevicesScreen, ExchangeConfirmScreen, ExchangeReceiveScreen, ExchangeSendScreen, ExchangeStatusScreen, RecoveryKeyScreen } from "../devices/devices.tsx";
+import { ServerSyncScreen } from "../devices/server-sync.tsx";
 import { AboutScreen, MoreScreen, ResetScreen, SettingsScreen } from "../more/more.tsx";
 
 /** Every route's screen. Screens read their parameters with `useParams`. */
@@ -21,7 +22,7 @@ export const SCREENS: Record<RouteName, ComponentType> = {
   reports: ReportsScreen, report: ReportScreen, analytics: AnalyticsScreen,
   staff: StaffScreen, staffMember: StaffMemberScreen, staffNew: StaffNewScreen,
   devices: DevicesScreen, backupCreate: BackupCreateScreen, backupRestore: BackupRestoreScreen, addTill: AddTillScreen, exchangeSend: ExchangeSendScreen,
-  exchangeReceive: ExchangeReceiveScreen, exchangeConfirm: ExchangeConfirmScreen, exchangeStatus: ExchangeStatusScreen, recoveryKey: RecoveryKeyScreen,
+  exchangeReceive: ExchangeReceiveScreen, exchangeConfirm: ExchangeConfirmScreen, exchangeStatus: ExchangeStatusScreen, recoveryKey: RecoveryKeyScreen, serverSync: ServerSyncScreen,
   settings: SettingsScreen, about: AboutScreen, reset: ResetScreen,
 };
 

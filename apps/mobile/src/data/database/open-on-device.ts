@@ -95,6 +95,11 @@ export function eraseShopsOnDevice():string[]{
   try{const database=openConnection(name);try{for(const key of localSecretKeys(database))keys.add(key);}finally{database.close();}}
   catch{/* An unreadable file still gets deleted; its keys cannot be named. */}
  }
- for(const name of names)if(/^(kolo\.db|workspace-[0-9a-f-]+\.db|stage-[0-9a-f-]+\.db|workspace-slots\.db)(?:-wal|-shm|-journal)?$/.test(name))new File(`file://${root}/${name}`).delete();
+ // List again: closing a database above removes its -wal/-shm files, and deleting a vanished file throws, which used
+ // to fail the boot right after "Reset this phone" (a restart then worked).
+ for(const entry of directory.list()){
+  if(!(entry instanceof File)||!/^(kolo\.db|workspace-[0-9a-f-]+\.db|stage-[0-9a-f-]+\.db|workspace-slots\.db)(?:-wal|-shm|-journal)?$/.test(entry.name))continue;
+  if(entry.exists)entry.delete();
+ }
  return [...keys];
 }

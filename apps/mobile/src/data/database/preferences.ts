@@ -3,7 +3,7 @@ import type { Language } from "../../app/strings.ts";
 import type { Appearance } from "../../components/theme.ts";
 
 /** Device preference names; values never enter business snapshots or events. */
-export type PreferenceKey = "language" | "appearance" | "rememberSession" | "biometricAllowed" | "biometricMembers";
+export type PreferenceKey = "language" | "appearance" | "rememberSession" | "biometricAllowed" | "biometricMembers" | "joinServer";
 
 /** Device preferences survive business restore and never enter business snapshots/events. */
 export interface PreferenceStorage {

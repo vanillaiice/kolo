@@ -3,6 +3,7 @@ import { WorkspaceError } from "@kolo/core/identity/types";
 import { TransferError } from "@kolo/core/backup/types";
 import { PhotoError } from "@kolo/core/data/products/photos";
 import { RuleError } from "@kolo/core/rules/amounts";
+import { SyncTransportError } from "@kolo/core/application/server-sync";
 import { transferErrorKey } from "./identity-errors.ts";
 import type { TextKey, TextValues } from "./strings.ts";
 
@@ -38,4 +39,25 @@ export function nextVersion(stored: string, now = Date.now()): string {
 /** Refuses an edit made from a version that is no longer the stored one. */
 export function requireVersion(stored: { readonly updatedAt: string } | undefined, loaded: string): void {
   if (stored === undefined || stored.updatedAt !== loaded) throw new StaleRecord();
+}
+
+const SYNC_REFUSALS: Readonly<Record<string, TextKey>> = {
+  invalid_connection_code: "invalidConnectionCode", connection_code_used: "connectionCodeUsed", connection_code_expired: "connectionCodeExpired",
+  enrollment_conflict: "enrollmentConflict", shop_suspended: "shopSuspended", shop_removed: "shopRemoved", hosted_service_inactive: "hostedServiceInactive", join_not_found: "joinNotFound", join_conflict: "joinConflict",
+};
+/**
+ * Localized description of a failed sync-server command. Server refusals keep their meaning; anything retryable is
+ * "unreachable", the rest "refused". Response bodies and network details are never shown.
+ */
+export function syncFailureKey(error: unknown): TextKey {
+  if (error instanceof SyncTransportError) return SYNC_REFUSALS[error.code] ?? (error.retry || error.status === 0 ? "serverUnreachable" : "serverRefused");
+  if (error instanceof ExchangeError) {
+    if (error.code === "fingerprint_mismatch") return "fingerprintMismatch";
+    if (error.code === "invalid_destination") return "invalidServerAddress";
+    if (error.code === "untrusted_device") return "serverNotApproved";
+    if (error.code === "permission_denied" || error.code === "locked" || error.code === "scope_mismatch") return failureKey(error);
+    return "serverRefused";
+  }
+  if (error instanceof TransferError && error.code === "authentication_failed") return "joinTampered";
+  return failureKey(error);
 }

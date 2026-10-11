@@ -11,6 +11,7 @@ import type { Database } from "@kolo/core/data/database/driver";
 import type { SnapshotPort } from "@kolo/core/backup/types";
 import { cancelBackupPreview, previewBackup, restoreWorkspace, type BackupPreview } from "@kolo/core/application/backup";
 import { acceptPairingInvite, cancelPairing, completePairing, previewPairingInvite } from "@kolo/core/application/pairing";
+import { JoinByCode } from "./JoinByCode.tsx";
 import { transferCryptoOnDevice as crypto } from "../../data/auth/local-credentials-on-device.ts";
 import { pickTransferFile, saveTransferFile } from "../../data/transfer/files-on-device.ts";
 import { replaceShop } from "../../data/transfer/replace-shop.ts";
@@ -25,7 +26,7 @@ import { spacing, useTheme } from "../../components/theme.ts";
 import { Button, Confirm, Field, ListRow, nextPaint, Notice, Page, RowGroup, Section, Toggle, useStyles, Working } from "../../components/ui.tsx";
 
 type Step =
-  | { readonly name: "welcome" | "unlock" | "recover" | "pending" | "legacy" | "joining" | "import" }
+  | { readonly name: "welcome" | "unlock" | "recover" | "pending" | "legacy" | "joining" | "import" | "joinCode" }
   | { readonly name: "create"; readonly part: 1 | 2 }
   | { readonly name: "recoveryKey"; readonly code: string; readonly context: OperationContext }
   | { readonly name: "backup"; readonly text: string }
@@ -151,7 +152,8 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
 
   switch (step.name) {
     case "welcome": return frame(t("welcomeTitle"), <>
-      <Section title={t("createShop")}><Text style={s.body}>{t("createShopHelp")}</Text><Button label={t("createShop")} onPress={() => go({ name: "create", part: 1 })} /></Section>
+      <Section title={t("joinShopWithCode")}><Text style={s.body}>{t("joinShopWithCodeHelp")}</Text><Button label={t("joinShopWithCode")} onPress={() => go({ name: "joinCode" })} /></Section>
+      <Section title={t("createShop")}><Text style={s.body}>{t("createShopHelp")}</Text><Button label={t("createShop")} variant="secondary" onPress={() => go({ name: "create", part: 1 })} /></Section>
       <Section title={t("importFile")}><Text style={s.body}>{t("importFileHelp")}</Text><Button label={t("importFile")} variant="secondary" onPress={() => go({ name: "import" })} /></Section>
     </>, { intro: t("standaloneHelp"), preferences: true });
 
@@ -285,6 +287,9 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
       <Button label={t("saveRequestFile")} busy={busy} onPress={() => { void run(async () => { await systemUi(() => saveTransferFile(step.document)); setNotice(undefined); }); }} />
       <Button label={t("haveOwnerFile")} variant="secondary" onPress={() => { setPairingCode(step.code); go({ name: "joining" }); }} />
     </Section>);
+
+    case "joinCode": return frame(t("joinShopWithCode"), <JoinByCode ports={ports} files={files} platform={platform} onActivated={onActivated}
+      onCancel={() => { go({ name: "welcome" }); onChanged(); }} />, { back: () => go({ name: "welcome" }) });
 
     case "joining": return frame(t("finishJoining"), <>
       <Section><Text style={s.body}>{t("finishJoiningHelp")}</Text>

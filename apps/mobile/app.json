@@ -47,7 +47,9 @@
           }
         }
       ],
-      "./plugins/with-abi-splits.js"
+      ["expo-camera", { "cameraPermission": "kolo uses the camera to scan the code shown on your shop's main till.", "recordAudioAndroid": false }],
+      "./plugins/with-abi-splits.js",
+      "./plugins/with-lan-http.js"
     ],
     "experiments": {
       "typedRoutes": false

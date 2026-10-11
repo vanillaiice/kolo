@@ -5,6 +5,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import * as SplashScreen from "expo-splash-screen";
 import { currentInstallation, recoverWorkspaceSetup, lockWorkspace, unlockedActor, rememberMember, resumeWorkspace, type RememberedMember } from "@kolo/core/identity/workspace";
 import { sealPendingEvents } from "@kolo/core/application/exchange";
+import { ServerSyncScheduler } from "@kolo/core/application/sync-scheduler";
 import { resumeOwnerRecovery } from "@kolo/core/identity/recovery";
 import { resumeMemberProvisioning } from "@kolo/core/identity/members";
 import { WorkspaceError, type InstallationState, type OperationContext, type WorkspacePorts } from "@kolo/core/identity/types";
@@ -14,7 +15,10 @@ import { subscribeChanges } from "@kolo/core/data/database/changes";
 import type { Database } from "@kolo/core/data/database/driver";
 import type { SnapshotPort } from "@kolo/core/backup/types";
 import { eraseShopsOnDevice, openOnDevice, preferenceStorageOnDevice, type SlotControl } from "../data/database/open-on-device.ts";
-import { localCredentialsOnDevice, newIdOnDevice, exchangeCryptoOnDevice } from "../data/auth/local-credentials-on-device.ts";
+import { localCredentialsOnDevice, newIdOnDevice, exchangeCryptoOnDevice, sealingCryptoOnDevice } from "../data/auth/local-credentials-on-device.ts";
+import { syncTransportOnDevice } from "../data/sync/sync-on-device.ts";
+import { takeJoinServer } from "../data/sync/join-server.ts";
+import { connectServer, previewServer } from "@kolo/core/application/server-sync";
 import { secretStoreOnDevice } from "../data/auth/store-on-device.ts";
 import { sessionMemory } from "../data/auth/session-memory.ts";
 import { biometricUnlock } from "../data/auth/biometric-unlock.ts";
@@ -39,6 +43,8 @@ type Boot = { state: "opening" } | { state: "failed" } |
 const ALL_DOMAINS = ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority"] as const;
 /** Coalescing window after a commit, and the recovery retry while unlocked. */
 const SEAL_DELAY_MS = 400, SEAL_RETRY_MS = 60_000;
+/** How often the server-sync schedule is checked while signed in; the schedule itself decides whether a pass is due. */
+const SYNC_TICK_MS = 15_000;
 
 /**
  * With "Stay signed in" on (the default, as on the desktop) the last user stays signed in across
@@ -158,6 +164,27 @@ function AppContent(): React.JSX.Element {
     const retry = setInterval(schedule, SEAL_RETRY_MS);
     schedule();
     return () => { disposed = true; unsubscribe(); clearInterval(retry); if (timer !== undefined) clearTimeout(timer); };
+  }, [unlocked, boot.state]);
+
+  // Optional server sync while signed in and in the foreground: every minute, soon after a local change and on return to
+  // the app. It needs shop-settings access and does nothing until a server is connected or the owner shares one.
+  useEffect(() => {
+    if (unlocked === undefined || boot.state !== "ready") return;
+    const { context } = unlocked, database = activeDatabase.current!;
+    const scheduler = new ServerSyncScheduler(sealingCryptoOnDevice, syncTransportOnDevice);
+    let disposed = false;
+    const tick = (): void => { if (!disposed && AppState.currentState === "active") void scheduler.tick(context).catch(() => undefined); };
+    const unsubscribe = subscribeChanges(database, ALL_DOMAINS, () => scheduler.soon());
+    const appState = AppState.addEventListener("change", state => { if (state === "active") { scheduler.soon(); setTimeout(tick, 5_500); } });
+    const timer = setInterval(tick, SYNC_TICK_MS);
+    // Just joined by code: connect to the server the phone joined through, then sync as usual.
+    const joined = takeJoinServer();
+    if (joined !== undefined) void (async () => {
+      const transport = syncTransportOnDevice(joined.url), fingerprint = joined.fingerprint ?? (await previewServer(transport, sealingCryptoOnDevice)).fingerprint;
+      await connectServer(context, transport, { url: joined.url, fingerprint, source: "shop" }, sealingCryptoOnDevice);
+    })().catch(() => undefined).finally(tick);
+    else tick();
+    return () => { disposed = true; unsubscribe(); appState.remove(); clearInterval(timer); };
   }, [unlocked, boot.state]);
 
   // A replaced database is closed only after the screens that used it have unmounted: a query on a closed
