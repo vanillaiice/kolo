@@ -421,7 +421,7 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     if (current !== null) assert.ok((await evaluate<{ name: string }[]>("window.kolo.savedShops().then(result=>result.value)")).some(item => item.name === current), "previous shop kept");
     // Open the restored shop and capture the busiest lists for layout review.
     await fill("#local-secret", "135790"); await submit("#local-secret"); await wait("document.querySelector('.nav-item')!==null", "restored shop opens");
-    for (const [index, name] of [[3, "purchases"], [8, "receipts"], [1, "products"]] as const) {
+    for (const [index, name] of [[3, "purchases"], [9, "receipts"], [1, "products"]] as const) {
       await evaluate(`document.querySelectorAll('.nav-item')[${index}].click()`); await wait(`${visible("tbody tr")}.length>3`, `${name} rows`);
       if (name !== "products") {
         // Visited sections stay mounted but hidden; measure the visible one.
@@ -432,5 +432,30 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
       await snapshot(`restored-${name}`);
     }
     process.stdout.write(`${current === null ? "Fresh installation" : `Login page of ${current}`} restored ${shop} from a supplied backup\n`);
+  } else if (phase === "readme-screenshots") {
+    // Runs after restore-file on the same profile: English, light theme, a till with a filled cart, then the busiest screens.
+    nativeTheme.themeSource = "light";
+    await wait("document.querySelector('#local-secret')!==null || document.querySelector('.nav-item')!==null", "restored shop reopens");
+    if (await evaluate<boolean>("document.querySelector('#local-secret')!==null")) {
+      await fill("#local-secret", "135790"); await submit("#local-secret"); await wait("document.querySelector('.nav-item')!==null", "restored shop opens");
+    }
+    await clickVisible(".language-switch button", "EN"); await wait(`${visible(".nav-item")}.some(element=>element.textContent.includes("Till"))`, "English labels");
+    await navigate("Till"); await wait(`${visible(".product-tile")}.length>8`, "till products");
+    for (const index of [0, 2, 5, 7]) { await evaluate(`${visible(".product-tile")}[${index}].click()`); await new Promise(resolve => setTimeout(resolve, 300)); }
+    await wait(`${visible(".cart-line")}.length>=3`, "cart lines");
+    await evaluate("document.activeElement?.blur()"); await snapshot("desktop-till");
+    nativeTheme.themeSource = "dark"; await wait("window.matchMedia('(prefers-color-scheme: dark)').matches"); await snapshot("desktop-till-dark");
+    nativeTheme.themeSource = "light"; await wait("!window.matchMedia('(prefers-color-scheme: dark)').matches");
+    for (const [label, name] of [["Analytics", "analytics"], ["Reports", "reports"], ["Products & stock", "products"]] as const) {
+      await navigate(label); await wait(`${visible(".section-heading h1")}.length>0`, `${name} heading`);
+      // The demo history ends before today, so reports show the month rather than the default day.
+      if (name === "reports") await clickVisible("button", "This month");
+      // Charts and report totals load asynchronously after the section mounts.
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Analytics leads with filters and totals; scroll so the first chart shows as well.
+      await evaluate(name === "analytics" ? "window.scrollTo(0, 230)" : "window.scrollTo(0, 0)");
+      await snapshot(`desktop-${name}`);
+    }
+    process.stdout.write("README screenshots captured\n");
   } else throw new Error("unknown workflow smoke phase");
 }

@@ -4,6 +4,31 @@ KOLO helps small and medium shops run the business day: selling, stock, customer
 credit, suppliers, cash and reports. It is built for shops, supermarkets, boutiques,
 pharmacies and wholesalers in Cameroon and across Africa.
 
+## Screenshots
+
+### Desktop
+
+![The till with a sale in progress](docs/screenshots/desktop-till.png)
+
+| Analytics | Products and stock |
+| --- | --- |
+| ![Analytics: revenue, profit and sales over time](docs/screenshots/desktop-analytics.png) | ![Products and stock list](docs/screenshots/desktop-products.png) |
+
+<details><summary>Dark theme</summary>
+
+![The till in the dark theme](docs/screenshots/desktop-till-dark.png)
+
+</details>
+
+### Android
+
+| Sell | Cart | Products |
+| --- | --- | --- |
+| ![Sell with two products in the cart](docs/screenshots/mobile-sell-cart.png) | ![Cart with quantities, customer and total](docs/screenshots/mobile-cart.png) | ![Products list with stock](docs/screenshots/mobile-products.png) |
+
+All images show the demo shop. Desktop images are regenerated with
+`node scripts/capture-desktop-screenshots.mjs`.
+
 ## What it does
 
 - **Sell** at the till by searching products or entering their barcode, with discounts,
