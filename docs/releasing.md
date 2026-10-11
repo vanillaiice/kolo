@@ -1,36 +1,44 @@
 # Releasing KOLO
 
-Desktop and Android version separately, so each has its own tag prefix. Releases follow
-the Rebar Studio pattern: a pushed tag builds in CI into a **draft** GitHub pre-release,
-which you review and publish by hand.
+Each KOLO release uses one shared `vX.Y.Z` tag and one GitHub pre-release for Windows,
+Linux and Android. The release version comes from the root `package.json`; desktop and
+Android retain their own app versions, which appear in filenames and release notes.
 
 ## A release
 
-1. Make sure `master` is green (Active workspaces and Desktop Windows acceptance).
-2. Bump the version, commit `chore: bump desktop to vX.Y.Z` (and/or mobile), and tag:
-   - Desktop: `apps/desktop/package.json`, then `git tag -a desktop-vX.Y.Z -m "KOLO desktop vX.Y.Z"`.
-   - Android: `apps/mobile/package.json` and `app.json` (`expo.version`, and raise
-     `android.versionCode`), then `git tag -a mobile-vX.Y.Z -m "KOLO mobile vX.Y.Z"`.
-   - Run `npm install --package-lock-only` so the lockfile carries the new version.
-3. Push the commit, then the tag: `git push origin master desktop-vX.Y.Z`.
-4. **Desktop release** builds Linux (AppImage, deb) and Windows (NSIS installer, portable),
-   runs the checks and the packaged Windows workflow, and uploads the installers, update
-   files (`latest*.yml`) and `SHA256SUMS-*.txt` to the draft. Android is built locally
-   instead (below); pushing a `mobile-v*` tag starts nothing.
-5. Check the draft, write its notes, publish it. Releases are pre-releases while KOLO is in beta.
+1. Run `npm run check` and the manual **Desktop Windows acceptance** workflow.
+2. Bump the root `package.json` release version. Bump changed apps as needed:
+   desktop in `apps/desktop/package.json`; Android in `apps/mobile/package.json` and
+   `app.json` (`expo.version`, and raise `android.versionCode`). Run
+   `npm install --package-lock-only` and commit the changes.
+3. Tag that commit: `git tag -a vX.Y.Z -m "KOLO vX.Y.Z"`, then
+   `git push origin master vX.Y.Z`.
+4. **Desktop release (shared KOLO release)** builds Linux (AppImage, deb) and Windows
+   (NSIS installer, portable), runs the checks and packaged Windows smoke, and uploads
+   installers, update metadata and checksums to the shared draft.
+5. Run `make release-android` from the same tagged clean checkout. Android builds locally
+   because a cold CI runner needs over 40 minutes to compile native modules. Alternatively,
+   run the manual **Android release** workflow on the shared tag.
+6. The last uploader automatically publishes the pre-release once every Windows, Linux
+   and Android installer, update file and checksum file is present. Until then it stays
+   draft and the publish step lists missing files. Published releases are never overwritten.
+
+Manual workflow runs on a branch produce Actions artifacts only. Old `desktop-v*` and
+`mobile-v*` tags remain historical; new releases use only the shared `v*` prefix.
 
 ## Local releases
 
 `make release-android`, `make release-linux`, `make release-windows` (through wine), or
-`make release` for all three, build on this machine and upload to the draft release
-(`scripts/release.mjs`). Each refuses to run unless the tree is clean and the version tag points
-at HEAD and is already on origin, creates the draft when missing, never touches a published
-release, and uploads only this version's files with their `SHA256SUMS-*.txt`.
+`make release` for all three build locally and upload to the same release
+(`scripts/release.mjs`). Each requires a clean tree with the shared root-version tag at
+HEAD and on origin. Uploads contain only the selected app version's files and checksums.
+The draft is created when missing; after each upload the release is published if complete.
 
-Android is always released this way: a cold CI runner needs over 40 minutes for the native
-modules. The manual **Android release** workflow remains for a CI-built artifact. Desktop tags
-still build in CI, which also runs the packaged Windows acceptance; a local desktop upload
-replaces files of the same name in that draft.
+Desktop tags still build in CI and run the packaged Windows smoke; local Windows builds
+skip that acceptance. Do not run local and CI uploads for the same platform concurrently.
+To retry publication after a completed upload, run `node scripts/release-github.mjs publish`
+from the tagged checkout. The publication gate is covered by
+`node --test scripts/release-info.test.mjs`.
 
 ## Local builds
 
@@ -64,6 +72,6 @@ Rebar Studio's releasing guide (SignPath Foundation, Azure Trusted Signing, an O
 The APK uses generated test signing; a Play Store identity is not configured.
 
 KOLO has no in-app updater: users install the next version over the old one (see
-[desktop release](implementation/desktop-release.md)). The draft carries `latest*.yml` so an
-updater can be added later; electron-updater would need the desktop tags without the
-`desktop-` prefix or a custom provider, and public releases.
+[desktop release](implementation/desktop-release.md)). The release carries `latest*.yml` so an
+updater can be added later. Shared tags use the standard `v` prefix; an updater would
+still need to select the desktop assets from the combined pre-release.

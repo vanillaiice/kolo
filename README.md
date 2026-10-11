@@ -26,8 +26,11 @@ pharmacies and wholesalers in Cameroon and across Africa.
 | --- | --- | --- |
 | ![Sell with two products in the cart](docs/screenshots/mobile-sell-cart.png) | ![Cart with quantities, customer and total](docs/screenshots/mobile-cart.png) | ![Products list with stock](docs/screenshots/mobile-products.png) |
 
-All images show the demo shop. Desktop images are regenerated with
-`node scripts/capture-desktop-screenshots.mjs`.
+All images show the demo shop. Regenerate desktop images with
+`node scripts/capture-desktop-screenshots.mjs`. For Android, connect the demo phone,
+open Alimentation Chez Mama Ngono in English on Sell with an empty cart, and run
+`node scripts/capture-mobile-screenshots.mjs`. The mobile script selects the light
+theme and adds two demo products without completing a sale.
 
 ## What it does
 

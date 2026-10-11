@@ -1,10 +1,11 @@
 /**
- * Build one platform locally and upload it to its draft GitHub pre-release (docs/releasing.md).
+ * Build one platform locally and upload it to the shared GitHub pre-release (docs/releasing.md).
  * Usage: node scripts/release.mjs <android|linux|windows>
  *
- * The working tree must be clean and the version tag (mobile-vX.Y.Z or desktop-vX.Y.Z) must
+ * The working tree must be clean and the release tag (vX.Y.Z) must
  * point at HEAD and already be on origin, so the pushed commit passed the pre-push check.
- * The draft is created when missing; a published release is never modified.
+ * The draft is created when missing and published once every target is present.
+ * A published release is never modified.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -15,18 +16,15 @@ const root = resolve(import.meta.dirname, "..");
 const platform = process.argv[2];
 const json = path => JSON.parse(readFileSync(join(root, path), "utf8"));
 const targets = {
-  android: { version: () => json("apps/mobile/app.json").expo.version, prefix: "mobile-v", directory: "release/mobile", title: "KOLO Android",
+  android: { version: () => json("apps/mobile/app.json").expo.version, directory: "release/mobile",
     build: ["npm", ["run", "build:mobile:android"]], sums: "SHA256SUMS-android.txt", hashed: name => name.endsWith(".apk"),
-    uploads: (name, version) => /^KOLO-.+-android-(arm64-v8a|armeabi-v7a|universal)\.apk$/.test(name) && name.startsWith(`KOLO-${version}-android-`),
-    notes: "Android test build with generated test signing: install by allowing unknown sources. Not a Play Store build. Most phones: android-arm64-v8a. Older or Android Go phones: android-armeabi-v7a. Not sure: android-universal (larger, works everywhere). KOLO shows its type in Settings → About." },
-  linux: { version: () => json("apps/desktop/package.json").version, prefix: "desktop-v", directory: "release/desktop", title: "KOLO Desktop",
+    uploads: (name, version) => /^KOLO-.+-android-(arm64-v8a|armeabi-v7a|universal)\.apk$/.test(name) && name.startsWith(`KOLO-${version}-android-`) },
+  linux: { version: () => json("apps/desktop/package.json").version, directory: "release/desktop",
     build: ["npm", ["run", "dist:desktop:linux"]], sums: "SHA256SUMS-linux.txt", hashed: name => /\.(AppImage|deb)$/.test(name),
-    uploads: (name, version) => name.startsWith(`KOLO-${version}-linux-`) || name === "latest-linux.yml",
-    notes: "Windows and Linux desktop. Unsigned builds: Windows SmartScreen warns until signing is configured." },
-  windows: { version: () => json("apps/desktop/package.json").version, prefix: "desktop-v", directory: "release/desktop", title: "KOLO Desktop",
+    uploads: (name, version) => name.startsWith(`KOLO-${version}-linux-`) || name === "latest-linux.yml" },
+  windows: { version: () => json("apps/desktop/package.json").version, directory: "release/desktop",
     build: ["npm", ["run", "dist:desktop:win"]], sums: "SHA256SUMS-windows.txt", hashed: name => name.endsWith(".exe"),
-    uploads: (name, version) => name.startsWith(`KOLO-${version}-win-`) || name === "latest.yml",
-    notes: "Windows and Linux desktop. Unsigned builds: Windows SmartScreen warns until signing is configured." },
+    uploads: (name, version) => name.startsWith(`KOLO-${version}-win-`) || name === "latest.yml" },
 };
 const target = targets[platform];
 if (target === undefined) { process.stderr.write(`Usage: node scripts/release.mjs <${Object.keys(targets).join("|")}>\n`); process.exit(2); }
@@ -40,7 +38,7 @@ function run(command, args, options = {}) {
 const output = (command, args) => run(command, args, { capture: true }).stdout.trim();
 function fail(message) { process.stderr.write(`${message}\n`); process.exit(1); }
 
-const version = target.version(), tag = `${target.prefix}${version}`;
+const version = target.version(), tag = `v${json("package.json").version}`;
 if (output("git", ["status", "--porcelain"]) !== "") fail("The working tree has changes; release from a clean checkout.");
 if (run("git", ["rev-parse", "-q", "--verify", `refs/tags/${tag}`], { capture: true, allowFailure: true }).status !== 0) fail(`Tag ${tag} does not exist; bump the version and tag first.`);
 if (output("git", ["rev-list", "-n", "1", tag]) !== output("git", ["rev-parse", "HEAD"])) fail(`${tag} is not HEAD; check out the tag before releasing.`);
@@ -61,6 +59,7 @@ const sums = hashed.map(name => `${createHash("sha256").update(readFileSync(join
 writeFileSync(join(directory, target.sums), sums);
 process.stdout.write(sums);
 
-if (existing.status !== 0) run("gh", ["release", "create", tag, "--draft", "--prerelease", "--verify-tag", "--title", `${target.title} ${version}`, "--notes", target.notes]);
+run("node", ["scripts/release-github.mjs", "ensure"]);
 run("gh", ["release", "upload", tag, ...[...built, target.sums].map(name => join(directory, name)), "--clobber"]);
-process.stdout.write(`${platform} ${version} uploaded to the draft release ${tag}\n`);
+process.stdout.write(`${platform} ${version} uploaded to the shared release ${tag}\n`);
+run("node", ["scripts/release-github.mjs", "publish"]);

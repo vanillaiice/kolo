@@ -421,8 +421,10 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     if (current !== null) assert.ok((await evaluate<{ name: string }[]>("window.kolo.savedShops().then(result=>result.value)")).some(item => item.name === current), "previous shop kept");
     // Open the restored shop and capture the busiest lists for layout review.
     await fill("#local-secret", "135790"); await submit("#local-secret"); await wait("document.querySelector('.nav-item')!==null", "restored shop opens");
-    for (const [index, name] of [[3, "purchases"], [9, "receipts"], [1, "products"]] as const) {
-      await evaluate(`document.querySelectorAll('.nav-item')[${index}].click()`); await wait(`${visible("tbody tr")}.length>3`, `${name} rows`);
+    await clickVisible(".language-switch button", "EN");
+    await wait(`${visible(".nav-item")}.some(element=>element.textContent.includes("Till"))`, "English labels");
+    for (const [label, name] of [["Purchases", "purchases"], ["Receipts", "receipts"], ["Products & stock", "products"]] as const) {
+      await navigate(label); await wait(`${visible("tbody tr")}.length>3`, `${name} rows`);
       if (name !== "products") {
         // Visited sections stay mounted but hidden; measure the visible one.
         const widths = await evaluate<[number, number]>(`[${visible(".record-layout .panel")}[0].getBoundingClientRect().width,${visible(".workspace-content")}[0].getBoundingClientRect().width]`);

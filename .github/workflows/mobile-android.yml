@@ -1,11 +1,14 @@
 # Android releases are built locally (docs/releasing.md): a cold runner spends over 40 minutes
 # compiling the native modules. This manual workflow still builds the test-signed APK as an
-# artifact, or a draft release when run on a mobile-vX.Y.Z tag.
+# artifact, or a draft release when run on a shared vX.Y.Z tag.
 name: Android release
 on:
   workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: kolo-release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   android:
     runs-on: ubuntu-latest
@@ -25,11 +28,11 @@ jobs:
           # The default also installs the obsolete `tools` package, which current sdkmanager lacks.
           packages: platform-tools
       - run: npm ci
-      - name: Check the tag matches the app version
-        if: startsWith(github.ref, 'refs/tags/mobile-v')
+      - name: Check the tag matches the release version
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: test "$RELEASE_TAG" = "mobile-v$(node -p "require('./apps/mobile/app.json').expo.version")"
+        run: test "$RELEASE_TAG" = "v$(node -p "require('./package.json').version")"
       - run: npm run check
       - run: npm run build:mobile:android
       - name: Hash the APK
@@ -42,13 +45,11 @@ jobs:
             release/mobile/*.apk
             release/mobile/SHA256SUMS-android.txt
       - name: Upload to a draft release
-        if: startsWith(github.ref, 'refs/tags/mobile-v')
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          VERSION=${RELEASE_TAG#mobile-v}
-          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" --draft --prerelease --verify-tag \
-            --title "KOLO Android $VERSION" --notes "Android test build with generated test signing: install by allowing unknown sources. Not a Play Store build."
-          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = "true"
+          node scripts/release-github.mjs ensure
           gh release upload "$RELEASE_TAG" release/mobile/*.apk release/mobile/SHA256SUMS-android.txt --clobber
+          node scripts/release-github.mjs publish

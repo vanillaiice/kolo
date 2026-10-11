@@ -30,8 +30,10 @@ do not promise binary downgrade after a schema upgrade. Retain the pre-upgrade b
 and previous installer for a separately verified recovery procedure.
 
 The release workflow and tagging steps are in [releasing](../releasing.md). A
-`desktop-vVERSION` tag builds Linux and Windows into one draft pre-release with SHA-256
-sums; manual dispatch builds artifacts only. It never publishes the draft.
+`vVERSION` tag (matching the root package version) builds Linux and Windows into the
+shared KOLO draft with SHA-256 sums. Once Android and every desktop target are uploaded,
+the shared release is automatically published as a pre-release. Manual branch dispatch
+builds Actions artifacts only.
 
 Signing uses `CSC_LINK` and `CSC_KEY_PASSWORD` when configured; otherwise builds are
 unsigned test artifacts. A production signing provider/certificate is not configured

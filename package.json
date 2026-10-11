@@ -1,6 +1,6 @@
 {
   "name": "kolo",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "license": "GPL-3.0-only",
   "type": "module",
@@ -18,7 +18,8 @@
     "build": "npm run build:packages && npm run build -w @kolo/admin && npm run build -w @kolo/server && npm run build -w @kolo/desktop",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
     "test": "npm run build:packages && npm run test --workspaces --if-present",
-    "check": "npm run boundaries && npm run typecheck && npm test && npm run docs:check && npm run build",
+    "check": "npm run boundaries && npm run typecheck && npm test && npm run test:release && npm run docs:check && npm run build",
+    "test:release": "node --test scripts/release-info.test.mjs",
     "boundaries": "node scripts/check-boundaries.mjs",
     "docs:api": "node scripts/document-api.mjs",
     "docs:check": "node scripts/document-api.mjs --check && node scripts/check-doc-links.mjs",

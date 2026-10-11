@@ -5,7 +5,7 @@
  * cannot resize the window away from its default 1280×850, rendered at 2× for sharp images.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, renameSync, rmSync, mkdirSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, rmSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -22,6 +22,7 @@ function run(command, args, env = {}) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} exited with ${result.status}`);
 }
 try {
+  run("npm", ["run", "build", "-w", "@kolo/desktop"]);
   run("npm", ["run", "demo:desktop", "--", join(work, "demo"), "60"]);
   const backup = join(work, "demo", readdirSync(join(work, "demo")).find(name => name.endsWith(".kolo-backup.json")));
   mkdirSync(profile);
@@ -31,6 +32,6 @@ try {
     run(electron, ["apps/desktop", "--workflow-smoke", ...(xvfb ? ["--ozone-platform=x11", "--force-device-scale-factor=2"] : [])], { ...env, ...screen, KOLO_DESKTOP_SMOKE_PHASE: phase });
   }
   mkdirSync(output, { recursive: true });
-  for (const name of readdirSync(shots).filter(name => name.startsWith("desktop-"))) renameSync(join(shots, name), join(output, name));
+  for (const name of ["desktop-till", "desktop-till-dark", "desktop-analytics", "desktop-products"]) cpSync(join(shots, `${name}.png`), join(output, `${name}.png`));
   process.stdout.write(`Desktop screenshots written to ${output}\n`);
 } finally { server?.kill(); rmSync(work, { recursive: true, force: true }); }
