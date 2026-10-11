@@ -298,6 +298,6 @@ it("the server keeps one identity across restarts and creates it with owner-only
   try {
     const path = join(directory, "key.json"), first = loadServerKey(path), second = loadServerKey(path);
     assert.equal(first.deviceId, second.deviceId); assert.equal(first.publicKey, second.publicKey);
-    assert.equal(first.fingerprint, second.fingerprint); assert.equal(statSync(path).mode & 0o777, 0o600);
+    assert.equal(first.fingerprint, second.fingerprint); if (process.platform !== "win32") assert.equal(statSync(path).mode & 0o777, 0o600, "owner-only on POSIX; Windows has no file modes");
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
