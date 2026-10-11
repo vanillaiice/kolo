@@ -19,24 +19,18 @@ which you review and publish by hand.
    instead (below); pushing a `mobile-v*` tag starts nothing.
 5. Check the draft, write its notes, publish it. Releases are pre-releases while KOLO is in beta.
 
-## Android release (local)
+## Local releases
 
-A cold CI runner needs over 40 minutes for the native modules, so the APK is built here:
+`make release-android`, `make release-linux`, `make release-windows` (through wine), or
+`make release` for all three, build on this machine and upload to the draft release
+(`scripts/release.mjs`). Each refuses to run unless the tree is clean and the version tag points
+at HEAD and is already on origin, creates the draft when missing, never touches a published
+release, and uploads only this version's files with their `SHA256SUMS-*.txt`.
 
-```sh
-git push origin master mobile-vX.Y.Z
-ANDROID_HOME=~/Android/Sdk npm run build:mobile:android
-cd release/mobile && sha256sum KOLO-X.Y.Z-android-test.apk > SHA256SUMS-android.txt && cd -
-gh release create mobile-vX.Y.Z --draft --prerelease --verify-tag --title "KOLO Android X.Y.Z" \
-  --notes "Android test build with generated test signing: install by allowing unknown sources. Not a Play Store build."
-gh release upload mobile-vX.Y.Z release/mobile/KOLO-X.Y.Z-android-test.apk release/mobile/SHA256SUMS-android.txt
-```
-
-Build from a clean checkout of the tag. The manual **Android release** workflow remains for a
-CI-built artifact.
-
-The tag must match the app version; the workflow stops otherwise. Running either workflow
-by hand builds artifacts without a release.
+Android is always released this way: a cold CI runner needs over 40 minutes for the native
+modules. The manual **Android release** workflow remains for a CI-built artifact. Desktop tags
+still build in CI, which also runs the packaged Windows acceptance; a local desktop upload
+replaces files of the same name in that draft.
 
 ## Local builds
 

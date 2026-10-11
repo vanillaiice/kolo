@@ -1,4 +1,5 @@
-.PHONY: help install check test typecheck build bundle-client docs dev-mobile dev-desktop dev-server db-up db-down
+.PHONY: help install check test typecheck build bundle-client docs dev-mobile dev-desktop dev-server db-up db-down \
+	release release-android release-desktop release-linux release-windows
 COMPOSE = docker compose -f infrastructure/docker-compose.yml
 help: ## List development commands
 	@awk -F ':.*?## ' '/^[a-z-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' Makefile
@@ -26,3 +27,11 @@ db-up: ## Start development PostgreSQL on localhost:5433
 	$(COMPOSE) up -d --wait
 db-down: ## Stop development PostgreSQL while retaining its data
 	$(COMPOSE) down
+release: release-android release-desktop ## Build every platform locally and upload to the draft releases
+release-android: ## Build the APK and upload it to the mobile-vX.Y.Z draft
+	node scripts/release.mjs android
+release-desktop: release-linux release-windows ## Build Linux and Windows and upload to the desktop-vX.Y.Z draft
+release-linux: ## Build the AppImage and deb and upload them to the desktop-vX.Y.Z draft
+	node scripts/release.mjs linux
+release-windows: ## Build the Windows installers through wine and upload them to the desktop-vX.Y.Z draft
+	node scripts/release.mjs windows
