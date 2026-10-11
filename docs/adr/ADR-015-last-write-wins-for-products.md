@@ -13,7 +13,7 @@ goes to −1.
 
 Products are different in kind. A product is *state*, not an event. Two devices
 can both edit the price of the same rice while offline, and unlike two sales,
-these cannot both stand — the product has one price. One edit has to win.
+these cannot both stand: the product has one price. One edit has to win.
 
 "Last write wins" sounds like it settles the question. It does not, on its own,
 because it leaves two things unspecified, and both matter here:
@@ -26,7 +26,7 @@ because it leaves two things unspecified, and both matter here:
 The second is where the real hazard lies. Devices apply events in whatever
 order they receive them, and a device that syncs after a week receives them in
 a different order from one that syncs hourly. If a tie is broken by arrival
-order — "the one I saw last" — then two devices holding the same two edits can
+order ("the one I saw last"), then two devices holding the same two edits can
 end up with **different prices**, permanently, with no error anywhere and
 nothing to detect it. Sync would have converged on disagreement.
 
@@ -72,11 +72,11 @@ principle the ledger already follows in keeping `occurred_at` apart from
 **A vector clock or CRDT** converges without trusting clocks at all, and is the
 technically superior answer. It is rejected as disproportionate. A per-field
 CRDT for a product is a large amount of machinery, and a shopkeeper cannot
-interpret its output — "both prices are live" is not an answer a till can act
+interpret its output: "both prices are live" is not an answer a till can act
 on. The spec asks for last-write-wins; this is last-write-wins made
 deterministic, not replaced.
 
-**Field-level merge** — take the newest name and the newest price separately —
+**Field-level merge** (take the newest name and the newest price separately)
 was considered and rejected. It can produce a product that no one ever
 entered: one person's name beside another's price. A product edited as a whole
 should land as a whole.
@@ -89,7 +89,7 @@ mis-orders every offline edit rather than only those from a broken device. It
 argues for surfacing clock skew to the user, which is not in this decision.
 
 Ties break toward the higher device identifier, which is arbitrary. It must be
-*deterministic*, not fair, and no device can influence which it gets — the
+*deterministic*, not fair, and no device can influence which it gets; the
 identifiers are UUIDv7 generated at registration.
 
 `updated_by_device` is nullable on rows that predate this decision, and a null
@@ -97,6 +97,6 @@ sorts below any device, so an edit from a real device always beats one from
 before the column existed. That is the right way round: those rows are older.
 
 The rule is written twice, once in SQL for each database. That duplication is
-deliberate and load-bearing — the device must be able to resolve a conflict with
-no network — and it is exactly the kind of divergence that a test on one side
+deliberate and load-bearing (the device must be able to resolve a conflict with
+no network), and it is exactly the kind of divergence that a test on one side
 alone would not catch, so the two are tested against the same table of cases.

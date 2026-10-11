@@ -3,7 +3,7 @@
  *
  * The application runs a native SQLite module; tests run `node:sqlite`. The
  * same SQL executes against both, so a query is exercised for real rather than
- * mocked — the same reasoning that puts the server's repository tests against a
+ * mocked, the same reasoning that puts the server's repository tests against a
  * real PostgreSQL (ADR-013, ADR-014). Only this thin adapter differs.
  *
  * It is deliberately small. Anything richer would be a second query builder to

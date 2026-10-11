@@ -108,7 +108,7 @@ const INSERT = `
  *
  * Several movements at once, because a transfer is two: money leaving one
  * account and arriving in another. They are written in one transaction, since
- * half a transfer is money genuinely lost — gone from the till with nothing to
+ * half a transfer is money genuinely lost, gone from the till with nothing to
  * show where it went.
  */
 export function moveCash(database: Database, request: MoveCash): void {
@@ -180,7 +180,7 @@ export function transfer(
 /**
  * What an account holds: the sum of every source that moved money.
  *
- * Five arms, because each source is authoritative for its own facts — the
+ * Five arms, because each source is authoritative for its own facts: the
  * payments taken into the account, the customers settling debts into it, the
  * movements made by hand, the expenses paid out of it, and the wholesalers
  * settled out of it.
@@ -262,7 +262,7 @@ export function movementsOfAccount(
 /**
  * Sets a count against what the system believes (§18).
  *
- * The difference is counted less expected, so a shortfall reads negative — the
+ * The difference is counted less expected, so a shortfall reads negative: the
  * direction an adjustment would have to move the account to make the books
  * agree with the drawer. Nothing is changed here: correcting it is a movement,
  * which is a new record of what was found rather than an edit to what was

@@ -31,8 +31,8 @@ ID, timestamp, user ID, device ID, and reason.
 `product.stock = 47` is never written.
 
 On the conflicting-sale case: **both movements are accepted**. Stock goes to `-1`,
-which is a true statement about the business — two units were sold and one
-existed — and is surfaced for human resolution. The system never resolves this by
+which is a true statement about the business (two units were sold and one
+existed) and is surfaced for human resolution. The system never resolves this by
 choosing one device's stock number.
 
 Purchase cost information is retained rather than assuming selling price equals
@@ -46,7 +46,7 @@ separately tracked damaged stock, and stock at multiple locations.
 ## Consequences
 
 * Derived stock costs a query. Fast product lists and a fast POS (§46) therefore
-  need indices and, where justified, a rebuildable projection — never a mutable
+  need indices and, where justified, a rebuildable projection, never a mutable
   stock column.
 * Negative stock is representable and must be handled by the UI and reports rather
   than treated as corrupt data.

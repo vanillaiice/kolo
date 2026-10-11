@@ -102,7 +102,7 @@ const CURRENCY = "XAF";
  * The order is deliberate: **the token is written first**, then the rows. If
  * the second half fails the device is left with a secret nothing reads, which
  * the next login overwrites; the other order would leave a device that looks
- * enrolled and cannot authenticate — a till that appears to work and whose
+ * enrolled and cannot authenticate: a till that appears to work and whose
  * every sync is refused.
  */
 export async function enrol(
@@ -179,7 +179,7 @@ export async function enrol(
  *
  * Undefined is a real answer, not a failure: an app installed and never logged
  * in has no business and no user, and inventing one would be worse than saying
- * so — it would attribute a shop's sales to a user nobody registered.
+ * so: it would attribute a shop's sales to a user nobody registered.
  *
  * An expired session is still returned. Whether the device may keep trading on
  * it is a decision for the screen above, and one this layer must not make
@@ -227,7 +227,7 @@ export function hasExpired(session: Session, now: Date = new Date()): boolean {
  *
  * A lookup, not a rule: the server resolved role defaults, grants and
  * revocations when it issued the session, and re-deriving that here would hand
- * back a permission the server had revoked — a role's defaults would put it
+ * back a permission the server had revoked; a role's defaults would put it
  * straight back.
  */
 export function may(session: Session, permission: string): boolean {
@@ -244,7 +244,7 @@ export async function sessionToken(secrets: SecretStore): Promise<string | undef
  *
  * The business data stays deliberately. A till may have a day of sales that
  * have not reached the server, and signing out is not a decision to discard
- * them — the next login on the same business finds them still queued.
+ * them: the next login on the same business finds them still queued.
  *
  * The order mirrors {@link enrol}: the row goes first, so a keystore that fails
  * leaves a secret nothing reads rather than a device that still looks enrolled.

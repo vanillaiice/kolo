@@ -73,7 +73,7 @@ destination, then leaves the app.
 | analytics | More → Analytics | reports.sales (+financial, +customers sections) | `application/report-views.analytics` (shared) | Node (parity) |
 | listStaff / createStaff / setStaffPermission / setStaffActive / resetStaffSecret | More → Staff → Member | owner (users.*) | `identity/members`, `grantPermission` | Node; Device F1 |
 | setRememberSession | More → Settings → Stay signed in | signed-in user | `rememberMember`, `resumeWorkspace` | Node (session memory); Device |
-| setLargeFiles | — (desktop only, ADR-027) | — | — | — |
+| setLargeFiles | n/a (desktop only, ADR-027) | n/a | n/a | n/a |
 | language / appearance | Entry and More → Settings | none | device preference database | Node |
 | Legal / About | More → Settings → About | none | static text | Device |
 

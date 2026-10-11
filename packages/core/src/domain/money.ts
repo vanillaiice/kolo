@@ -1,7 +1,7 @@
 /**
  * Turning amounts into the text a shopkeeper reads (§46).
  *
- * Everything in this system is XAF, and **XAF has no subunit** — there is no
+ * Everything in this system is XAF, and **XAF has no subunit**: there is no
  * centime, and the smallest coin is five francs. So a "minor unit" here is a
  * whole franc, and formatting is grouping digits rather than placing a decimal
  * point. A currency with cents would need a different function; writing one
@@ -11,7 +11,7 @@
  *
  * `Intl.NumberFormat` would do this, and on a desktop browser it would be the
  * right answer. On the cheap Android hardware this targets, the JavaScript
- * engine may ship without full ICU data, and the failure mode is not a crash —
+ * engine may ship without full ICU data, and the failure mode is not a crash:
  * it is a number that groups differently on one device than another. Prices
  * that read differently on the owner's phone and the till are worse than plain
  * ones, so the separator is applied here and is the same everywhere.
@@ -165,8 +165,8 @@ export type ParsedAmount =
  * Reads an amount a cashier typed into whole francs.
  *
  * Deliberately strict, because this is the direction that writes money down.
- * It accepts the separators a person actually types — spaces, and the comma or
- * dot they use for grouping — and refuses anything else rather than guessing.
+ * It accepts the separators a person actually types (spaces, and the comma or
+ * dot they use for grouping) and refuses anything else rather than guessing.
  *
  * A fraction is refused rather than rounded. There is no half franc, and a till
  * that silently rounded 100.5 would be deciding on the shopkeeper's behalf

@@ -3533,7 +3533,7 @@ class HttpAuthTransport implements AuthTransport {
 Where the session token is kept (§37, ADR-012).
 
 The token is the one thing on the device that is a *credential* rather than a
-record. Everything else in `kolo.db` — sales, prices, what a customer owes —
+record. Everything else in `kolo.db` (sales, prices, what a customer owes)
 describes what happened; the token lets whoever holds it act as this till
 against the server. §37 asks for secure token storage, so it goes to the
 platform keystore rather than into a column beside the business data.
@@ -3548,7 +3548,7 @@ this" is checked by the compiler at exactly one call site, and everything
 above can be tested under Node without a device.
 
 What no amount of Node testing covers is the keystore itself, which needs a
-device — the same honest gap ADR-016 states for SQLite.
+device: the same honest gap ADR-016 states for SQLite.
 
 The slice of the native secure store this adapter uses.
 
@@ -3564,7 +3564,7 @@ A place to keep a secret.
 
 Asynchronous, unlike the database, because the keystore genuinely is: reading
 it can involve the platform's key manager. That is why the token is *not*
-part of  — a session is read synchronously while drawing a
+part of ; a session is read synchronously while drawing a
 screen, and only the sync engine needs the token.
 
 ```ts
@@ -3599,7 +3599,7 @@ The translations are small and both are deliberate: `null` becomes
 `undefined`, so callers have one way to say "nothing stored" (the same
 translation `expo-sqlite.ts` makes for a missing row), and a thrown platform
 error becomes a  that names the key but never the
-value — an error that reached a log carrying the token would defeat the point
+value: an error that reached a log carrying the token would defeat the point
 of storing it here.
 
 ```ts
@@ -3694,7 +3694,7 @@ Stores a login, so the device is enrolled and can trade offline.
 The order is deliberate: **the token is written first**, then the rows. If
 the second half fails the device is left with a secret nothing reads, which
 the next login overwrites; the other order would leave a device that looks
-enrolled and cannot authenticate — a till that appears to work and whose
+enrolled and cannot authenticate: a till that appears to work and whose
 every sync is refused.
 
 ```ts
@@ -3705,7 +3705,7 @@ Reads the session this device holds, or undefined if it is not enrolled.
 
 Undefined is a real answer, not a failure: an app installed and never logged
 in has no business and no user, and inventing one would be worse than saying
-so — it would attribute a shop's sales to a user nobody registered.
+so: it would attribute a shop's sales to a user nobody registered.
 
 An expired session is still returned. Whether the device may keep trading on
 it is a decision for the screen above, and one this layer must not make
@@ -3726,7 +3726,7 @@ Whether the session holds a permission (§38).
 
 A lookup, not a rule: the server resolved role defaults, grants and
 revocations when it issued the session, and re-deriving that here would hand
-back a permission the server had revoked — a role's defaults would put it
+back a permission the server had revoked; a role's defaults would put it
 straight back.
 
 ```ts
@@ -3743,7 +3743,7 @@ Ends the session on this device, keeping everything the shop recorded.
 
 The business data stays deliberately. A till may have a day of sales that
 have not reached the server, and signing out is not a decision to discard
-them — the next login on the same business finds them still queued.
+them: the next login on the same business finds them still queued.
 
 The order mirrors : the row goes first, so a keystore that fails
 leaves a secret nothing reads rather than a device that still looks enrolled.
@@ -3868,7 +3868,7 @@ built from a fortnight of small buys, and asking a cashier which of them the
 5,000 pays off would be inventing a question the shop does not ask.
 
 Nothing is checked against the balance. Paying more than is owed leaves a
-customer in credit, which is the honest answer — refusing it would turn away
+customer in credit, which is the honest answer; refusing it would turn away
 money the shopkeeper has in their hand.
 
 ```ts
@@ -3958,7 +3958,7 @@ The narrow surface the data layer needs from a SQLite driver.
 
 The application runs a native SQLite module; tests run `node:sqlite`. The
 same SQL executes against both, so a query is exercised for real rather than
-mocked — the same reasoning that puts the server's repository tests against a
+mocked, the same reasoning that puts the server's repository tests against a
 real PostgreSQL (ADR-013, ADR-014). Only this thin adapter differs.
 
 It is deliberately small. Anything richer would be a second query builder to
@@ -4058,7 +4058,7 @@ export interface NativeDatabase {
 }
 ```
 
-What the native driver can bind — which is **not** quite .
+What the native driver can bind, which is **not** quite .
 
 The difference is `bigint`, and it matters. The data layer's value type allows
 one because `node:sqlite` hands back a bigint for an integer too large for a
@@ -4076,7 +4076,7 @@ export type NativeBindValue = string | number | boolean | null | Uint8Array | Ar
 Wraps a native handle, applying the same settings the test adapter uses.
 
 The pragmas are repeated rather than shared because they are per-connection
-and this is a different connection — and because a device that silently ran
+and this is a different connection, and because a device that silently ran
 without foreign keys would behave differently from every test, which is the
 one divergence that would be hardest to find.
 
@@ -4557,7 +4557,7 @@ Records money moving, and queues the event carrying it.
 
 Several movements at once, because a transfer is two: money leaving one
 account and arriving in another. They are written in one transaction, since
-half a transfer is money genuinely lost — gone from the till with nothing to
+half a transfer is money genuinely lost, gone from the till with nothing to
 show where it went.
 
 ```ts
@@ -4576,7 +4576,7 @@ transfer(leaving: Omit<CashMovement, "type" | "counterpartId">, arriving: Omit<C
 
 What an account holds: the sum of every source that moved money.
 
-Five arms, because each source is authoritative for its own facts — the
+Five arms, because each source is authoritative for its own facts: the
 payments taken into the account, the customers settling debts into it, the
 movements made by hand, the expenses paid out of it, and the wholesalers
 settled out of it.
@@ -4604,7 +4604,7 @@ movementsOfAccount(tx: Queryable, businessId: string, accountId: string): CashMo
 
 Sets a count against what the system believes (§18).
 
-The difference is counted less expected, so a shortfall reads negative — the
+The difference is counted less expected, so a shortfall reads negative: the
 direction an adjustment would have to move the account to make the books
 agree with the drawer. Nothing is changed here: correcting it is a movement,
 which is a new record of what was found rather than an edit to what was
@@ -4708,7 +4708,7 @@ export interface MovementEvent {
 
 Records a movement and queues the event that will carry it to the server.
 
-Both happen in one transaction. If either fails, neither happened — which is
+Both happen in one transaction. If either fails, neither happened, which is
 the only way to make it impossible for a device to hold stock history the
 server will never hear about (ADR-014).
 
@@ -4720,7 +4720,7 @@ Records several movements and one event covering them all.
 
 A business event fans out: a sale of three lines moves three products' stock,
 and those movements are one fact. They are queued as one event because the
-server applies the sale, not three unrelated stock changes — and because a
+server applies the sale, not three unrelated stock changes, and because a
 partial arrival would leave the server with a sale that does not balance.
 
 ```ts
@@ -4733,7 +4733,7 @@ A product sold for a year has thousands of movements, and a till asking how
 many are left must not load them all (§46). The answer is the same addition
 either way.
 
-With `branchId`, only that branch's movements count — what a count taken on
+With `branchId`, only that branch's movements count: what a count taken on
 that branch's shelves is compared against. Without it, the whole business.
 
 ```ts
@@ -4957,8 +4957,8 @@ Both in one transaction: a product the shopkeeper can see and the server
 never will is the loss ADR-014 exists to prevent, and it applies to a price
 correction as much as to a sale.
 
-Returns whether the write took effect. A local save normally does — the
-shopkeeper is editing what is in front of them — but it can lose to an edit
+Returns whether the write took effect. A local save normally does (the
+shopkeeper is editing what is in front of them), but it can lose to an edit
 from another device that arrived with a later timestamp, and the caller
 should show what is actually stored rather than what was typed.
 Application adapters supply a native UUIDv7 event ID; omitted IDs retain the
@@ -4996,7 +4996,7 @@ Finds products by what a cashier types, best match first (§46).
 
 The POS path, and the one §46 names as having to be fast. A cashier types
 three or four letters between one customer and the next, so this has to be a
-prefix match an index can serve rather than a scan — and it has to rank,
+prefix match an index can serve rather than a scan, and it has to rank,
 because the first row is the one that gets tapped.
 
 The ranking is deliberate and in this order:
@@ -5012,7 +5012,7 @@ Archived products are absent: a till offering something the shop no longer
 sells wastes the one tap the cashier had.
 
 `LIKE` with a leading wildcard cannot use an index, and that is accepted for
-arm 4 only — a shop's catalogue is thousands of rows, not millions, and the
+arm 4 only: a shop's catalogue is thousands of rows, not millions, and the
 arms above it are the ones that answer a scanner. If a catalogue ever grows
 past what this serves in a keystroke, FTS5 is the next step and this function
 is where it goes.
@@ -5105,7 +5105,7 @@ Records a delivery: the purchase, its lines, the stock it brought in, the
 money handed over, the debt for the rest, and the event carrying all of it.
 
 Returns the totals, so a screen can show what was actually recorded rather
-than what it worked out separately — two answers to the same arithmetic is how
+than what it worked out separately; two answers to the same arithmetic is how
 a delivery note comes to disagree with a report.
 
 ```ts
@@ -5114,7 +5114,7 @@ recordPurchase(database: Database, delivery: Delivery): DeliveryTotals;
 
 Works out what a delivery comes to, refusing anything that does not add up.
 
-Exported because a screen needs the running total before anything is written —
+Exported because a screen needs the running total before anything is written,
 and it must be this function, not a second one in the interface. Two
 implementations of the same arithmetic is how the screen comes to say one
 number and the delivery note another.
@@ -5301,7 +5301,7 @@ How stock is valued (§8).
 
 Named rather than inlined because §8 requires the architecture to allow FIFO
 and weighted average later. Adding one is a case in , not a
-rewrite of the report — and callers name the method they mean, so a screen
+rewrite of the report, and callers name the method they mean, so a screen
 that changes it changes a report's meaning visibly rather than by accident.
 
 ```ts
@@ -5441,7 +5441,7 @@ Joined through the *product* rather than stored on the sale line, because a
 category is a way of grouping products and moving one between categories has
 to move its history with it. A category copied onto the line at the time of
 sale would leave last month's report grouping by a shelf the shop no longer
-has — the opposite of what a line's *name* and *price* are copied for, which
+has, the opposite of what a line's *name* and *price* are copied for, which
 is that a receipt must show what was actually charged.
 
 Products in no category are grouped under an empty key rather than dropped: a
@@ -5467,7 +5467,7 @@ the period's sales only when nothing was sold on credit.
 salesByAccount(tx: Queryable, businessId: string, from: string, to: string): Line[];
 ```
 
-Who sold what, best first — §21's sales by employee.
+Who sold what, best first: §21's sales by employee.
 
 Net of discounts; a return counts against the cashier who made the original
 sale, in the period it happened. `count` is distinct sales. Sums to
@@ -5491,7 +5491,7 @@ What the shop owes every wholesaler, most first (§16, §21).
 The mirror of , and deliberately a separate query over
 a separate table. One list with a sign would put a customer who owes 5,000 and
 a wholesaler owed 5,000 on the same line of the same report, and they are
-opposite obligations — netting them would tell an owner the shop was square
+opposite obligations; netting them would tell an owner the shop was square
 when it was owed money by one person and owed money to another.
 
 Wholesalers the shop has paid ahead are absent, for the reason customers in
@@ -5507,7 +5507,7 @@ What a period bought, by wholesaler (§21's purchase history).
 Sliced by when the stock *arrived*, like every period here, so a delivery
 recorded on a phone that synced on Friday still lands in Monday.
 
-A delivery that named nobody — a crate from the market — is grouped under an
+A delivery that named nobody (a crate from the market) is grouped under an
 empty key rather than dropped. What the shop spent on stock is the question,
 and leaving those out would answer a different one.
 
@@ -5533,7 +5533,7 @@ heading "supplier payments" reads as money coming back.
 
 Money handed over at the door is deliberately absent. That is an
 `account_movements` row against the till, not a ledger entry, because a
-delivery from the market has no wholesaler to have a ledger — it shows in the
+delivery from the market has no wholesaler to have a ledger; it shows in the
 period's purchases instead, which is where the goods it bought are.
 
 ```ts
@@ -5546,7 +5546,7 @@ Quantity is the sum of the ledger, as everywhere; the cost comes from
 . Nothing here is a stored total, which is what makes the
 valuation and the deliveries behind it incapable of disagreeing.
 
-Products holding nothing are absent — a shop that has ever sold out of
+Products holding nothing are absent: a shop that has ever sold out of
 something would otherwise carry it forever in a report about what it owns.
 Products holding *less* than nothing are **present, at a negative value**:
 two devices each selling the last unit offline is expected (§29), and the
@@ -5596,11 +5596,11 @@ Stock that has not sold since a date, and what it has tied up (§21).
 The actionable version of the slow end: a shopkeeper does not need to know
 that something sold twice instead of thirty times, they need to know which
 shelves are holding money that is not moving. So this is stock **on hand**
-that sold **nothing** in the period — a product that sold out is not dead, it
+that sold **nothing** in the period; a product that sold out is not dead, it
 is finished, and one nobody stocks is not dead either.
 
 The value is at latest purchase cost, and absent when nothing says what it
-cost — the same honest gap a valuation reports rather than a zero that would
+cost: the same honest gap a valuation reports rather than a zero that would
 make dead stock look free to keep.
 
 ```ts
@@ -5815,7 +5815,7 @@ Completes a sale: writes it, its lines, its stock movements, its payments,
 and the event that carries them, all in one transaction.
 
 Returns the totals, so a till can show what was actually recorded rather than
-what it worked out separately — two answers to the same arithmetic is how a
+what it worked out separately; two answers to the same arithmetic is how a
 receipt comes to disagree with a report.
 
 ```ts
@@ -5825,7 +5825,7 @@ completeSale(database: Database, cart: Cart): SaleTotals;
 Works out what a sale comes to, refusing anything that does not add up.
 
 Exported because a till needs the running total of a cart before anything is
-written — and it must be this function, not a second one in the interface.
+written, and it must be this function, not a second one in the interface.
 Two implementations of the same arithmetic is how the screen comes to say one
 number and the receipt another.
 
@@ -5969,7 +5969,7 @@ is built from a month of deliveries, and asking which of them the 50,000 pays
 off would be inventing a question the shop does not ask.
 
 Nothing is checked against the balance. Paying more than is owed leaves the
-business in credit, which is the honest answer — refusing it would refuse a
+business in credit, which is the honest answer; refusing it would refuse a
 payment the shopkeeper has actually made.
 
 ```ts
@@ -6061,7 +6061,7 @@ export interface EventApplier {
 ```
 
 Thrown by an applier for an event that will never apply, however long it
-waits — a payload it cannot read, a shape it does not recognise.
+waits: a payload it cannot read, a shape it does not recognise.
 
 ```ts
 class UnusableEvent extends Error {
@@ -6118,7 +6118,7 @@ const DEFAULT_MAX_ROUND_TRIPS: 20;
 Drains the outbox and the inbox.
 
 One engine per database. `sync()` is not safe to run concurrently with itself
-— see the guard in .
+(see the guard in .
 
 ```ts
 class SyncEngine {
@@ -6201,7 +6201,7 @@ Stores an event that arrived, reporting whether it was new.
 
 An event already here is left exactly as it is. A pull that is retried after a
 lost response delivers the same events again, and re-storing one would reset
-an event already applied back to deferred — applying it a second time.
+an event already applied back to deferred, applying it a second time.
 
 ```ts
 receive(tx: Queryable, event: ReceivedEvent, at: string): boolean;
@@ -6231,7 +6231,7 @@ markApplied(tx: Queryable, eventId: string, at: string): boolean;
 Records that applying failed, leaving the event deferred so it is tried again.
 
 This is the ordinary case for an event that arrived before what it depends on.
-It is not an error to report to anyone yet — the next sync usually resolves it.
+It is not an error to report to anyone yet; the next sync usually resolves it.
 
 ```ts
 markDeferred(tx: Queryable, eventId: string, reason: string): boolean;
@@ -6240,7 +6240,7 @@ markDeferred(tx: Queryable, eventId: string, reason: string): boolean;
 Sets an event aside as one this device cannot use.
 
 For an event that will never apply however long it waits: a type this build
-does not know, or a payload it cannot read. It is kept rather than deleted —
+does not know, or a payload it cannot read. It is kept rather than deleted:
 it is another device's business record, and a build that does understand it
 may yet be installed.
 
@@ -6332,7 +6332,7 @@ Appends an event to the outbox.
 
 It takes a  rather than a Database precisely so it cannot be
 called on its own: the caller must already be inside the transaction that is
-writing the business rows. That is the whole point — see ADR-014.
+writing the business rows. That is the whole point (see ADR-014).
 
 ```ts
 enqueue(tx: Queryable, event: NewEvent): OutboxEvent;
@@ -6357,8 +6357,8 @@ pendingCount(tx: Queryable): number;
 Marks events the server acknowledged.
 
 Acknowledging an event that is already delivered is not an error: a push
-whose response was lost is retried, and the server — being idempotent
-(ADR-006) — acknowledges it again.
+whose response was lost is retried, and the server, being idempotent
+(ADR-006), acknowledges it again.
 
 ```ts
 markDelivered(tx: Queryable, eventIds: readonly string[], at: string): number;
@@ -6377,7 +6377,7 @@ markAttemptFailed(tx: Queryable, eventIds: readonly string[], reason: string): n
 Marks an event the server refused outright.
 
 This is for a rejection the server will give again however many times it is
-retried — a malformed payload, an event type it does not know. Retrying
+retried: a malformed payload, an event type it does not know. Retrying
 forever would block everything queued behind it, so it is set aside and
 surfaced rather than dropped: the business record it carries still exists on
 this device and someone has to decide what to do about it.
@@ -6510,8 +6510,8 @@ const supplierApplier: EventApplier;
 Applies payments to wholesalers arriving from other devices.
 
 Appended, never merged: two devices each settling part of a bill is two
-payments, and both stand. A payment that arrives twice — a pull retried after
-a lost response, or a device receiving back what it sent — leaves one entry,
+payments, and both stand. A payment that arrives twice (a pull retried after
+a lost response, or a device receiving back what it sent) leaves one entry,
 because the entry's own identifier came from the device that made it (§27).
 
 ```ts
@@ -6523,7 +6523,7 @@ const supplierPaymentApplier: EventApplier;
 How the sync engine reaches the server.
 
 The engine takes this interface rather than calling `fetch` itself, so its
-behaviour — what a rejection means, what a lost response means, when to stop —
+behaviour (what a rejection means, what a lost response means, when to stop)
 is testable without a network. That behaviour is where the difficulty is; the
 HTTP below it is the easy part.
 
@@ -6652,8 +6652,8 @@ they can be tested under Node and so a second screen cannot grow a second
 answer to the same question.
 
 Nothing here checks a credential. The PIN is verified by the server and
-nowhere else (ADR-012); what this prevents is spending a round trip — over a
-link §45 assumes is slow and expensive — on something that cannot possibly be
+nowhere else (ADR-012); what this prevents is spending a round trip (over a
+link §45 assumes is slow and expensive) on something that cannot possibly be
 right, such as an empty PIN or a business identifier missing half its digits.
 
 Why a login form cannot be submitted yet.
@@ -6696,7 +6696,7 @@ PIN length, matching the server's `auth.ValidatePIN` (4 to 8 digits).
 
 Deliberately *not* matching its weak-PIN rules. Those exist for the moment a
 PIN is chosen; applying them at login would tell somebody their PIN is too
-simple when what they need to be told is that it is wrong — and would lock
+simple when what they need to be told is that it is wrong, and would lock
 out anyone whose PIN was set before the rule existed.
 
 ```ts
@@ -6723,7 +6723,7 @@ Reads a business identifier as the server will, or undefined if it is not one.
 
 Forgiving about how it was typed and strict about what it is. Every
 identifier is a UUID (ADR-011), and the one place a person ever types one is
-here — copied from a message, an email or a slip of paper, so it arrives with
+here: copied from a message, an email or a slip of paper, so it arrives with
 stray spaces, in capitals, sometimes with the dashes rubbed out. All of those
 name the same shop. Anything else is refused rather than sent, because the
 server would refuse it after a round trip on a link that may cost the shop
@@ -6763,7 +6763,7 @@ quantityInput(thousandths: number): string;
 
 Turning amounts into the text a shopkeeper reads (§46).
 
-Everything in this system is XAF, and **XAF has no subunit** — there is no
+Everything in this system is XAF, and **XAF has no subunit**: there is no
 centime, and the smallest coin is five francs. So a "minor unit" here is a
 whole franc, and formatting is grouping digits rather than placing a decimal
 point. A currency with cents would need a different function; writing one
@@ -6773,7 +6773,7 @@ that pretended to handle both is how a franc becomes a centime somewhere.
 
 `Intl.NumberFormat` would do this, and on a desktop browser it would be the
 right answer. On the cheap Android hardware this targets, the JavaScript
-engine may ship without full ICU data, and the failure mode is not a crash —
+engine may ship without full ICU data, and the failure mode is not a crash:
 it is a number that groups differently on one device than another. Prices
 that read differently on the owner's phone and the till are worse than plain
 ones, so the separator is applied here and is the same everywhere.
@@ -6861,8 +6861,8 @@ export type ParsedAmount = {
 Reads an amount a cashier typed into whole francs.
 
 Deliberately strict, because this is the direction that writes money down.
-It accepts the separators a person actually types — spaces, and the comma or
-dot they use for grouping — and refuses anything else rather than guessing.
+It accepts the separators a person actually types (spaces, and the comma or
+dot they use for grouping) and refuses anything else rather than guessing.
 
 A fraction is refused rather than rounded. There is no half franc, and a till
 that silently rounded 100.5 would be deciding on the shopkeeper's behalf
@@ -6984,8 +6984,8 @@ setDiscount(state: CartState, discountMinor: number): CartState;
 
 Tenders a payment against the cart.
 
-A sale has *many* payments — split cash and Mobile Money is an ordinary case
-(§11) — so these append rather than replace. Each names an account, never a
+A sale has *many* payments (split cash and Mobile Money is an ordinary case
+(§11), so these append rather than replace. Each names an account, never a
 method, which is what keeps a provider a row rather than a release (§10).
 
 ```ts

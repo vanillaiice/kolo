@@ -239,8 +239,8 @@ Sale returns need `sales.refund`; purchase returns need `purchases.create` and
 value with core `previewReturn`, then records against the predecessor (`priorId`) it was
 shown. A return recorded meanwhile is refused as `stale_return` with a reload, never
 double-returned. The refund (one account) is at most the value and at most
-`ReturnSourceView.refundableMinor` — what the original settled (sale payments, or a
-delivery's total less what it left owing) less earlier refunds — so cash never changes hands
+`ReturnSourceView.refundableMinor` (what the original settled (sale payments, or a
+delivery's total less what it left owing) less earlier refunds), so cash never changes hands
 for goods that were not paid for; the remainder is credited to the customer or deducted from
 the supplier debt, and without a counterparty the refund must cover the whole value. The request ID names the return; a retry matches kind,
 original, reason, item set and refund set. Core `ExchangeError` codes are translated to

@@ -60,8 +60,8 @@ export const supplierApplier: EventApplier = {
  * Applies payments to wholesalers arriving from other devices.
  *
  * Appended, never merged: two devices each settling part of a bill is two
- * payments, and both stand. A payment that arrives twice — a pull retried after
- * a lost response, or a device receiving back what it sent — leaves one entry,
+ * payments, and both stand. A payment that arrives twice (a pull retried after
+ * a lost response, or a device receiving back what it sent) leaves one entry,
  * because the entry's own identifier came from the device that made it (§27).
  */
 export const supplierPaymentApplier: EventApplier = {

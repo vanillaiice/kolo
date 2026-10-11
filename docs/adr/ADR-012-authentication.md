@@ -30,7 +30,7 @@ A user logs in with their **phone number and a numeric PIN**.
 * A phone number is unique **within a business**, not globally. One person may
   legitimately work for two businesses on the same number, and a global
   constraint would let one tenant discover another's staff by registration
-  collision — which ADR-008 forbids.
+  collision, which ADR-008 forbids.
 
 ### Credentials are verified by the server; sessions are cached long
 
@@ -53,9 +53,9 @@ thereafter   →  local session check, no network
 
 * **A brand-new device cannot be onboarded without network.** This is a real
   gap and is accepted knowingly. It is within the specification's letter: §4
-  enumerates the operations that must work offline — product lookup and
+  enumerates the operations that must work offline (product lookup and
   creation, inventory, sales, returns, customers, payments, purchases,
-  expenses, cash, local reports — and first-time login is not among them. It
+  expenses, cash, local reports), and first-time login is not among them. It
   remains a limitation to state plainly in onboarding material rather than one
   to discover in the field.
 * **Revocation is not immediate.** Suspending a user takes effect on that

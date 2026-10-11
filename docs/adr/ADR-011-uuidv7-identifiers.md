@@ -24,7 +24,7 @@ which costs on exactly the hardware being targeted.
 Identifiers are **UUID version 7** (RFC 9562): a 48-bit Unix millisecond
 timestamp followed by a counter and random bits. They are collision-safe without
 coordination and they sort by creation time, so lexicographic order is time
-order — giving index locality in both SQLite and PostgreSQL, and a natural
+order, giving index locality in both SQLite and PostgreSQL, and a natural
 ordering hint for sync batches.
 
 Generation uses the established library, `github.com/google/uuid`, rather than a

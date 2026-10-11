@@ -2,7 +2,7 @@
  * How the sync engine reaches the server.
  *
  * The engine takes this interface rather than calling `fetch` itself, so its
- * behaviour — what a rejection means, what a lost response means, when to stop —
+ * behaviour (what a rejection means, what a lost response means, when to stop)
  * is testable without a network. That behaviour is where the difficulty is; the
  * HTTP below it is the easy part.
  */

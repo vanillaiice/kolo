@@ -59,7 +59,7 @@ export class InboxError extends Error {
  *
  * An event already here is left exactly as it is. A pull that is retried after a
  * lost response delivers the same events again, and re-storing one would reset
- * an event already applied back to deferred — applying it a second time.
+ * an event already applied back to deferred, applying it a second time.
  */
 export function receive(tx: Queryable, event: ReceivedEvent, at: string): boolean {
   const result = tx.run(
@@ -126,7 +126,7 @@ export function markApplied(tx: Queryable, eventId: string, at: string): boolean
  * Records that applying failed, leaving the event deferred so it is tried again.
  *
  * This is the ordinary case for an event that arrived before what it depends on.
- * It is not an error to report to anyone yet — the next sync usually resolves it.
+ * It is not an error to report to anyone yet; the next sync usually resolves it.
  */
 export function markDeferred(tx: Queryable, eventId: string, reason: string): boolean {
   const result = tx.run(
@@ -142,7 +142,7 @@ export function markDeferred(tx: Queryable, eventId: string, reason: string): bo
  * Sets an event aside as one this device cannot use.
  *
  * For an event that will never apply however long it waits: a type this build
- * does not know, or a payload it cannot read. It is kept rather than deleted —
+ * does not know, or a payload it cannot read. It is kept rather than deleted:
  * it is another device's business record, and a build that does understand it
  * may yet be installed.
  */

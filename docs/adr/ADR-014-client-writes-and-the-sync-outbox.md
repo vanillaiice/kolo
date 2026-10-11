@@ -18,7 +18,7 @@ action() → validate locally → SQLite transaction → show success → queue 
 ```
 
 but "queue sync event" cannot be a step *after* the transaction. If the process
-dies between the two, the shop has a sale it can see and the server never will —
+dies between the two, the shop has a sale it can see and the server never will:
 and nothing afterwards can detect that, because from the device's point of view
 the sale looks complete. That failure is silent, permanent, and exactly the one
 §62 says the MVP must not have.
@@ -56,7 +56,7 @@ support question about what a device sent can still be answered.
 ### Success is local
 
 The UI shows success after the local commit. It never waits for the network, and
-a sync failure never surfaces as a business-operation failure — it surfaces as
+a sync failure never surfaces as a business-operation failure; it surfaces as
 sync status (ADR-001).
 
 ### The driver is behind an interface
@@ -82,7 +82,7 @@ business records the server has not yet seen.
   A write that could be issued outside one is a defect, in the same way a query
   without a tenant scope is on the server.
 * The outbox grows until it drains. A device offline for a long period
-  accumulates rows, which is correct — that is the business's data — but the
+  accumulates rows, which is correct (that is the business's data), but the
   pruning of delivered rows has to be reliable or storage becomes a problem on
   cheap hardware.
 * Because the event is written from the same code path as the business rows, the
@@ -90,7 +90,7 @@ business records the server has not yet seen.
   transports events; it does not construct them.
 * Ordering within a device is the outbox's insertion order, which UUIDv7 already
   makes time-ordered (ADR-011). Ordering *between* devices is not defined and
-  must not be relied on — that is what conflict policy is for (ADR-006).
+  must not be relied on; that is what conflict policy is for (ADR-006).
 * Tests can drive the real schema in Node, so the client's data layer is covered
   without an emulator. What that does not cover is the native driver itself,
   which needs a device or emulator and is not exercised here.

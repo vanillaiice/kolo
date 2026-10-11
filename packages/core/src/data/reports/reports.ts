@@ -65,7 +65,7 @@ export interface PurchaseSummary {
  *
  * Named rather than inlined because §8 requires the architecture to allow FIFO
  * and weighted average later. Adding one is a case in {@link COST_OF}, not a
- * rewrite of the report — and callers name the method they mean, so a screen
+ * rewrite of the report, and callers name the method they mean, so a screen
  * that changes it changes a report's meaning visibly rather than by accident.
  */
 export type CostingMethod = "LATEST_PURCHASE";
@@ -424,7 +424,7 @@ export function salesByProduct(
  * category is a way of grouping products and moving one between categories has
  * to move its history with it. A category copied onto the line at the time of
  * sale would leave last month's report grouping by a shelf the shop no longer
- * has — the opposite of what a line's *name* and *price* are copied for, which
+ * has, the opposite of what a line's *name* and *price* are copied for, which
  * is that a receipt must show what was actually charged.
  *
  * Products in no category are grouped under an empty key rather than dropped: a
@@ -482,7 +482,7 @@ export function salesByAccount(
 }
 
 /**
- * Who sold what, best first — §21's sales by employee.
+ * Who sold what, best first: §21's sales by employee.
  *
  * Net of discounts; a return counts against the cashier who made the original
  * sale, in the period it happened. `count` is distinct sales. Sums to
@@ -526,7 +526,7 @@ export function outstandingDebt(tx: Queryable, businessId: string): Line[] {
  * The mirror of {@link outstandingDebt}, and deliberately a separate query over
  * a separate table. One list with a sign would put a customer who owes 5,000 and
  * a wholesaler owed 5,000 on the same line of the same report, and they are
- * opposite obligations — netting them would tell an owner the shop was square
+ * opposite obligations; netting them would tell an owner the shop was square
  * when it was owed money by one person and owed money to another.
  *
  * Wholesalers the shop has paid ahead are absent, for the reason customers in
@@ -556,7 +556,7 @@ export function supplierDebt(tx: Queryable, businessId: string): Line[] {
  * Sliced by when the stock *arrived*, like every period here, so a delivery
  * recorded on a phone that synced on Friday still lands in Monday.
  *
- * A delivery that named nobody — a crate from the market — is grouped under an
+ * A delivery that named nobody (a crate from the market) is grouped under an
  * empty key rather than dropped. What the shop spent on stock is the question,
  * and leaving those out would answer a different one.
  *
@@ -626,7 +626,7 @@ export function purchasesBetween(
  *
  * Money handed over at the door is deliberately absent. That is an
  * `account_movements` row against the till, not a ledger entry, because a
- * delivery from the market has no wholesaler to have a ledger — it shows in the
+ * delivery from the market has no wholesaler to have a ledger; it shows in the
  * period's purchases instead, which is where the goods it bought are.
  */
 export function supplierPaymentsBetween(
@@ -682,7 +682,7 @@ const COST_OF: Record<CostingMethod, string> = {
  * {@link COST_OF}. Nothing here is a stored total, which is what makes the
  * valuation and the deliveries behind it incapable of disagreeing.
  *
- * Products holding nothing are absent — a shop that has ever sold out of
+ * Products holding nothing are absent: a shop that has ever sold out of
  * something would otherwise carry it forever in a report about what it owns.
  * Products holding *less* than nothing are **present, at a negative value**:
  * two devices each selling the last unit offline is expected (§29), and the
@@ -829,11 +829,11 @@ export function slowMoving(
  * The actionable version of the slow end: a shopkeeper does not need to know
  * that something sold twice instead of thirty times, they need to know which
  * shelves are holding money that is not moving. So this is stock **on hand**
- * that sold **nothing** in the period — a product that sold out is not dead, it
+ * that sold **nothing** in the period; a product that sold out is not dead, it
  * is finished, and one nobody stocks is not dead either.
  *
  * The value is at latest purchase cost, and absent when nothing says what it
- * cost — the same honest gap a valuation reports rather than a zero that would
+ * cost: the same honest gap a valuation reports rather than a zero that would
  * make dead stock look free to keep.
  */
 export function deadStock(

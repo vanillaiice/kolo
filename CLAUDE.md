@@ -12,7 +12,7 @@ Electron desktop, Fastify server (ADR-025). Existing business/data logic and tes
 it remains in git history (and may exist locally, gitignored, under `archive/legacy-go`). Historical root guidance is preserved in
 `docs/history/legacy-project-guidance.md`.
 
-Mobile has a parity reorganization (Sell/Products/Activity/More, all desktop business workflows, reports, analytics, photos, print/PDF); installed Android acceptance remains open — see docs/implementation/mobile-parity.md. Demo is opt-in.
+Mobile has a parity reorganization (Sell/Products/Activity/More, all desktop business workflows, reports, analytics, photos, print/PDF); installed Android acceptance remains open; see docs/implementation/mobile-parity.md. Demo is opt-in.
 F1 native acceptance remains pending; see the progress log and native validation guide. Desktop has a migrated
 local setup/unlock/recovery, product/category editing, stock movements/counts, split/credit
 till, customers, suppliers/purchases, accounts/expenses, reports, returns, staff, backup/pairing/exchange and receipt screens behind a validated command bridge. Broader management/transfer UI and Windows acceptance remain. The Fastify server has health/readiness/capabilities,

@@ -6,7 +6,7 @@
 ## Context
 
 §44 requires that currency is never represented internally as floating point, and
-that integer minor units are used. XAF (FCFA) has no subdivision in practice —
+that integer minor units are used. XAF (FCFA) has no subdivision in practice;
 amounts are whole francs.
 
 This ADR fixes the concrete representation, because every financial type in the

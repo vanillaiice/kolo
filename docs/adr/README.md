@@ -3,7 +3,7 @@
 Each ADR records one decision, its context, and its consequences.
 
 An ADR is immutable once accepted. To change a decision, write a new ADR that
-supersedes it — do not edit history. This mirrors the system's own rule that
+supersedes it; do not edit history. This mirrors the system's own rule that
 corrections are new records rather than destructive edits.
 
 | ADR | Decision | Status |
@@ -39,13 +39,13 @@ consult and supersede, per §55.
 
 - [ADR-022: Encrypted files and approved snapshots](ADR-022-encrypted-files-and-approved-snapshots.md)
 
-- [ADR-023: Partial returns and source ordering](ADR-023-partial-returns-and-source-ordering.md) — exact compensating returns and competing offline source chains.
+- [ADR-023: Partial returns and source ordering](ADR-023-partial-returns-and-source-ordering.md): exact compensating returns and competing offline source chains.
 
-- [ADR-024: Licensing and paid cosmetic unlocks](ADR-024-licensing-and-paid-unlocks.md) — clients GPL-3.0, server closed for now; draft trademark, offline-signed one-time branding unlock.
+- [ADR-024: Licensing and paid cosmetic unlocks](ADR-024-licensing-and-paid-unlocks.md): clients GPL-3.0, server closed for now; draft trademark, offline-signed one-time branding unlock.
 
-- [ADR-025: Fastify for the optional server](ADR-025-fastify-server.md) — replaces NestJS/Express; TypeScript, pg and shared contracts stay.
+- [ADR-025: Fastify for the optional server](ADR-025-fastify-server.md): replaces NestJS/Express; TypeScript, pg and shared contracts stay.
 
-- [ADR-026: Compressed transfer files and larger snapshots](ADR-026-compressed-transfer-files.md) — deflate before encryption (format v2), bounded inflation, 128 MiB snapshots; supersedes ADR-022 limits.
+- [ADR-026: Compressed transfer files and larger snapshots](ADR-026-compressed-transfer-files.md): deflate before encryption (format v2), bounded inflation, 128 MiB snapshots; supersedes ADR-022 limits.
 
-- [ADR-027: Opt-in large transfer files and optional product photos](ADR-027-large-files-and-product-photos.md) — standard/large size profiles, per-computer switch; photo thumbnails in migration 22.
-- [ADR-028](ADR-028-additional-product-categories.md) — one main category for reports plus up to 20 others for browsing (migration 23).
+- [ADR-027: Opt-in large transfer files and optional product photos](ADR-027-large-files-and-product-photos.md): standard/large size profiles, per-computer switch; photo thumbnails in migration 22.
+- [ADR-028](ADR-028-additional-product-categories.md): one main category for reports plus up to 20 others for browsing (migration 23).

@@ -58,7 +58,7 @@ export class OutboxError extends Error {
  *
  * It takes a {@link Queryable} rather than a Database precisely so it cannot be
  * called on its own: the caller must already be inside the transaction that is
- * writing the business rows. That is the whole point — see ADR-014.
+ * writing the business rows. That is the whole point (see ADR-014).
  */
 export function enqueue(tx: Queryable, event: NewEvent): OutboxEvent {
   validate(event);
@@ -129,8 +129,8 @@ export function pendingCount(tx: Queryable): number {
  * Marks events the server acknowledged.
  *
  * Acknowledging an event that is already delivered is not an error: a push
- * whose response was lost is retried, and the server — being idempotent
- * (ADR-006) — acknowledges it again.
+ * whose response was lost is retried, and the server, being idempotent
+ * (ADR-006), acknowledges it again.
  */
 export function markDelivered(tx: Queryable, eventIds: readonly string[], at: string): number {
   if (eventIds.length === 0) {
@@ -175,7 +175,7 @@ export function markAttemptFailed(tx: Queryable, eventIds: readonly string[], re
  * Marks an event the server refused outright.
  *
  * This is for a rejection the server will give again however many times it is
- * retried — a malformed payload, an event type it does not know. Retrying
+ * retried: a malformed payload, an event type it does not know. Retrying
  * forever would block everything queued behind it, so it is set aside and
  * surfaced rather than dropped: the business record it carries still exists on
  * this device and someone has to decide what to do about it.

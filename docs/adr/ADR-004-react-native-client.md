@@ -29,5 +29,5 @@ Hardware is abstracted behind services:
   desktop remain reachable.
 * Domain logic in `domain/` must stay free of React and of platform APIs so it is
   testable in isolation and reusable by other clients.
-* Performance targets (§46) — fast product search, fast POS, efficient large-list
-  rendering, minimal startup delay — constrain UI implementation choices.
+* Performance targets (§46), fast product search, fast POS, efficient large-list
+  rendering, minimal startup delay, constrain UI implementation choices.

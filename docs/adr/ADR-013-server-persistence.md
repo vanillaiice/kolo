@@ -1,4 +1,4 @@
-# ADR-013: Server persistence — driver, migrations, and tenant enforcement
+# ADR-013: Server persistence: driver, migrations, and tenant enforcement
 
 **Status:** Accepted
 **Source:** SPECIFICATION.md §30, §31, §37, §40, §43, §51; ADR-003, ADR-008
@@ -19,8 +19,8 @@ leak inward.
 
 `github.com/jackc/pgx/v5`, used through its native interface rather than
 `database/sql`. It is the maintained PostgreSQL driver for Go, and the native
-interface gives typed access to PostgreSQL's own types — `uuid`, `timestamptz`,
-`text[]` — which the schema below relies on.
+interface gives typed access to PostgreSQL's own types (`uuid`, `timestamptz`,
+`text[]`), which the schema below relies on.
 
 ### Migrations
 
@@ -63,7 +63,7 @@ operators.
 * Timestamps are `timestamptz`, written in UTC.
 * `updated_at` is set by the domain, not by a trigger. The entity already owns
   when it changed, and a trigger would overwrite that with the moment the row
-  happened to be written — which for a synced record is the wrong time entirely.
+  happened to be written, which for a synced record is the wrong time entirely.
 * Constraints that protect an invariant are declared in the schema as well as
   the domain. The domain is the place rules are expressed; the schema is what
   holds when a bad migration, a manual fix, or a future service gets it wrong.
@@ -76,5 +76,5 @@ operators.
 * Repositories translate between domain types and driver types at the edge:
   typed identifiers become `uuid`, `authz.Set` becomes `text[]`. The domain
   keeps its own vocabulary.
-* Because migrations are embedded, adding one means rebuilding — which is the
+* Because migrations are embedded, adding one means rebuilding, which is the
   intent, since a schema change and the code that depends on it ship together.

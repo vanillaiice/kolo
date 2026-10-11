@@ -45,7 +45,7 @@ The central design principle is:
 
 > **The business must remain operational when the internet is unavailable.**
 
-Internet connectivity is treated as an enhancement for synchronization, backups, multi-device operation, remote management, and other online functionality—not as a prerequisite for basic business operations.
+Internet connectivity is treated as an enhancement for synchronization, backups, multi-device operation, remote management, and other online functionality, not as a prerequisite for basic business operations.
 
 The initial product should focus on operational business management rather than attempting to become a complete accounting or ERP system.
 

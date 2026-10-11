@@ -52,7 +52,7 @@ export interface NativeDatabase {
 }
 
 /**
- * What the native driver can bind — which is **not** quite {@link SqlValue}.
+ * What the native driver can bind, which is **not** quite {@link SqlValue}.
  *
  * The difference is `bigint`, and it matters. The data layer's value type allows
  * one because `node:sqlite` hands back a bigint for an integer too large for a
@@ -94,7 +94,7 @@ function bind(parameters: readonly SqlValue[], sql: string): NativeBindValue[] {
  * Wraps a native handle, applying the same settings the test adapter uses.
  *
  * The pragmas are repeated rather than shared because they are per-connection
- * and this is a different connection — and because a device that silently ran
+ * and this is a different connection, and because a device that silently ran
  * without foreign keys would behave differently from every test, which is the
  * one divergence that would be hardest to find.
  */

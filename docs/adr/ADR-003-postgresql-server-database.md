@@ -22,6 +22,6 @@ path of any core business operation.
 * Server schema and client schema are related but independent artefacts, with
   separate migration histories.
 * The server is the durable system of record across devices, but it is not the
-  arbiter of whether a business operation may proceed — that is decided locally.
+  arbiter of whether a business operation may proceed; that is decided locally.
 * Idempotency of event application (ADR-006) is enforced with database
   constraints, not only in application code.

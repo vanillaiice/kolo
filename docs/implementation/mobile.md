@@ -12,8 +12,8 @@ Installed Android acceptance (F1/F3/F4 and the parity checks) has not run.
   replacement unmount screens, drafts, subscriptions and previews together.
 - `app/session.tsx` exposes the session, `useRevision` (frozen while a screen is hidden),
   `usePermissions` and `useDraft` (backed by `app/draft-store.ts`).
-- `app/navigation*.ts(x)` and `features/shell` provide four destinations — **Sell, Products,
-  Activity, More** — as stacks (list → detail → action). Phones use a bottom bar; from 600 dp
+- `app/navigation*.ts(x)` and `features/shell` provide four destinations (**Sell, Products,
+  Activity, More**) as stacks (list → detail → action). Phones use a bottom bar; from 600 dp
   (adjusted for font scale) a side rail with list/detail side by side. Hidden stack screens stay
   mounted (search and scroll survive) but do not query. Back closes a sheet, pops the stack with a
   discard confirmation for edited forms, returns to the landing destination, then leaves the app.
@@ -93,6 +93,6 @@ statements show the running balance. Core additions for mobile: `application/rec
 destination rules, failure mapping, edit versions and receipt output; core tests cover the new
 reads and report views. `npm run benchmark:mobile:host` builds the large fixture (10 000
 products, 100 000 movements, 2 000-entry statement and event backlog) and times the core calls
-on the host — a baseline, not an Android measurement. Rendering, native pickers, printing,
+on the host: a baseline, not an Android measurement. Rendering, native pickers, printing,
 keystore, scanners, TalkBack and device performance need the installed procedures in
 [F4 native validation](f4-native-validation.md) and [mobile parity](mobile-parity.md).

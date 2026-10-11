@@ -124,7 +124,7 @@ export class PurchaseError extends Error {
  * money handed over, the debt for the rest, and the event carrying all of it.
  *
  * Returns the totals, so a screen can show what was actually recorded rather
- * than what it worked out separately — two answers to the same arithmetic is how
+ * than what it worked out separately; two answers to the same arithmetic is how
  * a delivery note comes to disagree with a report.
  */
 export function recordPurchase(database: Database, delivery: Delivery): DeliveryTotals {
@@ -192,7 +192,7 @@ function checkCredit(delivery: Delivery, totals: DeliveryTotals): void {
 /**
  * Works out what a delivery comes to, refusing anything that does not add up.
  *
- * Exported because a screen needs the running total before anything is written —
+ * Exported because a screen needs the running total before anything is written,
  * and it must be this function, not a second one in the interface. Two
  * implementations of the same arithmetic is how the screen comes to say one
  * number and the delivery note another.

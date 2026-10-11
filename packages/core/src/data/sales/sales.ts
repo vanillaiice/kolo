@@ -117,7 +117,7 @@ export class SaleError extends Error {
  * and the event that carries them, all in one transaction.
  *
  * Returns the totals, so a till can show what was actually recorded rather than
- * what it worked out separately — two answers to the same arithmetic is how a
+ * what it worked out separately; two answers to the same arithmetic is how a
  * receipt comes to disagree with a report.
  */
 export function completeSale(database: Database, cart: Cart): SaleTotals {
@@ -192,7 +192,7 @@ function checkCredit(cart: Cart, totals: SaleTotals): void {
  * Works out what a sale comes to, refusing anything that does not add up.
  *
  * Exported because a till needs the running total of a cart before anything is
- * written — and it must be this function, not a second one in the interface.
+ * written, and it must be this function, not a second one in the interface.
  * Two implementations of the same arithmetic is how the screen comes to say one
  * number and the receipt another.
  */

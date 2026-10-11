@@ -59,7 +59,7 @@ export interface EventApplier {
 
 /**
  * Thrown by an applier for an event that will never apply, however long it
- * waits — a payload it cannot read, a shape it does not recognise.
+ * waits: a payload it cannot read, a shape it does not recognise.
  */
 export class UnusableEvent extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -126,7 +126,7 @@ export const DEFAULT_MAX_ROUND_TRIPS = 20;
  * Drains the outbox and the inbox.
  *
  * One engine per database. `sync()` is not safe to run concurrently with itself
- * — see the guard in {@link SyncEngine.sync}.
+ * (see the guard in {@link SyncEngine.sync}.
  */
 export class SyncEngine {
   readonly #database: Database;

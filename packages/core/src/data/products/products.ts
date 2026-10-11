@@ -103,8 +103,8 @@ const UPSERT = `
  * never will is the loss ADR-014 exists to prevent, and it applies to a price
  * correction as much as to a sale.
  *
- * Returns whether the write took effect. A local save normally does — the
- * shopkeeper is editing what is in front of them — but it can lose to an edit
+ * Returns whether the write took effect. A local save normally does (the
+ * shopkeeper is editing what is in front of them), but it can lose to an edit
  * from another device that arrived with a later timestamp, and the caller
  * should show what is actually stored rather than what was typed.
  * Application adapters supply a native UUIDv7 event ID; omitted IDs retain the
@@ -193,7 +193,7 @@ export function productByBarcode(
  *
  * The POS path, and the one §46 names as having to be fast. A cashier types
  * three or four letters between one customer and the next, so this has to be a
- * prefix match an index can serve rather than a scan — and it has to rank,
+ * prefix match an index can serve rather than a scan, and it has to rank,
  * because the first row is the one that gets tapped.
  *
  * The ranking is deliberate and in this order:
@@ -209,7 +209,7 @@ export function productByBarcode(
  * sells wastes the one tap the cashier had.
  *
  * `LIKE` with a leading wildcard cannot use an index, and that is accepted for
- * arm 4 only — a shop's catalogue is thousands of rows, not millions, and the
+ * arm 4 only: a shop's catalogue is thousands of rows, not millions, and the
  * arms above it are the ones that answer a scanner. If a catalogue ever grows
  * past what this serves in a keystroke, FTS5 is the next step and this function
  * is where it goes.

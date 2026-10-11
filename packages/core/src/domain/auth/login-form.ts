@@ -8,8 +8,8 @@
  * answer to the same question.
  *
  * Nothing here checks a credential. The PIN is verified by the server and
- * nowhere else (ADR-012); what this prevents is spending a round trip — over a
- * link §45 assumes is slow and expensive — on something that cannot possibly be
+ * nowhere else (ADR-012); what this prevents is spending a round trip (over a
+ * link §45 assumes is slow and expensive) on something that cannot possibly be
  * right, such as an empty PIN or a business identifier missing half its digits.
  */
 
@@ -60,7 +60,7 @@ export interface LoginFormView {
  *
  * Deliberately *not* matching its weak-PIN rules. Those exist for the moment a
  * PIN is chosen; applying them at login would tell somebody their PIN is too
- * simple when what they need to be told is that it is wrong — and would lock
+ * simple when what they need to be told is that it is wrong, and would lock
  * out anyone whose PIN was set before the rule existed.
  */
 export const MIN_PIN_LENGTH = 4;
@@ -108,7 +108,7 @@ export function viewLoginForm(form: LoginFormState): LoginFormView {
  *
  * Forgiving about how it was typed and strict about what it is. Every
  * identifier is a UUID (ADR-011), and the one place a person ever types one is
- * here — copied from a message, an email or a slip of paper, so it arrives with
+ * here: copied from a message, an email or a slip of paper, so it arrives with
  * stray spaces, in capitals, sometimes with the dashes rubbed out. All of those
  * name the same shop. Anything else is refused rather than sent, because the
  * server would refuse it after a round trip on a link that may cost the shop

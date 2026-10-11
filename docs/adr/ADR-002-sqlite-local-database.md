@@ -6,8 +6,8 @@
 ## Context
 
 Offline-first (ADR-001) requires durable local storage that can hold the full
-working set of a business — products, inventory movements, sales, customers,
-suppliers, purchases, payments, expenses, financial accounts, and sync metadata —
+working set of a business: products, inventory movements, sales, customers,
+suppliers, purchases, payments, expenses, financial accounts, and sync metadata,
 and query it fast on inexpensive Android hardware.
 
 ## Decision
@@ -30,6 +30,6 @@ SQLite is the **primary operational database** on the client, not a cache.
 * Client and server schemas evolve separately and need not be identical, but the
   event contract between them (ADR-006) must stay compatible.
 * Query performance work (indices, pagination, list virtualisation) happens
-  against SQLite, and is a product requirement rather than an optimisation —
+  against SQLite, and is a product requirement rather than an optimisation:
   §46.
 * Local data at rest is sensitive business information and is protected as such.

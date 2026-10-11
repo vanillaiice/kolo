@@ -20,7 +20,7 @@ synchronous transaction is what makes "everything in this function, or nothing"
 expressible without a promise chain that a caller could accidentally break in
 the middle. Around four hundred tests and every repository are written against
 it. **A driver that only offers an asynchronous API is therefore not a driver we
-can adopt** — adopting one would mean rewriting the whole data layer, not
+can adopt**: adopting one would mean rewriting the whole data layer, not
 writing an adapter.
 
 **Devices are cheap Android hardware on bad connections.** §46 asks for fast
@@ -46,8 +46,8 @@ to keep up with. That is accepted.
 
 ### The device's SQLite driver is `expo-sqlite`
 
-Its synchronous API — `runSync`, `getFirstSync`, `getAllSync`,
-`withTransactionSync` — maps onto our interface one method at a time, so the
+Its synchronous API (`runSync`, `getFirstSync`, `getAllSync`,
+`withTransactionSync`) maps onto our interface one method at a time, so the
 device adapter is a thin file beside the `node:sqlite` one that tests already
 use. Both run real SQLite, so the same SQL is exercised either way and only the
 adapter differs. That is the same reasoning ADR-013 gives for testing the
@@ -64,7 +64,7 @@ and it is maintained in step with the SDK we have just taken on.
   interface in `driver.ts` is what buys that, and is worth keeping narrow.
 * **Tests continue to run under Node, not on a device.** `node:sqlite` is real
   SQLite, so schema, constraints and queries are exercised for real. What that
-  still does not cover is the native module itself — that needs a device, and no
+  still does not cover is the native module itself; that needs a device, and no
   amount of Node testing substitutes for running the app once.
 * **A synchronous driver is now a stated requirement**, not an accident of what
   was convenient. A future driver that offers only promises is disqualified on

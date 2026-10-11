@@ -1,7 +1,6 @@
 # F1 native validation
 
-## Recorded evidence — 2026-10-06
-
+## Recorded evidence (2026-10-06)
 - Core lifecycle tests use real SQLite and Node/OpenSSL PBKDF2/Ed25519. Desktop vault
   tests use actual filesystem persistence and a simulated OS encryption API; they
   do not prove DPAPI or Android keystore.

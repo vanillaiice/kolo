@@ -42,7 +42,7 @@ business.
 * Business rules must be expressed so that they can be evaluated against local
   state alone. Rules requiring a global view (for example, a hard cross-device
   stock reservation) cannot be enforced synchronously and must be handled as
-  reconciliation after the fact — see ADR-006 and ADR-009.
+  reconciliation after the fact (see ADR-006 and ADR-009).
 * Some validation is necessarily duplicated between client and server. The server
   still validates everything it receives (it cannot trust a client), but the
   client's copy is authoritative for the offline user experience.

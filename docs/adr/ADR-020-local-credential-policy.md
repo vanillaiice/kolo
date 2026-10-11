@@ -1,4 +1,4 @@
-# ADR-020 — Local credential policy
+# ADR-020: Local credential policy
 
 Status: Implemented candidate; Android/Windows benchmark and security acceptance pending.
 Date: 2026-10-06.

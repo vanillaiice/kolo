@@ -44,5 +44,5 @@ Financial history is append-only.
   mutable running total.
 * "Undo" is not available as a user primitive. The UI expresses corrections as
   reversals.
-* Conflict resolution for financial data never merges or picks a winner — both
+* Conflict resolution for financial data never merges or picks a winner: both
   records stand, and any discrepancy is surfaced for human reconciliation.

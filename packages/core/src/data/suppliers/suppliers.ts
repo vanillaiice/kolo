@@ -216,7 +216,7 @@ export interface SupplierPayment {
  * off would be inventing a question the shop does not ask.
  *
  * Nothing is checked against the balance. Paying more than is owed leaves the
- * business in credit, which is the honest answer — refusing it would refuse a
+ * business in credit, which is the honest answer; refusing it would refuse a
  * payment the shopkeeper has actually made.
  */
 export function recordSupplierPayment(database: Database, payment: SupplierPayment): void {

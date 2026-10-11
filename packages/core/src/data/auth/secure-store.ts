@@ -2,7 +2,7 @@
  * Where the session token is kept (§37, ADR-012).
  *
  * The token is the one thing on the device that is a *credential* rather than a
- * record. Everything else in `kolo.db` — sales, prices, what a customer owes —
+ * record. Everything else in `kolo.db` (sales, prices, what a customer owes)
  * describes what happened; the token lets whoever holds it act as this till
  * against the server. §37 asks for secure token storage, so it goes to the
  * platform keystore rather than into a column beside the business data.
@@ -17,7 +17,7 @@
  * above can be tested under Node without a device.
  *
  * What no amount of Node testing covers is the keystore itself, which needs a
- * device — the same honest gap ADR-016 states for SQLite.
+ * device: the same honest gap ADR-016 states for SQLite.
  */
 
 /** The slice of the native secure store this adapter uses. */
@@ -35,7 +35,7 @@ export interface NativeSecureStore {
  *
  * Asynchronous, unlike the database, because the keystore genuinely is: reading
  * it can involve the platform's key manager. That is why the token is *not*
- * part of {@link Session} — a session is read synchronously while drawing a
+ * part of {@link Session}; a session is read synchronously while drawing a
  * screen, and only the sync engine needs the token.
  */
 export interface SecretStore {
@@ -69,7 +69,7 @@ export class SecretStoreError extends Error {
  * `undefined`, so callers have one way to say "nothing stored" (the same
  * translation `expo-sqlite.ts` makes for a missing row), and a thrown platform
  * error becomes a {@link SecretStoreError} that names the key but never the
- * value — an error that reached a log carrying the token would defeat the point
+ * value: an error that reached a log carrying the token would defeat the point
  * of storing it here.
  */
 export function nativeSecretStore(native: NativeSecureStore): SecretStore {

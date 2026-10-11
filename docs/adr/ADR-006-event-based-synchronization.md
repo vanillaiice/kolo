@@ -44,7 +44,7 @@ information, retry, partial failures, authentication, and conflict reporting.
   versions after multi-day gaps, so the server must accept every event version it
   has ever issued.
 * Because events are the unit of transfer, a business operation must be
-  expressible as one or more events — this shapes the domain model, not only the
+  expressible as one or more events; this shapes the domain model, not only the
   sync layer.
 * Conflict policy is per data type and must be explicit (ADR-007, ADR-009):
   financial transactions immutable, inventory movements append-only, product

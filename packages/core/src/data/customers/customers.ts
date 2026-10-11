@@ -214,7 +214,7 @@ export interface CustomerPayment {
  * 5,000 pays off would be inventing a question the shop does not ask.
  *
  * Nothing is checked against the balance. Paying more than is owed leaves a
- * customer in credit, which is the honest answer — refusing it would turn away
+ * customer in credit, which is the honest answer; refusing it would turn away
  * money the shopkeeper has in their hand.
  */
 export function recordCustomerPayment(database: Database, payment: CustomerPayment): void {

@@ -172,8 +172,8 @@ export function setDiscount(state: CartState, discountMinor: number): CartState 
 /**
  * Tenders a payment against the cart.
  *
- * A sale has *many* payments — split cash and Mobile Money is an ordinary case
- * (§11) — so these append rather than replace. Each names an account, never a
+ * A sale has *many* payments (split cash and Mobile Money is an ordinary case
+ * (§11), so these append rather than replace. Each names an account, never a
  * method, which is what keeps a provider a row rather than a release (§10).
  */
 export function addPayment(state: CartState, payment: CartPayment): CartState {

@@ -118,7 +118,7 @@ export interface MovementEvent {
 /**
  * Records a movement and queues the event that will carry it to the server.
  *
- * Both happen in one transaction. If either fails, neither happened — which is
+ * Both happen in one transaction. If either fails, neither happened, which is
  * the only way to make it impossible for a device to hold stock history the
  * server will never hear about (ADR-014).
  */
@@ -140,7 +140,7 @@ export function recordMovement(
  *
  * A business event fans out: a sale of three lines moves three products' stock,
  * and those movements are one fact. They are queued as one event because the
- * server applies the sale, not three unrelated stock changes — and because a
+ * server applies the sale, not three unrelated stock changes, and because a
  * partial arrival would leave the server with a sale that does not balance.
  */
 export function recordMovements(
@@ -186,7 +186,7 @@ export function recordMovements(
  * many are left must not load them all (§46). The answer is the same addition
  * either way.
  *
- * With `branchId`, only that branch's movements count — what a count taken on
+ * With `branchId`, only that branch's movements count: what a count taken on
  * that branch's shelves is compared against. Without it, the whole business.
  */
 export function stockOf(database: Queryable, businessId: string, productId: string, branchId?: string): StockLevel {

@@ -13,7 +13,7 @@ accessibility and documentation. Physical hardware and cross-device acceptance a
 deferred. Mobile is the next focus after this desktop work; browser delivery is deferred.
 See [desktop implementation](desktop.md) and [desktop release](desktop-release.md).
 
-## F0 — Repository and stack foundations
+## F0: Repository and stack foundations
 
 **Dependencies:** existing implementation. **Delivered in this change:** npm workspaces,
 one root lock, shared-core extraction, native wiring retained in mobile, Electron boot
@@ -25,7 +25,7 @@ boundaries pass; server HTTP behavior and desktop persistence tests pass; server
 compile; Metro resolves moved packages; docs links/reference are current. Native and
 container smoke results are recorded separately, never inferred from compilation.
 
-## F1 — Standalone setup and local authority
+## F1: Standalone setup and local authority
 
 **Dependencies:** F0. **Modules:** `core/identity`, `core/application`, native credential
 adapters; append SQLite migration 15+ rather than changing migrations 1–14.
@@ -67,7 +67,7 @@ setup/POS UI is F5. See [progress](progress.md) and
 complete a sale. Invalid/suspended actors cannot write via UI or direct application
 commands. A crash during secret/setup provisioning recovers without a half-enrolled till.
 
-## F2 — Shared pure rules and transport-independent event journal
+## F2: Shared pure rules and transport-independent event journal
 
 **Dependencies:** F1 identity model; pure rule extraction can begin alongside F1.
 **Modules:** `core/rules`, `core/application`, `core/data/exchange`, `contracts/events`.
@@ -111,7 +111,7 @@ stand; lost acknowledgements do not duplicate effects; an ID reused with differe
 content is quarantined; peer delivery leaves cloud work pending; denied imports leave
 no business effects. Arithmetic is identical on mobile, desktop, and server.
 
-## F3 — Backup and trusted file exchange
+## F3: Backup and trusted file exchange
 
 **Dependencies:** F1/F2. **Modules:** `core/exchange`, `core/backup`, native file adapters.
 
@@ -154,7 +154,7 @@ exchange bundles in both directions twice; stock, debts, balances, and reports m
 with no duplicate effects. Back up, restore on a fresh installation, and make a new
 sale without sequence/device collision. Corrupt/untrusted exports change nothing.
 
-## F4 — Standalone mobile operational MVP
+## F4: Standalone mobile operational MVP
 
 **Status (2026-10-06):** Operational navigation/screens, bounded authorized local
 queries/domain invalidation, split/credit till, shared categories and partial/full
@@ -181,7 +181,7 @@ below zero. Add backup/exchange diagnostics and accessible empty/error states.
 restart, credit collection, supplier payment, cash count, receipt, and backup. Native
 SQLite/keystore, scanner, and chosen receipt hardware are tested on devices.
 
-## F5 — Standalone desktop MVP
+## F5: Standalone desktop MVP
 
 **Status:** Active phase; desktop software packages implemented, acceptance open. The first offline setup → product → cash sale → receipt →
 restart workflow is implemented and verified in actual Linux Electron, followed by product
@@ -208,7 +208,7 @@ tools, sells, prints, restarts, restores, and exchanges with mobile. Renderer es
 untrusted navigation and malformed IPC cannot access unrestricted files/SQL. Measure
 startup/search latency/memory on target hardware and record budgets/results.
 
-## F6 — Optional Fastify synchronization server
+## F6: Optional Fastify synchronization server
 
 **Dependencies:** F2/F3 format/identity. **Modules:** identity, enrollment, memberships,
 sync, domain appliers, reports, audit, postgres; contracts shared with clients.
@@ -229,7 +229,7 @@ events and lost responses, and converge. Cross-tenant reads/writes are impossibl
 HTTP/repositories. Invalid events are visible and retained. Server behavior matches the
 archived fixtures for money, sales, credit, cash and purchases.
 
-## F7 — Hosted subscription and self-hosted edition
+## F7: Hosted subscription and self-hosted edition
 
 **Dependencies:** F6 and client endpoint enrollment UI.
 
@@ -246,7 +246,7 @@ bootstrap works on a LAN without external accounts or required telemetry.
 the retained backlog; a clean self-host install and full backup/restore drill pass;
 changing endpoint requires explicit enrollment and destination progress stays isolated.
 
-## F8 — Bluetooth transport
+## F8: Bluetooth transport
 
 **Dependencies:** F3 stable trusted exchange and supported hardware spike.
 
@@ -261,7 +261,7 @@ refusal or connection loss always leaves file exchange available.
 **Acceptance:** interruption at every chunk/ack boundary is retryable without duplicate
 effects; malicious length/chunk framing is refused; supported devices converge offline.
 
-## F9 — Release and maintenance
+## F9: Release and maintenance
 
 **Dependencies:** edition-specific completed phases; do not wait for Bluetooth to ship
 a verified standalone/file-exchange edition.
