@@ -10,15 +10,21 @@
     "typecheck": "tsc --noEmit",
     "dev": "npm run build && node --watch --env-file-if-exists=.env dist/main.js",
     "start": "node --env-file-if-exists=.env dist/main.js",
-    "test": "npm run build && node --test \"dist/**/*.test.js\""
+    "test": "npm run build && node --test \"dist/**/*.test.js\"",
+    "migrate": "node --env-file-if-exists=.env dist/main.js migrate"
   },
   "dependencies": {
+    "@fastify/rate-limit": "11.2.1",
     "@kolo/contracts": "0.1.0",
     "@kolo/core": "0.1.0",
     "fastify": "5.12.5",
-    "pg": "8.23.1"
+    "kysely": "0.29.6",
+    "otpauth": "9.5.2",
+    "pg": "8.23.1",
+    "qrcode": "1.5.4"
   },
   "devDependencies": {
-    "@types/pg": "8.23.1"
+    "@types/pg": "8.23.1",
+    "@types/qrcode": "1.5.6"
   }
 }

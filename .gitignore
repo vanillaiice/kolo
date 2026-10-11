@@ -24,6 +24,8 @@ apps/mobile/ios/build/
 # Environment
 .env
 .env.local
+# Sync server identity (private key); never commit.
+.kolo-server-key.json*
 
 # Editors / OS
 .DS_Store

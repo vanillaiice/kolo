@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build:packages": "npm run build -w @kolo/contracts && npm run build -w @kolo/core",
-    "build": "npm run build:packages && npm run build -w @kolo/server && npm run build -w @kolo/desktop",
+    "build": "npm run build:packages && npm run build -w @kolo/admin && npm run build -w @kolo/server && npm run build -w @kolo/desktop",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
     "test": "npm run build:packages && npm run test --workspaces --if-present",
     "check": "npm run boundaries && npm run typecheck && npm test && npm run docs:check && npm run build",
@@ -25,7 +25,7 @@
     "dev:mobile": "npm run start -w @kolo/mobile",
     "dev:mobile:demo": "node scripts/dev-mobile-demo.mjs",
     "dev:desktop": "npm run build:packages && npm run dev -w @kolo/desktop",
-    "dev:server": "npm run build:packages && npm run dev -w @kolo/server",
+    "dev:server": "npm run build:packages && npm run build -w @kolo/admin && npm run dev -w @kolo/server",
     "benchmark:credentials": "node scripts/benchmark-credentials.mjs",
     "bundle:mobile": "npm run bundle -w @kolo/mobile",
     "smoke:credentials": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/smoke-credentials.mjs",

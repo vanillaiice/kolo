@@ -1,0 +1,26 @@
+# HTTPS in front of the kolo sync server with Caddy (automatic Let's Encrypt certificates).
+# 1. Point a DNS name at this machine and open ports 80 and 443.
+# 2. Copy this file to /etc/caddy/Caddyfile, replace sync.example.com, and reload Caddy.
+# 3. Set KOLO_PUBLIC_URL=https://sync.example.com and KOLO_TRUST_PROXY=true for the server, then restart it.
+# The operator dashboard is deliberately not proxied: reach it with `ssh -L 8081:127.0.0.1:8081 <server>` and open
+# http://127.0.0.1:8081/admin/ on your own computer.
+sync.example.com {
+	encode zstd gzip
+	# Only the sync API, health checks and (hosted, if configured) the payment webhook are public.
+	@public path /api/v2/* /healthz /readyz /internal/billing/webhooks/*
+	handle @public {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle {
+		respond "Not found" 404
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	log {
+		# Request lines only: bodies are never logged.
+		output file /var/log/caddy/kolo-sync.log
+	}
+}
