@@ -41,6 +41,7 @@
     "build:mobile:android": "node scripts/build-mobile-android.mjs",
     "dist:desktop:linux": "npm run stage:desktop && electron-builder --config apps/desktop/electron-builder.json --linux --x64 --publish never",
     "demo:desktop": "npm run build:packages && node --experimental-strip-types apps/desktop/scripts/demo-data.ts",
+    "fixture:mobile": "npm run build:packages && node --experimental-strip-types apps/desktop/scripts/mobile-fixture-backup.ts",
     "prepare": "husky"
   },
   "devDependencies": {
