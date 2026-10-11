@@ -201,6 +201,24 @@ export function Tag({ text, tone = "attention" }: { readonly text: string; reado
 }
 
 /** Status text announced to screen readers; errors are never colour-only. */
+/**
+ * A long step in progress: the native spinner keeps turning while JavaScript is busy (a backup check
+ * runs synchronously), so the screen never looks frozen. Announced once for screen readers.
+ */
+export function Working({ text }: { readonly text: string }): React.JSX.Element {
+  const { colors } = useTheme();
+  useEffect(() => { AccessibilityInfo.announceForAccessibility(text); }, [text]);
+  return <View accessibilityRole="progressbar" accessibilityLabel={text} accessibilityLiveRegion="polite"
+    style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surfaceSoft, borderColor: colors.border, borderWidth: 1, borderRadius: radius.control, padding: spacing.md }}>
+    <ActivityIndicator size="large" color={colors.primary} /><Text style={{ ...typography.small, color: colors.text, flex: 1 }}>{text}</Text>
+  </View>;
+}
+
+/** Resolves after the next frame is drawn, so a status shown just before synchronous work is on screen. */
+export function nextPaint(): Promise<void> {
+  return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+
 export function Notice({ tone = "info", text, action }: { readonly tone?: "info" | "success" | "warning" | "error"; readonly text: string; readonly action?: ReactNode }): React.JSX.Element {
   const { colors } = useTheme();
   const look = { info: [colors.surfaceSoft, colors.text, colors.border], success: [colors.selected, colors.selectedInk, colors.selected], warning: [colors.yellowSoft, colors.yellowInk, colors.yellow],

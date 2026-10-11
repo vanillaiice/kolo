@@ -17,7 +17,7 @@ import { useLeaveGuard, useNav } from "../../app/navigation.tsx";
 import { useRevision, useSession } from "../../app/session.tsx";
 import { FormProblem, useAction } from "../../components/command.tsx";
 import { spacing, useTheme } from "../../components/theme.ts";
-import { Button, Confirm, EmptyState, Facts, Field, ListRow, Notice, RowGroup, Screen, Section, Segmented, Toggle, useStyles } from "../../components/ui.tsx";
+import { Button, Confirm, EmptyState, Facts, Field, ListRow, nextPaint, Notice, RowGroup, Screen, Section, Segmented, Toggle, useStyles, Working } from "../../components/ui.tsx";
 import { formatDate } from "../shared.tsx";
 import { PhotoUsage } from "../products/photos.tsx";
 
@@ -92,12 +92,17 @@ export function BackupRestoreScreen(): React.JSX.Element {
   const staged = useRef<BackupPreview | undefined>(undefined);
   useEffect(() => () => { if (staged.current !== undefined) void cancelBackupPreview(staged.current); }, []);
   useLeaveGuard(preview !== undefined);
+  const [working, setWorking] = useState<"workingReadFile" | "workingCheckBackup" | "workingRestore">();
+  useEffect(() => { if (!action.busy) setWorking(undefined); }, [action.busy]);
+  /** Shows what a long step is doing, on screen before its synchronous work starts. */
+  const showing = async (key: "workingReadFile" | "workingCheckBackup" | "workingRestore"): Promise<void> => { setWorking(key); await nextPaint(); };
   const restore = (): void => { void action.runAsync(async () => {
     if (preview === undefined) throw new FormProblem("checkFileFirst");
     if (secret !== confirmation) throw new FormProblem("codesMismatch");
     validateLocalSecret(secret);
     // The same shop restores under the owner's authority; another shop replaces this one through an empty stage.
     const request = { deviceLabel: label.trim() || t("defaultTill"), platform, secret } as const;
+    await showing("workingRestore");
     const database = preview.businessId === context.businessId
       ? (await restoreWorkspace(preview, { confirmedBusinessId: preview.businessId, ...request, recoveryContext: context }, ports)).database
       : await replaceShop(preview, request, ports, files, slots);
@@ -105,12 +110,13 @@ export function BackupRestoreScreen(): React.JSX.Element {
   }); };
   return <Screen title={t("restoreBackup")} onBack={nav.back} footer={action.notice}>
     <Notice tone="warning" text={t("replaceWarning", { current: businessName })} />
+    {working !== undefined && <Working text={t(working)} />}
     <Section title={t("stepFile")}>
-      <Button label={text === undefined ? t("pickFile") : t("pickAnotherFile")} variant="secondary" busy={action.busy} onPress={() => { void action.runAsync(async () => { const picked = await io.pick("backup"); if (picked !== undefined) { setText(picked); setPreview(undefined); } }); }} />
+      <Button label={text === undefined ? t("pickFile") : t("pickAnotherFile")} variant="secondary" busy={action.busy} onPress={() => { void action.runAsync(async () => { await showing("workingReadFile"); const picked = await io.pick("backup"); if (picked !== undefined) { setText(picked); setPreview(undefined); } }); }} />
       {text !== undefined && <><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
         <Button label={t("checkBackup")} busy={action.busy} disabled={password === ""} onPress={() => { void action.runAsync(async () => {
           if (staged.current !== undefined) { await cancelBackupPreview(staged.current); staged.current = undefined; }
-          const checked = await previewBackup(text, password, files, crypto); staged.current = checked; setPreview(checked); setPassword("");
+          await showing("workingCheckBackup"); const checked = await previewBackup(text, password, files, crypto); staged.current = checked; setPreview(checked); setPassword("");
         }); }} /></>}
       <Text style={s.muted}>{t("importLimitsHelp")}</Text>
     </Section>

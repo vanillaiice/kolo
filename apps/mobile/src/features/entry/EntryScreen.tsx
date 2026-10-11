@@ -21,7 +21,7 @@ import { workspaceErrorText } from "../../app/identity-errors.ts";
 import { failureKey, FormProblem } from "../../components/command.tsx";
 import { AppearanceControl, LanguageControl } from "../../components/controls.tsx";
 import { spacing, useTheme } from "../../components/theme.ts";
-import { Button, Confirm, Field, ListRow, Notice, Page, RowGroup, Section, Toggle, useStyles } from "../../components/ui.tsx";
+import { Button, Confirm, Field, ListRow, nextPaint, Notice, Page, RowGroup, Section, Toggle, useStyles, Working } from "../../components/ui.tsx";
 
 type Step =
   | { readonly name: "welcome" | "unlock" | "recover" | "pending" | "legacy" | "joining" | "import" }
@@ -57,6 +57,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
   const [secret, setSecret] = useState(""), [confirmation, setConfirmation] = useState(""), [recovery, setRecovery] = useState("");
   const [phone, setPhone] = useState(""), [serverPin, setServerPin] = useState(""), [password, setPassword] = useState(""), [typedName, setTypedName] = useState(""), [fingerprint, setFingerprint] = useState("");
   const [pairingCode, setPairingCode] = useState(""), [acknowledged, setAcknowledged] = useState(false), [replacing, setReplacing] = useState(false);
+  const [working, setWorking] = useState<"workingReadFile" | "workingCheckBackup" | "workingRestore">();
   const [busy, setBusy] = useState(false), [failure, setFailure] = useState<unknown>(), [notice, setNotice] = useState<"recovered" | "joinCancelled">();
   const staged = useRef<BackupPreview | undefined>(undefined), mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; if (staged.current !== undefined) void cancelBackupPreview(staged.current); }, []);
@@ -74,8 +75,10 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
   const run = async (work: () => Promise<void>): Promise<void> => {
     if (busy) return; setBusy(true); setFailure(undefined); setNotice(undefined);
     try { await work(); } catch (error) { if (mounted.current) { setFailure(error); onChanged(); } }
-    finally { if (mounted.current) setBusy(false); }
+    finally { if (mounted.current) { setBusy(false); setWorking(undefined); } }
   };
+  /** Shows what a long step is doing, on screen before its synchronous work starts. */
+  const showing = async (key: "workingReadFile" | "workingCheckBackup" | "workingRestore"): Promise<void> => { setWorking(key); await nextPaint(); };
   const checkNewSecret = (): void => { if (secret !== confirmation) throw new FormProblem("codesMismatch"); validateLocalSecret(secret); };
   /** Unlock after setup/migration/resume and show the recovery key once before opening the shop. */
   const openWithKey = async (ownerId: string): Promise<void> => {
@@ -88,7 +91,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
   const discardPreview = async (): Promise<void> => { if (staged.current !== undefined) { const preview = staged.current; staged.current = undefined; await cancelBackupPreview(preview); } };
 
   const message = failure === undefined ? undefined : failure instanceof WorkspaceError && !["locked", "permission_denied"].includes(failure.code) ? workspaceErrorText(failure, language) : t(failureKey(failure));
-  const status = <>{message !== undefined && <Notice tone="error" text={message} />}{notice !== undefined && <Notice tone="success" text={t(notice)} />}</>;
+  const status = <>{working !== undefined && <Working text={t(working)} />}{message !== undefined && <Notice tone="error" text={message} />}{notice !== undefined && <Notice tone="success" text={t(notice)} />}</>;
   const secrets = (fresh: boolean): ReactNode => <>
     <Field label={fresh ? t("newLocalSecret") : t("localSecret")} value={secret} onChange={setSecret} kind="secret" hint={fresh ? t("codeRule") : undefined} />
     {fresh && <Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" />}
@@ -175,7 +178,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
       <Text style={s.body}>{configured || state.state === "legacy" ? t("importBackupHelp") : t("importFileHelp")}</Text>
       <Text style={s.muted}>{t("importLimitsHelp")}</Text>
       <Button label={t("pickFile")} busy={busy} onPress={() => { void run(async () => {
-        const text = await pick(); if (text === undefined) return;
+        await showing("workingReadFile"); const text = await pick(); if (text === undefined) return;
         const kind = transferFileKind(text);
         if (kind === "backup") go({ name: "backup", text });
         else if (kind === "invite") { if (state.state !== "empty") throw new FormProblem("inviteNeedsEmpty"); go({ name: "invite", text, invite: await previewPairingInvite(text, crypto) }); }
@@ -186,7 +189,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
     case "backup": return frame(t("importBackup"), <Section>
       <Text style={s.body}>{t("backupPasswordHelp")}</Text><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
       <Button label={t("checkBackup")} busy={busy} disabled={password === ""} onPress={() => { void run(async () => {
-        await discardPreview(); const preview = await previewBackup(step.text, password, files, crypto); setPassword("");
+        await showing("workingCheckBackup"); await discardPreview(); const preview = await previewBackup(step.text, password, files, crypto); setPassword("");
         if (!mounted.current) { await cancelBackupPreview(preview); return; }
         staged.current = preview; go({ name: "restore", preview });
       }); }} />
@@ -197,6 +200,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
       const restore = async (): Promise<void> => {
         checkNewSecret();
         if (typedName.trim() !== preview.businessName) throw new FormProblem("typeShopName");
+        await showing("workingRestore");
         const request = { confirmedBusinessId: preview.businessId, deviceLabel: till.trim() || t("defaultTill"), platform, secret } as const;
         if (!configured && state.state !== "legacy") {
           const result = await restoreWorkspace(preview, request, ports); staged.current = undefined; clearSecrets(); onActivated(result.database); return;
