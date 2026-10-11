@@ -1174,6 +1174,11 @@ fixture without crashing, and the valuation report from a host restore of the sa
   makes it stale or unreadable: it is forgotten and the code is asked for. Android accepts any fingerprint
   registered on the phone, so the switch warns against shared phones, and the owner has a per-phone
   switch that removes every enrollment. Lock keeps the enrollment; device reset removes it.
+  The prompt is offered only while KOLO is in front: with "Stay signed in" off the till locks in the
+  background, and a prompt requested then is never shown or answered, which left the button disabled.
+  A fingerprint attempt has its own busy state (the code path never waits on it), and an attempt still
+  pending when KOLO returns to the front is abandoned. Verified on the Pixel: the prompt keeps KOLO's
+  activity resumed, appears after Home and return, and cancelling leaves both unlock paths usable.
   Logic in `src/data/auth/biometric-unlock.ts` (tested with real SQLite preferences); the native port is
   `biometric-on-device.ts`.
 

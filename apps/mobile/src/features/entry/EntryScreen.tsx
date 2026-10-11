@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Platform, Text, View } from "react-native";
+import { AppState, Platform, Text, View } from "react-native";
 import Constants from "expo-constants";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { createWorkspace, adoptLegacyWorkspace, resumeWorkspace, resumeWorkspaceProvisioning, unlockWorkspace } from "@kolo/core/identity/workspace";
@@ -72,23 +72,45 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
   const waiting = allActors.filter(actor => !actor.here).length, actors = allActors.filter(actor => actor.here);
   const [actorId, setActorId] = useState(actors[0]?.id);
   const biometricReady = actorId !== undefined && biometric.usable() && biometric.enrolled(actorId);
-  /** The system fingerprint or face prompt; success resumes the member exactly as "Stay signed in" does. */
-  const unlockWithBiometrics = (userId: string): Promise<void> => run(async () => {
-    const result = await biometric.unlock(userId, t("biometricPrompt"));
-    if (result.kind === "cancelled") return;
-    if (result.kind === "member") {
-      let context: OperationContext | undefined;
-      try { context = resumeWorkspace(result.member, ports); } catch { await biometric.forget(userId); }
-      if (context !== undefined) { onUnlocked(context); return; }
-    }
-    if (mounted.current) setNotice("biometricGone");
-  });
-  // Offer the prompt once when the unlock screen opens for an enrolled member.
-  const prompted = useRef(false);
+  /**
+   * The system fingerprint or face prompt; success resumes the member exactly as "Stay signed in" does.
+   * It has its own busy state so a prompt never holds up the code. Android cannot show the prompt
+   * while KOLO is not in front and then never answers, so an attempt still pending when KOLO comes
+   * back is abandoned (a late answer is ignored) and the button works again.
+   */
+  const [biometricBusy, setBiometricBusy] = useState(false), attempt = useRef(0);
+  const unlockWithBiometrics = async (userId: string): Promise<void> => {
+    const mine = ++attempt.current, current = (): boolean => mine === attempt.current && mounted.current;
+    setBiometricBusy(true); setFailure(undefined); setNotice(undefined);
+    try {
+      const result = await biometric.unlock(userId, t("biometricPrompt"));
+      if (!current() || result.kind === "cancelled") return;
+      if (result.kind === "member") {
+        let context: OperationContext | undefined;
+        try { context = resumeWorkspace(result.member, ports); } catch { await biometric.forget(userId); }
+        if (context !== undefined) { onUnlocked(context); return; }
+      }
+      if (current()) setNotice("biometricGone");
+    } catch (error) { if (current()) setFailure(error); }
+    finally { if (current()) setBiometricBusy(false); }
+  };
+  // Offer the prompt once for an enrolled member, as soon as KOLO is in front.
+  const prompted = useRef(false), latest = useRef({ ready: biometricReady, actorId, unlocking: step.name === "unlock" });
+  latest.current = { ready: biometricReady, actorId, unlocking: step.name === "unlock" };
   useEffect(() => {
-    if (prompted.current || step.name !== "unlock" || !biometricReady || actorId === undefined) return;
-    prompted.current = true; void unlockWithBiometrics(actorId);
-  });
+    const offer = (): void => {
+      const { ready, actorId: userId, unlocking } = latest.current;
+      if (prompted.current || !unlocking || !ready || userId === undefined || AppState.currentState !== "active") return;
+      prompted.current = true; void unlockWithBiometrics(userId);
+    };
+    offer();
+    const subscription = AppState.addEventListener("change", state => {
+      if (state !== "active") return;
+      if (attempt.current > 0 && mounted.current) { attempt.current++; setBiometricBusy(false); }
+      offer();
+    });
+    return () => subscription.remove();
+  }, [biometricReady, actorId, step.name]);
 
   const go = (next: Step): void => { setFailure(undefined); setNotice(undefined); setStep(next); };
   const clearSecrets = (): void => { setSecret(""); setConfirmation(""); setRecovery(""); setServerPin(""); setPassword(""); };
@@ -167,7 +189,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
         <Button label={t("unlock")} busy={busy} disabled={actorId === undefined || secret === ""} onPress={() => { void run(async () => {
           const context = await unlockWorkspace({ userId: actorId!, secret }, ports); clearSecrets(); onUnlocked(context);
         }); }} />
-        {biometricReady && <Button label={t("unlockWithBiometrics")} variant="secondary" busy={busy} onPress={() => { void unlockWithBiometrics(actorId!); }} />}
+        {biometricReady && <Button label={t("unlockWithBiometrics")} variant="secondary" busy={biometricBusy} disabled={busy} onPress={() => { void unlockWithBiometrics(actorId!); }} />}
       </Section>
       <Button label={t("forgotCode")} variant="ghost" onPress={() => { clearSecrets(); go({ name: "recover" }); }} />
       <Button label={t("importBackup")} variant="secondary" onPress={() => go({ name: "import" })} />
