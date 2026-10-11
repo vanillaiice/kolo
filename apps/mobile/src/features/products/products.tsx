@@ -8,7 +8,7 @@ import type { Product } from "@kolo/core/data/products/products";
 import type { Category } from "@kolo/core/data/products/categories";
 import type { Row } from "@kolo/core/data/database/driver";
 import { moneyEntry, quantityEntry, quantityInput } from "@kolo/core/domain/entry";
-import { formatMoney, formatQuantity } from "@kolo/core/domain/money";
+import { formatMoney, formatQuantity, formatQuantityWithUnit } from "@kolo/core/domain/money";
 import { newIdOnDevice } from "../../data/auth/local-credentials-on-device.ts";
 import { useText, type TextKey } from "../../app/i18n.tsx";
 import { useLeaveGuard, useNav, useParams } from "../../app/navigation.tsx";
@@ -24,7 +24,7 @@ const MOVEMENT_KEYS: Record<string, TextKey> = { PURCHASE: "movement.PURCHASE", 
 
 /** Searchable catalogue; creation sits on the list, record actions on the detail. */
 export function ProductsScreen(): React.JSX.Element {
-  const { t } = useText(), nav = useNav(), { context } = useSession(), permissions = usePermissions(), revision = useRevision(["products", "inventory"]);
+  const { t, language } = useText(), nav = useNav(), { context } = useSession(), permissions = usePermissions(), revision = useRevision(["products", "inventory"]);
   const [archived, setArchived] = useState(false), showStock = permissions.includes("inventory.view");
   return <Screen title={t("tab.products")} scroll={false} actions={permissions.includes("products.create") ? <Button label={t("new")} variant="ghost" onPress={() => nav.push("productForm", {})} /> : undefined}>
     <PagedList<Product & { stock?: number; photo?: string }> revision={revision} identify={item => item.id} deps={[archived]} searchLabel={t("searchProducts")}
@@ -37,7 +37,7 @@ export function ProductsScreen(): React.JSX.Element {
         <Button label={t("categories")} variant="secondary" onPress={() => nav.push("categories")} /></>}
       empty={{ title: t("noProducts"), text: t("noProductsHelp") }}
       render={item => <ListRow title={item.name} tag={item.active ? undefined : t("archived")} leading={<Thumbnail productId={item.id} name={item.name} digest={item.photo ?? null} />}
-        subtitle={item.stock === undefined ? item.barcode : `${t("stock")} ${formatQuantity(item.stock)} ${item.unit}${item.stock < 0 ? ` · ${t("negativeStock")}` : ""}`}
+        subtitle={item.stock === undefined ? item.barcode : `${t("stock")} ${formatQuantityWithUnit(item.stock, item.unit, language)}${item.stock < 0 ? ` · ${t("negativeStock")}` : ""}`}
         trailing={formatMoney(item.sellingPriceMinor)} trailingTone={item.stock !== undefined && item.stock < 0 ? "danger" : "normal"} onPress={() => nav.push("product", { productId: item.id })} />} />
   </Screen>;
 }
@@ -60,7 +60,7 @@ export function ProductScreen(): React.JSX.Element {
     {!item.active && <Notice tone="warning" text={t("productArchivedHelp")} />}
     <Section>
       <Facts items={[[t("price"), formatMoney(item.sellingPriceMinor), "strong"], [t("cost"), item.purchasePriceMinor === undefined ? t("unknown") : formatMoney(item.purchasePriceMinor)],
-        [t("stock"), stock === undefined ? undefined : `${formatQuantity(stock.onHandThousandths)} ${item.unit}`, stock !== undefined && stock.onHandThousandths < 0 ? "danger" : undefined],
+        [t("stock"), stock === undefined ? undefined : formatQuantityWithUnit(stock.onHandThousandths, item.unit, language), stock !== undefined && stock.onHandThousandths < 0 ? "danger" : undefined],
         [t("minimum"), formatQuantity(item.minimumStock)], [t("barcode"), item.barcode], [t("unit"), item.unit], [t("mainCategory"), group?.name], [t("otherCategories"), others.map(other => other.name).join(", ")],
         [t("divisible"), item.divisible ? t("yes") : t("no")], [t("updated"), formatDate(item.updatedAt, language)]]} />
       {stock !== undefined && stock.onHandThousandths < 0 && <Notice tone="warning" text={t("negativeStock")} />}
