@@ -94,11 +94,11 @@
     ],
     [
       "Bring your devices together",
-      "Optional encrypted sync keeps connected tills in step. Add a device with a code or QR and the owner’s approval."
+      "Pair a phone or another computer with your desktop using a code or QR and the owner’s approval. Encrypted sync works on the same Wi-Fi or hotspot without internet."
     ],
     [
       "Choose your setup",
-      "Use KOLO on its own, or connect your devices to a sync server you run yourself."
+      "Use KOLO on its own, sync locally while the desktop is open and unlocked, or connect devices through an optional sync server."
     ]
   ],
   "downloadsEyebrow": "Ready for your counter",
@@ -147,7 +147,7 @@
   "faq": [
     [
       "Do I need internet to sell?",
-      "No. Sales, stock, customer credit and reports work on the device. Internet is needed when syncing through a server."
+      "No. Sales, stock, customer credit and reports work on the device. Devices can sync on the same Wi-Fi or hotspot while the desktop is open and unlocked, without internet. Internet is needed to reach a remote sync server."
     ],
     [
       "Can my staff use KOLO?",
@@ -176,7 +176,7 @@
   "top": "Back to top",
   "videoTitle": "Watch a shop workflow",
   "videoFallback": "Download the demonstration video",
-  "promoDescription": "KOLO helps shops sell, manage stock, follow customer credit, suppliers, expenses and reports. It works offline on Windows, Linux and Android, with English and French interfaces and amounts in FCFA (XAF). Optional encrypted sync connects devices through a hosted or self-hosted server. KOLO is in public beta. iOS and distribution through Google Play and F-Droid are coming later.",
+  "promoDescription": "KOLO helps shops sell, manage stock, follow customer credit, suppliers, expenses and reports. It works offline on Windows, Linux and Android, with English and French interfaces and amounts in FCFA (XAF). Optional encrypted sync connects devices on the same Wi-Fi or hotspot without internet, or through a hosted or self-hosted server. KOLO is in public beta. iOS and distribution through Google Play and F-Droid are coming later.",
   "policies": {
     "privacyLink": "Privacy policy",
     "cookiesLink": "Cookie policy",

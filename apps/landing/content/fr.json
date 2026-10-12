@@ -94,11 +94,11 @@
     ],
     [
       "Reliez vos appareils",
-      "La synchronisation chiffrée facultative relie vos caisses connectées. Ajoutez un appareil par code ou QR, avec l’accord du propriétaire."
+      "Associez un téléphone ou un autre ordinateur à votre caisse ordinateur par code ou QR, avec l’accord du propriétaire. La synchronisation chiffrée fonctionne sur le même Wi-Fi ou point d’accès, sans Internet."
     ],
     [
       "Choisissez votre installation",
-      "Utilisez KOLO seul, ou reliez vos appareils à un serveur de synchronisation que vous hébergez vous-même."
+      "Utilisez KOLO seul, synchronisez localement pendant que la caisse ordinateur est ouverte et déverrouillée, ou reliez les appareils via un serveur facultatif."
     ]
   ],
   "downloadsEyebrow": "Prêt pour votre comptoir",
@@ -147,7 +147,7 @@
   "faq": [
     [
       "Faut-il Internet pour vendre ?",
-      "Non. Les ventes, le stock, les crédits clients et les rapports fonctionnent sur l’appareil. Internet est nécessaire pour synchroniser via un serveur."
+      "Non. Les ventes, le stock, les crédits clients et les rapports fonctionnent sur l’appareil. Les appareils peuvent se synchroniser sur le même Wi-Fi ou point d’accès pendant que la caisse ordinateur est ouverte et déverrouillée, sans Internet. Internet est nécessaire pour joindre un serveur distant."
     ],
     [
       "Mon personnel peut-il utiliser KOLO ?",
@@ -176,7 +176,7 @@
   "top": "Retour en haut",
   "videoTitle": "Découvrez une journée en boutique",
   "videoFallback": "Télécharger la vidéo de démonstration",
-  "promoDescription": "KOLO aide les boutiques à vendre, gérer le stock et suivre les crédits clients, les fournisseurs, les dépenses et les rapports. L’application fonctionne hors ligne sur Windows, Linux et Android, en français et en anglais, avec des montants en FCFA (XAF). La synchronisation chiffrée facultative relie les appareils via un serveur hébergé ou auto-hébergé. KOLO est en bêta publique. iOS et la distribution sur Google Play et F-Droid sont prévus plus tard.",
+  "promoDescription": "KOLO aide les boutiques à vendre, gérer le stock et suivre les crédits clients, les fournisseurs, les dépenses et les rapports. L’application fonctionne hors ligne sur Windows, Linux et Android, en français et en anglais, avec des montants en FCFA (XAF). La synchronisation chiffrée facultative relie les appareils sur le même Wi-Fi ou point d’accès sans Internet, ou via un serveur hébergé ou auto-hébergé. KOLO est en bêta publique. iOS et la distribution sur Google Play et F-Droid sont prévus plus tard.",
   "policies": {
     "privacyLink": "Confidentialité",
     "cookiesLink": "Cookies",
