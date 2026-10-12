@@ -22,3 +22,12 @@ test("shared text receipts list lines, settlement and returns from saved facts o
   const settled = receiptText({ ...saved, customerName: undefined, outstandingMinor: 0, returnedMinor: 0, discountMinor: 0 }, "Shop", labels);
   for (const absent of ["Customer", "Owing", "Returned", "Discount"]) assert.ok(!settled.includes(absent), absent);
 });
+
+test("receipts show the tax included per rate and the shop's tax number, escaped, only when the sale carried tax", () => {
+  const taxed: Receipt = { ...saved, tax: { label: "TVA <x>", registration: "M01 & 2", groups: [{ rateBasisPoints: 1925, grossMinor: 1400, taxMinor: 226, netMinor: 1174 }] } };
+  const text = receiptText(taxed, "Shop", { ...labels, taxIncluded: "incl.", taxNumber: "Tax no." });
+  assert.ok(text.includes("incl. TVA <x> 19,25 %: 226"), text); assert.ok(text.includes("Tax no. M01 & 2"));
+  const html = receiptHtml(taxed, "Shop", { ...labels, taxIncluded: "incl.", taxNumber: "Tax no." });
+  assert.ok(html.includes("TVA &lt;x&gt;")); assert.ok(html.includes("M01 &amp; 2")); assert.ok(!html.includes("<x>"));
+  assert.ok(!receiptText(saved, "Shop", labels).includes("TVA"));
+});

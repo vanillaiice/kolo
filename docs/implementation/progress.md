@@ -1408,3 +1408,51 @@ Python preview serves the rebuilt site; nothing has been deployed.
 `npm run test:server:pg` (`scripts/test-server-postgres.mjs`) starts a throwaway `postgres:18` container on a random
 loopback port, runs the server suite with `KOLO_TEST_DATABASE_URL` and removes the container. The pre-push hook runs it
 when Docker is reachable. First run: 28 passed, 0 skipped (previously 23 skipped without a database).
+
+## 2026-10-12: Tax included in prices, payment terms and alerts (ADR-033)
+
+The user chose tax-inclusive prices, payment terms in days, in-app alerts plus desktop system notifications, and four
+alert kinds (stock, overdue customers, supplier payments, cash differences and sync).
+
+- **Core:** contracts `TAX_SETTINGS_SET`, `PRODUCT_TAX_SET`, `PAYMENT_TERMS_SET` (new event types, so older tills keep
+  them unsupported); migration 28 (`shop_tax_settings`, `product_tax_rules`, `payment_terms`, `notification_state`,
+  the last cleared from snapshots); `rules/tax` and `rules/terms`; `operations.setTaxSettings`, `setProductTaxRule`,
+  `setPaymentTerms`; sales stamp the effective rate per line; receipt `tax` groups; `tax` report kind;
+  `application/settings` reads; `application/notifications` with per-user read/announced marks; `rateEntry`,
+  `rateInput`, `formatRate`.
+- **Desktop:** ten bridge commands (`electron/settings.ts`), Settings tax/terms panels and a per-computer
+  system-notification switch, product tax rule, customer/supplier due dates, receipt tax lines, "Tax collected"
+  report, topbar Alerts with system notifications through the renderer's Notification API.
+- **Mobile:** More → Alerts with unread count, Settings → Shop → Tax and Payment terms, product Tax, person due dates
+  and own terms, receipt (screen, share text, print) tax lines, tax report.
+
+### Verification
+
+- Core: 19 new tests: exact BigInt oracle for included tax over boundaries and 5,000 random cases; property test that
+  groups add up to sale totals under random discounts; oldest-first oracle over 3,000 random ledgers; operations,
+  permissions, LWW, invalid input with no writes; tax report equals net sales after returns; migration 27→28 on a
+  populated schema; snapshot sanitize; two-replica relay with LWW, duplicates and forged/invalid facts quarantined;
+  notifications by kind, permission, fingerprint and marks. Rate entry/format round-trip for all 10,001 rates.
+- Desktop: 2 new host tests over real SQLite (versioned edits, retries, permissions, dispatcher). Mobile: receipt output
+  tax lines. Typechecks, Metro Android export.
+- `npm run check` (742 core, 60 desktop, 24 mobile tests), `npm run test:server:pg` (28/28) and the Electron workflow
+  smoke pass. The smoke now enables tax and terms in Settings, opens Alerts, the tax report, the product tax rule and a
+  customer's due dates, with axe WCAG A/AA audits in light and dark. Auditing product detail for the first time found
+  the photo editor's hidden file input had no accessible name; it now has one and is out of the tab order.
+- Not verified: rendering of the new screens on an installed Android phone or Windows; native notification display
+  (Electron's Notification on Windows/Linux); Android system notifications are not built.
+
+## 2026-10-12: Android notifications for alerts
+
+The user asked for Android system notifications if not difficult. Added `expo-notifications` (SDK 57 match, local
+notifications only, no Firebase/push) with its config plugin (monochrome status-bar icon). `data/output/
+notifications-on-device.ts` is the only module importing it; a per-phone `systemNotifications` device preference (on by
+default) is switched in Settings and on the Alerts screen, which asks Android 13+ for permission through
+`session.systemUi`. While the shop is open, the shell rereads alerts on changes, every five minutes and on return to the
+foreground, raises new unread ones once (three, then a summary) and marks them announced; a tap opens More → Alerts.
+No background task: a closed or killed app raises nothing.
+
+Verification: Android release build (`npm run build:mobile:android`, with ANDROID_HOME set) produced the three APKs and the
+merged manifest declares POST_NOTIFICATIONS; mobile typecheck, 24 mobile tests, Metro export, boundaries; `expo config` introspection shows the
+notification icon/colour resources. Not verified on a device: permission prompt, channel, banner and tap navigation.
+

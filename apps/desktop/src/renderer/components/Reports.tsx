@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { localDayPeriod } from "@kolo/core/domain/entry";
-import { formatMoney, formatQuantity } from "@kolo/core/domain/money";
+import { formatMoney, formatQuantity, formatRate } from "@kolo/core/domain/money";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { ReportKind, ReportLine, ReportResult, ShopService } from "../../shared/service.ts";
 import type { TextKey } from "../text.ts";
@@ -9,7 +9,7 @@ import { ReadState, useRead, useText } from "./ui.tsx";
 type Props = { readonly service: ShopService; readonly sessionId: string; readonly revision: number; readonly permissions: readonly Permission[] };
 const authority: readonly (readonly [ReportKind, Permission, boolean])[] = [
   ["dashboard", "reports.financial", true], ["sales", "reports.sales", true], ["salesByProduct", "reports.sales", true], ["salesByCategory", "reports.sales", true],
-  ["salesByAccount", "reports.sales", true], ["salesByUser", "reports.sales", true], ["cashFlow", "reports.financial", true], ["purchases", "reports.suppliers", true],
+  ["salesByAccount", "reports.sales", true], ["salesByUser", "reports.sales", true], ["cashFlow", "reports.financial", true], ["tax", "reports.financial", true], ["purchases", "reports.suppliers", true],
   ["fastMoving", "reports.inventory", true], ["valuation", "reports.financial", false], ["stockAlerts", "reports.inventory", false],
   ["customerDebt", "reports.customers", false], ["supplierDebt", "reports.suppliers", false],
 ];
@@ -76,6 +76,11 @@ function Result({value}:{value:ReportResult}):React.JSX.Element{
       </tbody></table></div>{value.truncated&&<p className="hint">{t("truncatedRows")}</p>}</div></>;
     case "fastMoving": return value.products.length===0?<div className="panel empty"><p>{t("noReportData")}</p></div>:<div className="panel"><div className="table-wrap"><table><thead><tr><th>{t("name")}</th><th className="numeric">{t("itemsSold")}</th><th className="numeric">{t("revenue")}</th><th className="numeric">{t("stock")}</th></tr></thead><tbody>
       {value.products.map(row=><tr key={row.productId}><td>{row.name}</td><td className="numeric">{quantity(row.soldThousandths)}</td><td className="money numeric">{money(row.revenueMinor)}</td><td className={`numeric ${row.onHandThousandths<0?"negative":""}`}>{quantity(row.onHandThousandths)}</td></tr>)}</tbody></table></div></div>;
+    case "tax": return <><div className="stat-grid"><Tile label={t("grossIncl")} value={money(value.grossMinor)}/><Tile label={`${t("taxAmount")} · ${value.label}`} value={money(value.taxMinor)}/><Tile label={t("netExcl")} value={money(value.netMinor)}/></div>
+      <p className="hint">{t("taxReportNote")}</p>
+      {value.groups.length===0?<div className="panel empty"><p>{t("noReportData")}</p></div>:<div className="panel"><div className="table-wrap"><table><thead><tr><th>{t("taxRateColumn")}</th><th className="numeric">{t("grossIncl")}</th><th className="numeric">{t("taxAmount")}</th><th className="numeric">{t("netExcl")}</th></tr></thead><tbody>
+        {value.groups.map(row=><tr key={row.rateBasisPoints}><td>{formatRate(row.rateBasisPoints,language)}</td><td className={`money numeric ${row.grossMinor<0?"negative":""}`}>{money(row.grossMinor)}</td><td className="money numeric">{money(row.taxMinor)}</td><td className="money numeric">{money(row.netMinor)}</td></tr>)}
+      </tbody></table></div></div>}</>;
     case "stockAlerts": return value.products.length===0?<div className="panel empty"><p>{t("noReportData")}</p></div>:<div className="panel"><div className="table-wrap"><table><thead><tr><th>{t("name")}</th><th className="numeric">{t("stock")}</th></tr></thead><tbody>
       {value.products.map(row=><tr key={row.productId}><td>{row.name}{row.onHandThousandths<0&&<small className="negative">{t("negativeStock")}</small>}</td><td className={`numeric ${row.onHandThousandths<0?"negative":""}`}>{quantity(row.onHandThousandths)}</td></tr>)}</tbody></table></div>{value.truncated&&<p className="hint">{t("truncatedRows")}</p>}</div>;
   }

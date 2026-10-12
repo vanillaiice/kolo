@@ -3,9 +3,10 @@ import { purchaseTotals, saleTotals } from "../../rules/pricing.ts";
 import { multiplyRatio, QUANTITY_SCALE, sumAmounts } from "../../rules/amounts.ts";
 import type { Permission } from "../../rules/permissions.ts";
 import { ExchangeError } from "../../exchange/types.ts";
+import { paymentTermsKey } from "../finance/terms.ts";
 
 /** @internal Allowlisted entity tables used for dependency, scope and immutable-ID checks. */
-export type EntityTable = "business_returns" | "business_return_items" | "business_return_refunds" | "categories" | "products" | "customers" | "suppliers" | "financial_accounts" | "sales" | "sale_items" | "sale_payments" | "inventory_movements" | "customer_transactions" | "purchases" | "purchase_items" | "account_movements" | "supplier_transactions" | "expenses" | "product_category_sets";
+export type EntityTable = "business_returns" | "business_return_items" | "business_return_refunds" | "categories" | "products" | "customers" | "suppliers" | "financial_accounts" | "sales" | "sale_items" | "sale_payments" | "inventory_movements" | "customer_transactions" | "purchases" | "purchase_items" | "account_movements" | "supplier_transactions" | "expenses" | "product_category_sets" | "shop_tax_settings" | "product_tax_rules" | "payment_terms";
 /** @internal Entity ownership and dependencies derived only from strict payload schemas. */
 export interface EventModel {
   readonly entities: readonly { readonly table: EntityTable; readonly id: string; readonly mutable: boolean; readonly branch: string | null }[];
@@ -57,6 +58,24 @@ export function eventModel(event: JournalEnvelope): EventModel {
       add("product_category_sets", set.product_id, true); ref("products", set.product_id);
       for (const id of set.category_ids) ref("categories", id);
       permissions.push("products.edit");
+      break;
+    }
+    case "TAX_SETTINGS_SET": {
+      parseEventPayload("TAX_SETTINGS_SET", event.event_version, event.payload);
+      add("shop_tax_settings", event.business_id, true); permissions.push("business.settings");
+      break;
+    }
+    case "PRODUCT_TAX_SET": {
+      const rule = parseEventPayload("PRODUCT_TAX_SET", event.event_version, event.payload);
+      add("product_tax_rules", rule.product_id, true); ref("products", rule.product_id); permissions.push("products.edit");
+      break;
+    }
+    case "PAYMENT_TERMS_SET": {
+      const terms = parseEventPayload("PAYMENT_TERMS_SET", event.event_version, event.payload);
+      add("payment_terms", paymentTermsKey(event.business_id, terms.party, terms.party_id), true);
+      if (terms.party_id === undefined) permissions.push("business.settings");
+      else if (terms.party === "CUSTOMER") { ref("customers", terms.party_id); permissions.push("customers.manage"); }
+      else { ref("suppliers", terms.party_id); permissions.push("suppliers.manage"); }
       break;
     }
     case "CUSTOMER_SAVED": { const { customer } = parseEventPayload("CUSTOMER_SAVED", event.event_version, event.payload); add("customers", customer.id, true); permissions.push("customers.manage"); if (customer.updated_at < customer.created_at) fail(); break; }

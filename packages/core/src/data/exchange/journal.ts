@@ -57,7 +57,7 @@ export function captureOutboxEvent(tx: Queryable, source: NewEvent): void {
   const model = eventModel(provisional);
   const branches = new Set<string | null>();
   for (const entity of model.entities) {
-    if (["sale_items", "purchase_items", "products", "categories", "product_category_sets", "business_return_items", "business_return_refunds", "customers", "suppliers"].includes(entity.table)) continue;
+    if (["sale_items", "purchase_items", "products", "categories", "product_category_sets", "shop_tax_settings", "product_tax_rules", "payment_terms", "business_return_items", "business_return_refunds", "customers", "suppliers"].includes(entity.table)) continue;
     const row = tx.get(`SELECT branch_id FROM ${entity.table} WHERE id = ? AND business_id = ?`, [entity.id,source.businessId]);
     if (row === undefined) throw new ExchangeError("missing_dependency");
     branches.add(typeof row["branch_id"] === "string" ? row["branch_id"] : null);

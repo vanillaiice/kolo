@@ -12,6 +12,8 @@ import { authorizedOperation, activeMember, memberPermissions } from "../identit
 import { WorkspaceError, type OperationContext } from "../identity/types.ts";
 import type { Permission } from "../identity/permissions.ts";
 import { saleTotals, subtotalOf } from "../rules/pricing.ts";
+import { saleTaxGroups, type TaxGroup } from "../rules/tax.ts";
+import { taxSettings } from "../data/products/tax.ts";
 
 /** Stable keyset continuation for catalogue queries; reset after a domain invalidation. */
 export interface Cursor { readonly name: string; readonly id: string; }
@@ -121,6 +123,11 @@ export interface Receipt {
   readonly lines: readonly { id: string; productId: string; name: string; quantity: number; unitPriceMinor: number; discountMinor: number }[];
   readonly payments: readonly { id: string; accountId: string; name: string; amountMinor: number }[];
   readonly returnedMinor: number; readonly discountMinor: number; readonly totalMinor: number; readonly paidMinor: number; readonly outstandingMinor: number;
+  /**
+   * Tax included in the total, one group per non-zero rate frozen on the lines (ADR-033), with the shop's current tax
+   * label and registration number. Absent when no line carried tax.
+   */
+  readonly tax?: { readonly label: string; readonly registration?: string | undefined; readonly groups: readonly TaxGroup[] } | undefined;
 }
 function salesAuthority(tx: Queryable, context: OperationContext): boolean {
   const permissions = memberPermissions(activeMember(tx, context, context.userId));
@@ -133,16 +140,23 @@ export interface ReceiptSummary { readonly id: string; readonly number: string; 
 /** Builds a receipt from its persisted sale row (joined with the customer name) using the shared sale rules. */
 function receiptOf(tx: Queryable, businessId: string, row: Row): Receipt {
   const saleId = String(row["id"]);
-  const lines = tx.all(`SELECT * FROM sale_items WHERE business_id=? AND sale_id=? ORDER BY id`, [businessId, saleId]).map(item => ({
+  const rows = tx.all(`SELECT * FROM sale_items WHERE business_id=? AND sale_id=? ORDER BY id`, [businessId, saleId]);
+  const lines = rows.map(item => ({
     id: String(item["id"]), productId: String(item["product_id"]), name: String(item["name"]), quantity: sqlInteger(item["quantity"]!),
     unitPriceMinor: sqlInteger(item["unit_price_minor"]!), discountMinor: sqlInteger(item["discount_minor"]!),
   }));
+  const rates = rows.map(item => sqlInteger(item["tax_rate_basis_points"] ?? 0));
   const payments = tx.all(`SELECT p.*,a.name AS account_name FROM sale_payments p LEFT JOIN financial_accounts a ON a.business_id=p.business_id AND a.id=p.account_id
     WHERE p.business_id=? AND p.sale_id=? ORDER BY p.id`, [businessId, saleId]).map(item => ({
     id: String(item["id"]), accountId: String(item["account_id"]), name: String(item["account_name"] ?? item["account_id"]), amountMinor: sqlInteger(item["amount_minor"]!),
   }));
   const discountMinor = sqlInteger(row["discount_minor"]!);
-  return { id: saleId, number: String(row["number"]), occurredAt: String(row["occurred_at"]), customerName: typeof row["customer_name"] === "string" ? row["customer_name"] : undefined,
+  let tax: Receipt["tax"];
+  if (rates.some(rate => rate > 0)) {
+    const settings = taxSettings(tx, businessId), groups = saleTaxGroups(lines.map((line, index) => ({ ...line, taxRateBasisPoints: rates[index]! })), discountMinor).filter(group => group.rateBasisPoints > 0);
+    tax = { label: settings.label, ...(settings.registration === undefined ? {} : { registration: settings.registration }), groups };
+  }
+  return { ...(tax === undefined ? {} : { tax }), id: saleId, number: String(row["number"]), occurredAt: String(row["occurred_at"]), customerName: typeof row["customer_name"] === "string" ? row["customer_name"] : undefined,
     returnedMinor: sqlInteger(tx.get(`SELECT coalesce(sum(total_minor),0) AS total FROM business_returns WHERE business_id=? AND kind='SALE' AND original_id=?`,[businessId,saleId])!["total"]!),
     lines, payments, discountMinor, ...saleTotals({ lines, payments, discountMinor, customerId: typeof row["customer_id"] === "string" ? row["customer_id"] : undefined }) };
 }

@@ -14,6 +14,8 @@ import { recordPurchase as writePurchase, type Delivery, type DeliveryTotals } f
 import { recordMovement, stockOf, type NewMovement } from "../data/inventory/movements.ts";
 import { moveCash as writeCash, reconcile, type CashMovement, type Reconciliation } from "../data/finance/cash.ts";
 import { recordExpense as writeExpense, type Expense } from "../data/expenses/expenses.ts";
+import { effectiveTaxRate, taxSettings, writeProductTaxRule, writeTaxSettings, type ProductTaxRule, type TaxSettings } from "../data/products/tax.ts";
+import { writePaymentTerms, type TermsParty } from "../data/finance/terms.ts";
 import { appendLocalAudit, authorizedOperation, nextId } from "../identity/internal-authority.ts";
 import { WorkspaceError, type OperationContext, type WorkspacePorts } from "../identity/types.ts";
 import type { Permission } from "../identity/permissions.ts";
@@ -29,7 +31,9 @@ export type CommandInput<T> = Omit<T, "businessId" | "userId" | "deviceId" | "re
  */
 export function completeSale(context: OperationContext, input: CommandInput<Cart>): SaleTotals {
   return authorizedOperation(context, ["sales.create"], (database, tx, ports, revision) => {
-    const cart = bind(context, input, ports);
+    const bound = bind(context, input, ports), settings = taxSettings(tx, context.businessId);
+    // Each line carries the rate in force now (ADR-033); a caller's rate is ignored and history is never re-rated.
+    const cart = { ...bound, lines: bound.lines.map(line => ({ ...line, taxRateBasisPoints: effectiveTaxRate(tx, context.businessId, line.productId, settings) })) };
     checkBranch(tx, context, cart.branchId);
     let priceOverride = false;
     for (const line of cart.lines) {
@@ -340,6 +344,67 @@ export function setProductCategories(context: OperationContext, input: { readonl
     const result = writeProductCategories(tx, { businessId: context.businessId, productId: input.productId, categoryIds, updatedAt: input.updatedAt }, context.deviceId);
     enqueue(tx, { eventId: nextId(ports), ...context, type: "PRODUCT_CATEGORIES_SET", payload, occurredAt: input.updatedAt });
     appendLocalAudit(tx, context, ports, revision, "PRODUCT_CATEGORIES_SET", input.productId);
+    return result;
+  });
+}
+
+/**
+ * Saves the shop's tax settings under business.settings (ADR-033): prices include tax, and new sale lines carry the
+ * standard rate (or a product's own rule) while tax is enabled. Last write wins by `updatedAt`, then device; returns
+ * false when a newer version is stored. Settings, `TAX_SETTINGS_SET` and audit commit together.
+ */
+export function setTaxSettings(context: OperationContext, input: Omit<TaxSettings, "updatedAt"> & { readonly updatedAt: string }): boolean {
+  return authorizedOperation(context, ["business.settings"], (_database, tx, ports, revision) => {
+    const payload = { enabled: input.enabled, label: input.label, standard_rate_basis_points: input.standardRateBasisPoints,
+      ...(input.registration === undefined ? {} : { registration: input.registration }), updated_at: input.updatedAt };
+    try { parseEventPayload("TAX_SETTINGS_SET", 2, payload); } catch { throw new WorkspaceError("invalid_input"); }
+    const result = writeTaxSettings(tx, context.businessId, input, context.deviceId);
+    if (result) {
+      enqueue(tx, { eventId: nextId(ports), ...context, type: "TAX_SETTINGS_SET", payload, occurredAt: input.updatedAt });
+      appendLocalAudit(tx, context, ports, revision, "TAX_SETTINGS_SET", context.businessId);
+    }
+    return result;
+  });
+}
+
+/**
+ * Sets a product's tax rule under products.edit (ADR-033): the standard rate, exempt, or its own rate (1–10000 basis
+ * points). Last write wins per product; false when a newer rule is stored. Rule, `PRODUCT_TAX_SET` and audit commit
+ * together. Past sales keep the rate they were sold at.
+ */
+export function setProductTaxRule(context: OperationContext, input: { readonly productId: string } & ProductTaxRule & { readonly updatedAt: string }): boolean {
+  return authorizedOperation(context, ["products.edit"], (_database, tx, ports, revision) => {
+    related(tx, context, "products", input.productId, false);
+    const payload = { product_id: input.productId, rule: input.rule, ...(input.rule === "RATE" ? { rate_basis_points: input.rateBasisPoints } : {}), updated_at: input.updatedAt };
+    try { parseEventPayload("PRODUCT_TAX_SET", 2, payload); } catch { throw new WorkspaceError("invalid_input"); }
+    const rule: ProductTaxRule & { updatedAt: string } = input.rule === "RATE" ? { rule: "RATE", rateBasisPoints: input.rateBasisPoints, updatedAt: input.updatedAt } : { rule: input.rule, updatedAt: input.updatedAt };
+    const result = writeProductTaxRule(tx, context.businessId, input.productId, rule, context.deviceId);
+    if (result) {
+      enqueue(tx, { eventId: nextId(ports), ...context, type: "PRODUCT_TAX_SET", payload, occurredAt: input.updatedAt });
+      appendLocalAudit(tx, context, ports, revision, "PRODUCT_TAX_SET", input.productId);
+    }
+    return result;
+  });
+}
+
+/**
+ * Sets payment terms in days (ADR-033): the shop default for customers or suppliers under business.settings, or one
+ * customer's (customers.manage) or supplier's (suppliers.manage) own terms; `days: null` returns a party to the shop
+ * default. Last write wins per key; false when a newer record is stored. Terms, `PAYMENT_TERMS_SET` and audit commit
+ * together. Due dates are derived, so this re-ages existing debts without editing any ledger.
+ */
+export function setPaymentTerms(context: OperationContext, input: { readonly party: TermsParty; readonly partyId?: string | undefined; readonly days: number | null; readonly updatedAt: string }): boolean {
+  if (input.party !== "CUSTOMER" && input.party !== "SUPPLIER") throw new WorkspaceError("invalid_input");
+  const permission: Permission = input.partyId === undefined ? "business.settings" : input.party === "CUSTOMER" ? "customers.manage" : "suppliers.manage";
+  return authorizedOperation(context, [permission], (_database, tx, ports, revision) => {
+    if (input.partyId !== undefined) related(tx, context, input.party === "CUSTOMER" ? "customers" : "suppliers", input.partyId, false);
+    const payload = { party: input.party, ...(input.partyId === undefined ? {} : { party_id: input.partyId }), days: input.days, updated_at: input.updatedAt };
+    try { parseEventPayload("PAYMENT_TERMS_SET", 2, payload); } catch { throw new WorkspaceError("invalid_input"); }
+    const result = writePaymentTerms(tx, { businessId: context.businessId, party: input.party, partyId: input.partyId, days: input.days, updatedAt: input.updatedAt }, context.deviceId);
+    if (result) {
+      enqueue(tx, { eventId: nextId(ports), ...context, type: "PAYMENT_TERMS_SET", payload, occurredAt: input.updatedAt });
+      appendLocalAudit(tx, context, ports, revision, "PAYMENT_TERMS_SET", input.partyId ?? `${input.party}_DEFAULT`);
+    }
     return result;
   });
 }

@@ -1,10 +1,10 @@
 import { PhotoEditor, ProductThumb } from "./Photo.tsx";
 import { useEffect, useState } from "react";
-import { moneyEntry, quantityEntry, quantityInput } from "@kolo/core/domain/entry";
-import { formatMoney, formatQuantity, formatQuantityWithUnit } from "@kolo/core/domain/money";
+import { moneyEntry, quantityEntry, quantityInput, rateEntry, rateInput } from "@kolo/core/domain/entry";
+import { formatMoney, formatQuantity, formatQuantityWithUnit, formatRate } from "@kolo/core/domain/money";
 import type { Cursor } from "@kolo/core/application/queries";
 import type { Permission } from "@kolo/core/identity/permissions";
-import type { CategoryView, ProductView, Result, ShopService } from "../../shared/service.ts";
+import type { CategoryView, ProductTaxView, ProductView, Result, ShopService } from "../../shared/service.ts";
 import type { TextKey } from "../text.ts";
 import { ErrorText, Field, Pager, ReadState, Select, useAction, useRead, useText } from "./ui.tsx";
 
@@ -69,7 +69,36 @@ function ProductDetail({service,sessionId,revision,permissions,productId,onBack}
     </div>
     {editing!==undefined&&<EditProduct key={editing.version} service={service} sessionId={sessionId} product={editing} onReload={()=>setEditing(shown)} onSaved={value=>{setShown(value);setEditing(undefined);}} onClose={()=>setEditing(undefined)}/>}
     {shown.active&&canMove&&<StockMovement service={service} sessionId={sessionId} product={shown} permissions={permissions} onSaved={setShown}/>}
+    <ProductTax service={service} sessionId={sessionId} revision={revision} productId={shown.id} canEdit={canEdit&&shown.active}/>
     {permissions.includes("inventory.view")&&<StockHistory service={service} sessionId={sessionId} revision={revision} product={shown}/>}
+  </div>;
+}
+/** A product's tax rule: the shop's standard rate, exempt, or its own rate; past sales keep the rate they were sold at. */
+function ProductTax({service,sessionId,revision,productId,canEdit}:{service:ShopService;sessionId:string;revision:number;productId:string;canEdit:boolean}):React.JSX.Element{
+  const {t,language}=useText(),action=useAction();
+  const read=useRead(()=>service.productTax({sessionId,productId}),[service,sessionId,productId,revision]);
+  const settings=useRead(()=>service.taxSettings({sessionId}),[service,sessionId,revision]);
+  const [shown,setShown]=useState<ProductTaxView>(),[rule,setRule]=useState<ProductTaxView["rule"]>("STANDARD"),[rate,setRate]=useState(""),[saved,setSaved]=useState(false);
+  useEffect(()=>{if(read.data!==undefined){setShown(read.data);setRule(read.data.rule);setRate(read.data.rateBasisPoints===undefined?"":rateInput(read.data.rateBasisPoints));}},[read.data]);
+  if(shown===undefined)return <div className="panel"><h2>{t("productTax")}</h2><ReadState loading={read.loading} error={read.error} empty={false} emptyText="" retry={read.retry}>{null}</ReadState></div>;
+  const standard=settings.data===undefined?"":` (${formatRate(settings.data.standardRateBasisPoints,language)})`;
+  const submit=():void=>{
+    setSaved(false);
+    let rateBasisPoints:number|undefined;
+    if(rule==="RATE"){try{rateBasisPoints=rateEntry(rate);}catch{action.setError({code:"taxRateInput"});return;}if(rateBasisPoints===0){action.setError({code:"taxRateInput"});return;}}
+    void action.run(()=>service.setProductTax({sessionId,productId,rule,...(rateBasisPoints===undefined?{}:{rateBasisPoints}),...(shown.version===undefined?{}:{version:shown.version})}))
+      .then(value=>{if(value!==undefined){setShown(value);setSaved(true);}});
+  };
+  return <div className="panel"><h2>{t("productTax")}</h2>
+    {settings.data?.enabled===false?<p className="hint">{t("productTaxOff")}</p>:<p className="hint">{t("productTaxNow")} {formatRate(shown.effectiveRateBasisPoints,language)}</p>}
+    {canEdit?<form onSubmit={event=>{event.preventDefault();submit();}}><fieldset disabled={action.busy}>
+      <Select id="product-tax-rule" label={t("productTax")} value={rule} onChange={value=>setRule(value as ProductTaxView["rule"])}
+        options={(["STANDARD","EXEMPT","RATE"] as const).map(value=>({value,label:`${t(`taxRule.${value}`)}${value==="STANDARD"?standard:""}`}))}/>
+      {rule==="RATE"&&<Field id="product-tax-rate" label={t("productOwnRate")} value={rate} onChange={setRate} numeric maxLength={8}/>}
+    </fieldset><ErrorText message={action.error} conflictMessage="staleVersion"/>{saved&&<p role="status" className="notice success">{t("productTaxSaved")}</p>}
+      <div className="actions"><button className="primary" type="submit" disabled={action.busy}>{t("save")}</button>
+        {action.error?.code==="request_conflict"&&<button type="button" className="secondary" onClick={read.retry}>{t("reload")}</button>}</div></form>
+      :<p>{t(`taxRule.${shown.rule}`)}{shown.rule==="RATE"&&shown.rateBasisPoints!==undefined?` · ${formatRate(shown.rateBasisPoints,language)}`:""}</p>}
   </div>;
 }
 function EditProduct({service,sessionId,product,onReload,onSaved,onClose}:{service:ShopService;sessionId:string;product:ProductView;onReload:()=>void;onSaved:(value:ProductView)=>void;onClose:()=>void}):React.JSX.Element{

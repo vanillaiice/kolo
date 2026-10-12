@@ -12,11 +12,14 @@ import { spacing, useTheme } from "../../components/theme.ts";
 import { Button, Confirm, Field, ListRow, Notice, RowGroup, Screen, Section, Toggle, useStyles } from "../../components/ui.tsx";
 import { FormProblem, useAction } from "../../components/command.tsx";
 import { PhotoUsage } from "../products/photos.tsx";
+import { SystemNotificationsToggle, useUnreadAlerts } from "./alerts.tsx";
 
 /** Secondary destinations, each shown only to actors whose permissions open it, in a fixed order. */
 export function MoreScreen(): React.JSX.Element {
   const { t } = useText(), s = useStyles(), nav = useNav(), session = useSession(), permissions = usePermissions(), has = (p: Permission): boolean => permissions.includes(p);
+  const unread = useUnreadAlerts();
   const items = [
+    <ListRow key="alerts" title={t("alerts")} subtitle={unread > 0 ? t("alertsUnread", { count: unread }) : undefined} trailing={unread > 0 ? String(unread) : undefined} trailingTone="danger" onPress={() => nav.push("alerts")} />,
     has("customers.view") && <ListRow key="customers" title={t("customers")} onPress={() => nav.push("customers")} />,
     has("suppliers.view") && <ListRow key="suppliers" title={t("suppliers")} onPress={() => nav.push("suppliers")} />,
     has("finance.accounts.view") && has("cash.view") && <ListRow key="accounts" title={t("accounts")} onPress={() => nav.push("accounts")} />,
@@ -37,8 +40,11 @@ export function SettingsScreen(): React.JSX.Element {
   const { t } = useText(), s = useStyles(), nav = useNav(), permissions = usePermissions(), session = useSession();
   return <Screen title={t("settings")} onBack={nav.back}>
     <Section title={t("session")}><Toggle label={t("staySignedIn")} value={session.rememberSession} onChange={session.setRememberSession} hint={t("staySignedInHelp")} /></Section>
+    {permissions.includes("business.settings") && <Section title={t("shopSettings")}><RowGroup>
+      <ListRow title={t("taxTitle")} subtitle={t("taxMenuHelp")} onPress={() => nav.push("shopTax")} />
+      <ListRow title={t("termsTitle")} subtitle={t("termsMenuHelp")} onPress={() => nav.push("shopTerms")} /></RowGroup></Section>}
     <BiometricSettings />
-    <Section><LanguageControl /><AppearanceControl /><Text style={s.muted}>{t("devicePreferencesHelp")}</Text></Section>
+    <Section><LanguageControl /><AppearanceControl /><SystemNotificationsToggle /><Text style={s.muted}>{t("devicePreferencesHelp")}</Text></Section>
     {permissions.includes("products.view") && <Section title={t("photoStorage")}><PhotoUsage /><Text style={s.muted}>{t("photoStorageHelp")}</Text></Section>}
     <RowGroup><ListRow title={t("about")} onPress={() => nav.push("about")} /></RowGroup>
     {session.isOwner && permissions.includes("business.settings") && <RowGroup><ListRow title={t("resetDevice")} subtitle={t("resetDeviceHelp")} onPress={() => nav.push("reset")} /></RowGroup>}

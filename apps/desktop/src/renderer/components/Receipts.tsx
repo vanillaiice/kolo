@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Cursor } from "@kolo/core/application/queries";
-import { formatMoney, formatQuantity } from "@kolo/core/domain/money";
+import { formatMoney, formatQuantity, formatRate } from "@kolo/core/domain/money";
 import { shortReceiptNumber } from "@kolo/core/domain/receipt-number";
 import type { ShopService } from "../../shared/service.ts";
 import { BackToList, Pager, ReadState, useRead, useRevealDetail, useText } from "./ui.tsx";
@@ -24,6 +24,8 @@ export function Receipts({service,sessionId,revision,initialId,canReturn,shopNam
         {detail.data.lines.map(line=><div className="receipt-line" key={line.id}><strong>{line.name}</strong><span>{formatQuantity(line.quantity,language)} × {formatMoney(line.unitPriceMinor,language)}</span></div>)}
         {detail.data.discountMinor>0&&<div className="receipt-line"><span>{t("discountLabel")}</span><strong>−{formatMoney(detail.data.discountMinor,language)}</strong></div>}
         <div className="receipt-total"><span>{t("total")}</span><strong>{formatMoney(detail.data.totalMinor,language)}</strong></div>
+        {detail.data.tax?.groups.map(group=><div className="receipt-line receipt-tax" key={group.rateBasisPoints}><span>{t("taxIncluded")} {detail.data!.tax!.label} {formatRate(group.rateBasisPoints,language)}</span><strong>{formatMoney(group.taxMinor,language)}</strong></div>)}
+        {detail.data.tax?.registration!==undefined&&<p className="hint receipt-tax-number">{t("taxNumberShort")} {detail.data.tax.registration}</p>}
         {detail.data.payments.map(payment=><div className="receipt-line" key={payment.id}><span>{t("paid")} · {payment.name}</span><strong>{formatMoney(payment.amountMinor,language)}</strong></div>)}
         {detail.data.outstandingMinor>0&&<div className="receipt-line receipt-owing"><span>{t("outstanding")}</span><strong>{formatMoney(detail.data.outstandingMinor,language)}</strong></div>}
         {detail.data.returnedMinor>0&&<div className="receipt-line"><span>{t("returned")}</span><strong>−{formatMoney(detail.data.returnedMinor,language)}</strong></div>}

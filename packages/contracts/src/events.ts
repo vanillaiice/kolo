@@ -42,6 +42,15 @@ export const EVENT_PAYLOAD_SCHEMAS = {
     divisible: z.boolean().optional(), active: z.boolean().optional(), tax_rate_basis_points: whole.min(0).max(10000).optional(), minimum_stock: money.optional(), created_at: timestamp, updated_at: timestamp }) }),
   /** A product's additional categories (its main category stays on PRODUCT_SAVED); last write wins per product. */
   PRODUCT_CATEGORIES_SET: z.strictObject({ product_id: uuid, category_ids: z.array(uuid).max(20).refine(ids => new Set(ids).size === ids.length), updated_at: timestamp }),
+  /** The shop's tax settings (ADR-033): prices include tax; last write wins. Rate in basis points (1925 = 19.25 %). */
+  TAX_SETTINGS_SET: z.strictObject({ enabled: z.boolean(), label: z.string().min(1).max(20).refine(value => value.trim() === value && value.length > 0),
+    standard_rate_basis_points: whole.min(0).max(10000), registration: z.string().min(1).max(40).refine(value => value.trim() === value).optional(), updated_at: timestamp }),
+  /** A product's tax rule (ADR-033): the shop's standard rate, exempt, or its own rate; last write wins per product. */
+  PRODUCT_TAX_SET: z.strictObject({ product_id: uuid, rule: z.enum(["STANDARD", "EXEMPT", "RATE"]), rate_basis_points: whole.min(1).max(10000).optional(), updated_at: timestamp })
+    .refine(value => (value.rule === "RATE") === (value.rate_basis_points !== undefined)),
+  /** Payment terms in days (ADR-033) for the shop default (no party ID) or one customer/supplier; null falls back to the default. */
+  PAYMENT_TERMS_SET: z.strictObject({ party: z.enum(["CUSTOMER", "SUPPLIER"]), party_id: uuid.optional(), days: whole.min(0).max(3650).nullable(), updated_at: timestamp })
+    .refine(value => value.days !== null || value.party_id !== undefined),
   CUSTOMER_SAVED: z.strictObject({ customer: z.strictObject({ id: uuid, name, phone: text.optional(), address: text.optional(), notes: text.optional(),
     credit_limit_minor: money.optional(), active: z.boolean().optional(), created_at: timestamp, updated_at: timestamp }) }),
   SUPPLIER_SAVED: z.strictObject({ supplier: z.strictObject({ id: uuid, name, phone: text.optional(), address: text.optional(), contact: text.optional(), notes: text.optional(),

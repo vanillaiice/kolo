@@ -255,3 +255,14 @@ export function parseQuantity(text: string): ParsedAmount {
   }
   return { ok: true, minor: thousandths };
 }
+
+/**
+ * A tax rate in basis points as people write it: "19,25 %" in French (narrow no-break space before the sign),
+ * "19.25%" in English. Trailing zeroes are dropped, so 1000 reads "10 %".
+ */
+export function formatRate(basisPoints: number, language: Language = "fr"): string {
+  if (!Number.isSafeInteger(basisPoints)) return "—";
+  const negative = basisPoints < 0, absolute = Math.abs(basisPoints), whole = Math.trunc(absolute / 100), fraction = absolute % 100;
+  const decimals = fraction === 0 ? "" : `${language === "fr" ? "," : "."}${String(fraction).padStart(2, "0").replace(/0$/, "")}`;
+  return `${negative ? "−" : ""}${whole}${decimals}${language === "fr" ? " %" : "%"}`;
+}

@@ -1,6 +1,8 @@
 import { applyReturn } from "../returns/returns.ts";
 import { writeProductCategories } from "../products/product-categories.ts";
 import { upsertCategory } from "../products/categories.ts";
+import { writeProductTaxRule, writeTaxSettings } from "../products/tax.ts";
+import { writePaymentTerms } from "../finance/terms.ts";
 import { parseEventPayload, type EventType, type JournalEnvelope } from "@kolo/contracts/events";
 import type { Queryable, SqlValue } from "../database/driver.ts";
 import { ExchangeError } from "../../exchange/types.ts";
@@ -60,6 +62,22 @@ export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewe
   if (event.event_type === "PRODUCT_CATEGORIES_SET") {
     const set = parseEventPayload("PRODUCT_CATEGORIES_SET",2,event.payload);
     writeProductCategories(tx, { businessId: event.business_id, productId: set.product_id, categoryIds: set.category_ids, updatedAt: set.updated_at }, event.origin_device_id);
+    claimEntities(tx,event,model); return;
+  }
+  if (event.event_type === "TAX_SETTINGS_SET") {
+    const settings = parseEventPayload("TAX_SETTINGS_SET",2,event.payload);
+    writeTaxSettings(tx, event.business_id, { enabled: settings.enabled, label: settings.label, standardRateBasisPoints: settings.standard_rate_basis_points,
+      registration: settings.registration, updatedAt: settings.updated_at }, event.origin_device_id);
+    claimEntities(tx,event,model); return;
+  }
+  if (event.event_type === "PRODUCT_TAX_SET") {
+    const set = parseEventPayload("PRODUCT_TAX_SET",2,event.payload);
+    writeProductTaxRule(tx, event.business_id, set.product_id, set.rule === "RATE" ? { rule: "RATE", rateBasisPoints: set.rate_basis_points!, updatedAt: set.updated_at } : { rule: set.rule, updatedAt: set.updated_at }, event.origin_device_id);
+    claimEntities(tx,event,model); return;
+  }
+  if (event.event_type === "PAYMENT_TERMS_SET") {
+    const terms = parseEventPayload("PAYMENT_TERMS_SET",2,event.payload);
+    writePaymentTerms(tx, { businessId: event.business_id, party: terms.party, partyId: terms.party_id, days: terms.days, updatedAt: terms.updated_at }, event.origin_device_id);
     claimEntities(tx,event,model); return;
   }
   if (event.event_type === "SALE_COMPLETED") {

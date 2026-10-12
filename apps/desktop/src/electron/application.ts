@@ -22,6 +22,7 @@ import * as purchasing from "./purchasing.ts";
 import * as finance from "./finance.ts";
 import * as reports from "./reports.ts";
 import * as returns from "./returns.ts";
+import * as settings from "./settings.ts";
 import * as staff from "./staff.ts";
 import * as transfer from "./transfer.ts";
 import * as sync from "./server-sync.ts";
@@ -87,7 +88,7 @@ export class DesktopApplication implements ShopService {
     this.#syncTransport = syncTransport; this.#autoSync = this.#sealingCrypto === undefined ? undefined : new sync.AutoSync(this.#sealingCrypto, syncTransport);
     this.ports = ports; this.crypto = crypto; this.#host = { ports, actor: (data, required) => this.#actor(data, required) };
     lockWorkspace(ports.database);
-    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority"], () => { this.#autoSync?.soon(); this.#notify(); });
+    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority", "settings"], () => { this.#autoSync?.soon(); this.#notify(); });
   }
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   async initialize(): Promise<void> {
@@ -658,6 +659,17 @@ export class DesktopApplication implements ShopService {
   report(input: unknown): ReturnType<ShopService["report"]> { return this.#run(() => reports.report(this.#host, input)); }
   /** Period analytics with permission-scoped sections; see reports.ts. */
   analytics(input: unknown): ReturnType<ShopService["analytics"]> { return this.#run(() => reports.analytics(this.#host, input)); }
+  /** Tax, payment terms and notifications; see settings.ts. */
+  taxSettings(input: unknown): ReturnType<ShopService["taxSettings"]> { return this.#run(() => settings.taxSettings(this.#host, input)); }
+  updateTaxSettings(input: unknown): ReturnType<ShopService["updateTaxSettings"]> { return this.#run(() => settings.updateTaxSettings(this.#host, input)); }
+  productTax(input: unknown): ReturnType<ShopService["productTax"]> { return this.#run(() => settings.productTax(this.#host, input)); }
+  setProductTax(input: unknown): ReturnType<ShopService["setProductTax"]> { return this.#run(() => settings.setProductTax(this.#host, input)); }
+  paymentTerms(input: unknown): ReturnType<ShopService["paymentTerms"]> { return this.#run(() => settings.paymentTerms(this.#host, input)); }
+  setShopTerms(input: unknown): ReturnType<ShopService["setShopTerms"]> { return this.#run(() => settings.setShopTerms(this.#host, input)); }
+  creditStatus(input: unknown): ReturnType<ShopService["creditStatus"]> { return this.#run(() => settings.creditStatus(this.#host, input)); }
+  setPartyTerms(input: unknown): ReturnType<ShopService["setPartyTerms"]> { return this.#run(() => settings.setPartyTerms(this.#host, input)); }
+  notifications(input: unknown): ReturnType<ShopService["notifications"]> { return this.#run(() => settings.notifications(this.#host, input)); }
+  markNotifications(input: unknown): ReturnType<ShopService["markNotifications"]> { return this.#run(() => settings.markNotifications(this.#host, input)); }
   /** Sale and purchase returns; see returns.ts. */
   returnSource(input: unknown): ReturnType<ShopService["returnSource"]> { return this.#run(() => returns.returnSource(this.#host, input)); }
   previewReturn(input: unknown): ReturnType<ShopService["previewReturn"]> { return this.#run(() => returns.previewReturn(this.#host, input)); }

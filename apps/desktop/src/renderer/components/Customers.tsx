@@ -6,6 +6,7 @@ import type { Permission } from "@kolo/core/identity/permissions";
 import type { CustomerDetails, CustomerView, Result, ShopService } from "../../shared/service.ts";
 import type { TextKey } from "../text.ts";
 import { ErrorText, Field, Pager, ReadState, Select, useAction, useRead, useText } from "./ui.tsx";
+import { CreditTermsPanel } from "./Credit.tsx";
 
 type Props = { readonly service: ShopService; readonly sessionId: string; readonly revision: number; readonly permissions: readonly Permission[] };
 
@@ -63,6 +64,7 @@ function CustomerDetail({service,sessionId,revision,permissions,customerId,onBac
     </div>
     {editing!==undefined&&<CustomerForm key={editing.version} service={service} sessionId={sessionId} customer={editing} onReload={()=>setEditing(shown)} onDone={value=>{if(value!==undefined)setShown(value);setEditing(undefined);}}/>}
     {shown.active&&permissions.includes("customers.pay")&&<TakePayment service={service} sessionId={sessionId} customer={shown} onSaved={setShown}/>}
+    <CreditTermsPanel service={service} sessionId={sessionId} revision={revision} party="CUSTOMER" partyId={customerId} canManage={canManage&&shown.active}/>
     <Statement service={service} sessionId={sessionId} revision={revision} kind="customer" id={customerId}/>
   </div>;
 }

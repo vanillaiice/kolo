@@ -6,6 +6,7 @@ import {
   formatAmount,
   formatMoney,
   formatQuantity,
+  formatRate,
   formatQuantityWithUnit,
   pluralUnit,
   parseAmount,
@@ -264,4 +265,10 @@ describe("units follow the quantity's grammatical number", () => {
         assert.equal(formatQuantityWithUnit(thousandths, "sachet", language).endsWith(one ? "sachet" : "sachets"), true, `${language} ${thousandths}`);
       }
   });
+});
+
+it("formats tax rates the way each language writes them", () => {
+  assert.equal(formatRate(1925, "fr"), "19,25 %"); assert.equal(formatRate(1925, "en"), "19.25%");
+  assert.equal(formatRate(1000, "fr"), "10 %"); assert.equal(formatRate(550, "en"), "5.5%"); assert.equal(formatRate(0, "en"), "0%");
+  assert.equal(formatRate(1, "en"), "0.01%"); assert.equal(formatRate(10000, "fr"), "100 %"); assert.equal(formatRate(1.5, "fr"), "—");
 });

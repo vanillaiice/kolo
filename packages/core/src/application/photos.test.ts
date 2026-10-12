@@ -115,7 +115,7 @@ describe("product photos", () => {
     const db = openDatabase(); databases.push(db);
     db.run(`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL,applied_at TEXT NOT NULL) STRICT`);
     for (const migration of MIGRATIONS.filter(item => item.version <= 21)) db.transaction(tx => { for (const sql of migration.statements) tx.run(sql); tx.run(`INSERT INTO schema_migrations VALUES (?,?,?)`, [migration.version, migration.name, at]); });
-    assert.deepEqual(migrate(db).applied.map(item => item.version), [22, 23, 24, 25, 26, 27]);
+    assert.deepEqual(migrate(db).applied.map(item => item.version), [22, 23, 24, 25, 26, 27, 28]);
     assert.equal(db.get(`SELECT count(*) AS n FROM product_photos`)!["n"], 0);
   });
 });

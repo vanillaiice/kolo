@@ -75,6 +75,11 @@ destination, then leaves the app.
 | setRememberSession | More → Settings → Stay signed in | signed-in user | `rememberMember`, `resumeWorkspace` | Node (session memory); Device |
 | setLargeFiles | n/a (desktop only, ADR-027) | n/a | n/a | n/a |
 | language / appearance | Entry and More → Settings | none | device preference database | Node |
+| taxSettings / updateTaxSettings, paymentTerms / setShopTerms | More → Settings → Shop → Tax, Payment terms | business.settings (any member reads tax settings) | `operations.setTaxSettings`, `setPaymentTerms`; `settings.shopTaxSettings`, `shopPaymentTerms` | Node (core); Device |
+| productTax / setProductTax | Products → product → Tax | products.view / products.edit | `operations.setProductTaxRule`, `settings.productTax` | Node (core); Device |
+| creditStatus / setPartyTerms | More → Customers/Suppliers → person (due dates) → Payment terms | customers.* / suppliers.* | `settings.creditStatus`, `operations.setPaymentTerms` | Node (core); Device |
+| notifications / markNotifications | More → Alerts (unread count on the row) | per alert kind | `notifications.notifications`, `markNotificationsRead` | Node (core); Device. Android notifications via `expo-notifications` while KOLO is open (per-phone switch in Settings and Alerts) |
+| Receipt tax lines, tax report | Activity → receipt; More → Reports → Tax collected | sales.view(_own); reports.financial | `queries.receipt`, `report-views` | Node (core, receipt output); Device |
 | Legal / About | More → Settings → About | none | static text | Device |
 
 ## Installed acceptance (stage H)

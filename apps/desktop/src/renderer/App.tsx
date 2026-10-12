@@ -17,6 +17,7 @@ import type { LegalKind } from "./legal.ts";
 import { call, ErrorText, Field, TextContext, useAction, useText, type Message } from "./components/ui.tsx";
 import { text, type Language } from "./text.ts";
 import { dropNav, saveNavOrder, storedNavOrder, type NavId } from "./nav-order.ts";
+import { AlertsButton, AlertsPanel, useNotifications, type AlertTarget } from "./components/Notifications.tsx";
 
 /** Reusable DOM application: platform operations enter only through the injected service. */
 export function App({service}:{readonly service:ShopService}):React.JSX.Element{
@@ -57,10 +58,13 @@ export function App({service}:{readonly service:ShopService}):React.JSX.Element{
     </div>
   </TextContext.Provider>;
 }
-function Shop({service,view,sessionId,revision,refresh,onRecoveryKey,preferences}:{service:ShopService;view:WorkspaceView;sessionId:string;revision:number;refresh:()=>void;onRecoveryKey:(key:string,sessionId:string)=>void;preferences:Omit<React.ComponentProps<typeof Settings>,"service"|"sessionId"|"canChangeFiles"|"canViewProducts">}):React.JSX.Element{
+function Shop({service,view,sessionId,revision,refresh,onRecoveryKey,preferences}:{service:ShopService;view:WorkspaceView;sessionId:string;revision:number;refresh:()=>void;onRecoveryKey:(key:string,sessionId:string)=>void;preferences:Omit<React.ComponentProps<typeof Settings>,"service"|"sessionId"|"canChangeFiles"|"canShopSettings"|"canViewProducts">}):React.JSX.Element{
   const {t}=useText(),action=useAction(),[dragging,setDragging]=useState<NavId>();
   const permissions=view.actor!.permissions,canTill=permissions.includes("sales.create")&&permissions.includes("products.view"),canProducts=permissions.includes("products.view"),canReceipts=permissions.includes("sales.view")||permissions.includes("sales.view_own"),canCustomers=permissions.includes("customers.view"),canPurchases=permissions.includes("purchases.view")||permissions.includes("suppliers.view"),canFinance=permissions.includes("finance.accounts.view")&&permissions.includes("cash.view")||permissions.includes("expenses.view"),canReports=permissions.some(permission=>permission.startsWith("reports.")),canAnalytics=permissions.includes("reports.sales"),canStaff=permissions.includes("users.view"),canDevices=view.actor!.isOwner&&permissions.includes("business.settings");
   const [selected,setSelected]=useState<"till"|"products"|"customers"|"purchases"|"finance"|"analytics"|"reports"|"staff"|"devices"|"receipts"|"settings">(canTill?"till":canProducts?"products":"receipts"),[receiptId,setReceiptId]=useState<string>(),[keyForm,setKeyForm]=useState(false),[secret,setSecret]=useState("");
+  const [alertsOpen,setAlertsOpen]=useState(false);
+  const openAlert=useCallback((target:AlertTarget):void=>{setSelected(target);setAlertsOpen(false);},[]);
+  const alerts=useNotifications(service,sessionId,revision,openAlert);
   const section=selected==="till"&&canTill||selected==="products"&&canProducts||selected==="customers"&&canCustomers||selected==="purchases"&&canPurchases||selected==="finance"&&canFinance||selected==="analytics"&&canAnalytics||selected==="reports"&&canReports||selected==="staff"&&canStaff||selected==="devices"&&canDevices||selected==="receipts"&&canReceipts||selected==="settings"?selected:canTill?"till":canProducts?"products":canReceipts?"receipts":undefined;
   return <>
     <aside className="sidebar"><div className="brand">KOLO<span className="brand-mark" aria-hidden="true">.</span></div><div className="shop-label"><span className="eyebrow">{t("local")}</span><strong>{view.shopName}</strong></div>
@@ -70,8 +74,9 @@ function Shop({service,view,sessionId,revision,refresh,onRecoveryKey,preferences
         onClick={()=>{setSelected(item.id);if(item.id==="receipts")setReceiptId(undefined);}}><span aria-hidden="true">{item.mark}</span>{t(item.id)}</button>)}</nav>
       <div className="sidebar-footer"><span className="status-dot"/>{t("offline")}</div>
     </aside>
-    <main id="main-content" tabIndex={-1} className="main-content"><header className="topbar"><span>{view.shopName}</span><div className="topbar-actions"><span className="user-name">{view.actor?.name}</span>{view.actor?.isOwner&&<button className="text-button" onClick={()=>setKeyForm(!keyForm)}>{t("viewKey")}</button>}<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.lock()).then(()=>refresh());}}>{t("lock")}</button></div></header>
+    <main id="main-content" tabIndex={-1} className="main-content"><header className="topbar"><span>{view.shopName}</span><div className="topbar-actions"><AlertsButton unread={alerts.data?.unread??0} expanded={alertsOpen} onToggle={()=>setAlertsOpen(!alertsOpen)}/><span className="user-name">{view.actor?.name}</span>{view.actor?.isOwner&&<button className="text-button" onClick={()=>setKeyForm(!keyForm)}>{t("viewKey")}</button>}<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.lock()).then(()=>refresh());}}>{t("lock")}</button></div></header>
       <ErrorText message={action.error}/>
+      {alertsOpen&&<AlertsPanel view={alerts.data} error={alerts.error} permissions={permissions} onOpen={openAlert} onMarkAll={()=>{void alerts.markAll();}} onClose={()=>setAlertsOpen(false)}/>}
       {keyForm&&<div className="panel recovery-form"><form onSubmit={event=>{event.preventDefault();void action.run(()=>service.recoveryKey({sessionId,secret})).then(value=>{setSecret("");if(value===null)action.setError({code:"keyUnavailable"});else if(value!==undefined){setKeyForm(false);onRecoveryKey(value,sessionId);}});}}><Field id="owner-proof" label={t("secret")} value={secret} onChange={setSecret} secret maxLength={256} disabled={action.busy}/><div className="actions"><button type="submit" className="primary" disabled={action.busy}>{t("showKey")}</button><button type="button" className="secondary" onClick={()=>{setKeyForm(false);setSecret("");}}>{t("cancel")}</button></div></form></div>}
       {canTill&&<div hidden={section!=="till"}><Till service={service} sessionId={sessionId} revision={revision} permissions={permissions} onReceipt={id=>{setReceiptId(id);if(canReceipts)setSelected("receipts");}}/></div>}
       {canProducts&&<div hidden={section!=="products"}><Products service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
@@ -83,7 +88,7 @@ function Shop({service,view,sessionId,revision,refresh,onRecoveryKey,preferences
       {section==="staff"&&<Staff service={service} sessionId={sessionId} revision={revision} isOwner={view.actor?.isOwner===true}/>}
       {canDevices&&<div hidden={section!=="devices"}><Devices service={service} sessionId={sessionId} revision={revision}/></div>}
       {section==="receipts"&&<Receipts key={receiptId??"history"} service={service} sessionId={sessionId} revision={revision} initialId={receiptId} canReturn={permissions.includes("sales.refund")} shopName={view.shopName} onNewSale={()=>setSelected(canTill?"till":"products")}/>}
-      {section==="settings"&&<Settings service={service} sessionId={sessionId} canChangeFiles={view.actor!.isOwner&&permissions.includes("business.settings")} canViewProducts={canProducts} {...preferences}/>}
+      {section==="settings"&&<Settings service={service} sessionId={sessionId} canChangeFiles={view.actor!.isOwner&&permissions.includes("business.settings")} canShopSettings={permissions.includes("business.settings")} canViewProducts={canProducts} {...preferences}/>}
       {section===undefined&&<p className="notice error">{t("noAccess")}</p>}
     </main>
   </>;

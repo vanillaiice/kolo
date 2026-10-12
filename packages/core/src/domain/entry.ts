@@ -39,3 +39,19 @@ export function quantityInput(thousandths: number): string {
   const units = BigInt(thousandths) / 1000n, remainder = BigInt(thousandths) % 1000n;
   return remainder === 0n ? String(units) : `${units}.${String(remainder).padStart(3,"0").replace(/0+$/,"")}`;
 }
+
+/** Parses a percentage with up to two decimals (comma or dot), 0–100, to basis points exactly: "19,25" is 1925. */
+export function rateEntry(value: string): number {
+  const match = /^(\d{1,3})(?:[.,](\d{1,2}))?$/.exec(value.trim().replace(/\s*%$/, ""));
+  if (match === null) throw new RuleError("invalid_amount");
+  const basisPoints = Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
+  if (basisPoints > 10000) throw new RuleError("invalid_amount");
+  return basisPoints;
+}
+
+/** Exact editable percentage for basis points: 1925 is "19.25", 1000 is "10". */
+export function rateInput(basisPoints: number): string {
+  if (!Number.isSafeInteger(basisPoints) || basisPoints < 0 || basisPoints > 10000) throw new RuleError("invalid_amount");
+  const whole = Math.trunc(basisPoints / 100), fraction = basisPoints % 100;
+  return fraction === 0 ? String(whole) : `${whole}.${String(fraction).padStart(2, "0").replace(/0$/, "")}`;
+}

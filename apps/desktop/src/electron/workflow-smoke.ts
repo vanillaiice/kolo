@@ -233,6 +233,26 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
       await clickVisible("input[name=appearance]", undefined, "System");
       await wait(`document.documentElement.dataset.theme===undefined && ${canvas}==='#1f2b25'`, "system appearance restored");
     } finally { nativeTheme.themeSource = previousTheme; }
+    // Tax and payment terms (ADR-033): switch tax on at the standard rate, shorten customer terms; both save.
+    await click("#tax-enabled"); await submit("#tax-label");
+    await wait(`${visible(".notice.success")}.some(element=>element.textContent==='Tax settings saved.')`, "tax saved");
+    await fill("#terms-customers", "15"); await submit("#terms-customers");
+    await wait(`${visible(".notice.success")}.some(element=>element.textContent==='Terms saved.')`, "terms saved");
+    await audit("Settings with tax and terms"); await snapshot("settings-tax-terms");
+    // Alerts open from the topbar; the cash shortage was corrected, so nothing is outstanding.
+    await click(".alerts-button"); await wait(`${visible("#alerts-panel")}.length===1 && ${visible("#alerts-panel p")}.some(element=>element.textContent==='No alerts.')`, "alerts panel");
+    await audit("Alerts"); await snapshot("alerts"); await clickVisible("#alerts-panel button", "Close");
+    // The tax report: every sale so far was before tax was on, so it is all at rate 0.
+    await navigate("Reports");
+    await evaluate("(()=>{const select=document.querySelector('#report-kind');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(select,'tax');select.dispatchEvent(new Event('change',{bubbles:true}));})()");
+    await wait(`${visible(".stat-tile")}.some(tile=>tile.textContent.startsWith('Tax · TVA'))`, "tax report");
+    await audit("Tax report"); await snapshot("report-tax");
+    // A product's tax rule and a customer's due dates.
+    // Both detail screens are still open from earlier in this phase.
+    await navigate("Products"); await clickVisible(".tabs button", "Products"); await wait(`${visible("#product-tax-rule")}.length===1 && ${visible(".detail-layout h2")}[0]?.textContent==='Rice 25kg'`, "product tax panel");
+    await audit("Product with tax rule"); await snapshot("product-tax");
+    await navigate("Customers"); await wait(`${visible(".panel h2")}.some(element=>element.textContent==='Due dates')`, "customer due dates");
+    await audit("Customer with due dates"); await snapshot("customer-due-dates");
     // Return: one bag of the credit sale comes back; its value is credited to the customer.
     await navigate("Receipts"); await clickVisible(".receipt-list .row-link"); await wait(`${visible(".receipt-paper")}[0]?.textContent.includes('Awa')`, "credit receipt");
     // Half-width window: the open record replaces the list at the top, and Back returns to the list.

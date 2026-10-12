@@ -187,6 +187,20 @@ negative entry naming it; reversals cannot be reversed. Core data-layer validati
 (for example `ExpenseError`) are reported as `invalid_input`, not `storage_failed`.
 Commands live in `electron/finance.ts`.
 
+## Tax, payment terms and alerts contract
+
+ADR-033. `taxSettings` (any member) and `updateTaxSettings` (business.settings), `productTax`/`setProductTax`
+(products.view/edit), `paymentTerms`/`setShopTerms` (business.settings), `creditStatus` and `setPartyTerms`
+(customers.* or suppliers.*), `notifications` and `markNotifications`. Edits name the version they were made from: an
+identical retry returns the stored value and a newer stored version is refused with `request_conflict`. Checkout no
+longer chooses a tax rate; core stamps the rate in force on each line. Settings shows the tax and terms panels to
+business.settings holders and a per-computer switch for system notifications. Product, customer and supplier details
+show the product's tax rule and the party's due dates. Receipts print one "incl." line per rate and the tax number;
+Reports adds "Tax collected". The topbar's Alerts button lists the member's alerts and opens the screen that resolves
+each one. The renderer rereads them on every change and every five minutes, and raises new unread ones once through the
+web Notification API (native Windows/Linux notifications in Electron), then marks them announced. Commands live in
+`electron/settings.ts`.
+
 ## Reports contract
 
 `report` takes a report kind and a period `[from, until)` of ISO instants that the UI

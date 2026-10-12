@@ -1,6 +1,7 @@
 import type { Queryable } from "../data/database/driver.ts";
 import * as analytics from "../data/reports/analytics.ts";
 import * as queries from "../data/reports/reports.ts";
+import * as tax from "../data/reports/tax.ts";
 import { authorizedOperation } from "../identity/internal-authority.ts";
 import type { Permission } from "../identity/permissions.ts";
 import type { OperationContext } from "../identity/types.ts";
@@ -147,4 +148,9 @@ export function productProfit(context: OperationContext, ...args: ReportArgs<typ
 /** Reads topCustomers for the unlocked shop under current reports.customers authority. */
 export function topCustomers(context: OperationContext, ...args: ReportArgs<typeof analytics.topCustomers>): ReturnType<typeof analytics.topCustomers> {
   return read(context, "reports.customers", analytics.topCustomers, args);
+}
+
+/** Reads the period's tax by rate (ADR-033) for the unlocked shop under current reports.financial authority. */
+export function taxBetween(context: OperationContext, ...args: ReportArgs<typeof tax.taxBetween>): ReturnType<typeof tax.taxBetween> {
+  return read(context, "reports.financial", tax.taxBetween, args);
 }

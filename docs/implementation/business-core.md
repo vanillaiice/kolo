@@ -81,6 +81,30 @@ inputs, writes facts and event in one transaction, then returns recorded identif
 and figures. Pure calculations do not import context/DB/network; SQLite/PostgreSQL
 orchestration is distinct while both call the same pure rules.
 
+## Tax, payment terms and notifications (ADR-033)
+
+`operations` adds `setTaxSettings` (business.settings), `setProductTaxRule` (products.edit) and `setPaymentTerms`
+(business.settings for shop defaults, customers.manage or suppliers.manage for one party). Each is a last-write-wins
+record with its own signed v2 event (`TAX_SETTINGS_SET`, `PRODUCT_TAX_SET`, `PAYMENT_TERMS_SET`) so an older till keeps
+it unsupported rather than quarantining it; a losing write returns false and emits nothing. `completeSale` stamps every
+line with the effective rate (0 while tax is off) inside its transaction and ignores a caller's rate.
+
+Prices include tax: `rules/tax` computes `amount × rate / (10000 + rate)` exactly, half away from zero, per rate group;
+`saleTaxGroups` spreads the bill discount with the returns allocation so groups add up to the sale total. Receipts carry
+`tax` (label, registration, non-zero groups); the `tax` report (reports.financial) groups a period's sales net of
+returns by rate, including rate 0, and equals net sales.
+
+`rules/terms` ages a balance oldest-first: the remaining debts are the newest positive entries covering the balance, due
+at occurrence plus terms; it returns overdue, due within 3 days, oldest/next due and the latest passed due date.
+`application/settings` reads `shopTaxSettings` (any member), `productTax`, `shopPaymentTerms`, `creditStatus` and the
+bounded `agedBalances`. Shop default terms are 30 days until saved.
+
+`application/notifications` derives the member's alerts from local data by permission: low/negative stock
+(inventory.view), overdue customers (customers.view), overdue or due-soon suppliers (suppliers.view), an uncorrected
+cash count difference on this device (cash.view) and sync refusals, hosted grace/pause or 24 hours without a pass while
+facts wait (business.settings). `markNotificationsRead`/`markNotificationsAnnounced` keep per-user marks keyed by a stable
+key and a fingerprint; a changed fact is unread again, and cleared conditions drop their marks.
+
 ## Error and retry contract
 
 Planned operation errors have a stable code, optional field/domain reference, and

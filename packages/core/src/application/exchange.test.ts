@@ -269,3 +269,40 @@ it("partial returns replay in predecessor order, duplicate harmlessly and quaran
  record(a);record(b);await sealPendingEvents(b.context,crypto);const competing=eventsForDestination(b.context,dest(b,a)).find(e=>e.envelope.event_type==="SALE_RETURNED"&&e.envelope.origin_device_id===b.install.deviceId)!;
  assert.equal(applyEvent(a.context,await verifyEvent(a.context,competing,crypto)),"quarantined");assert.equal(count(a,"business_returns"),3);assert.equal(stockOf(a.db,a.install.businessId,p).onHandThousandths,0);
 });
+
+it("tax settings, product tax rules and payment terms relay under last-write-wins; sales keep their frozen rate everywhere", async () => {
+  const [a,b] = await replicas() as [Replica,Replica], p = product(a), exempt = product(a), customer = randomUUIDv7(), later = "2026-10-06T07:00:00.000Z";
+  commands.saveCustomer(a.context, { id: customer, name: "Ama", active: true, createdAt: at, updatedAt: at });
+  commands.setTaxSettings(a.context, { enabled: true, label: "TVA", standardRateBasisPoints: 1925, registration: "NIU-1", updatedAt: at });
+  commands.setProductTaxRule(a.context, { productId: exempt, rule: "EXEMPT", updatedAt: at });
+  commands.setPaymentTerms(a.context, { party: "CUSTOMER", days: 15, updatedAt: at });
+  commands.setPaymentTerms(a.context, { party: "CUSTOMER", partyId: customer, days: 45, updatedAt: at });
+  const sold = sale(a,p);
+  await send(a,b);
+  assert.deepEqual({ ...b.db.get(`SELECT enabled,label,standard_rate_basis_points AS rate,registration FROM shop_tax_settings`) }, { enabled: 1, label: "TVA", rate: 1925, registration: "NIU-1" });
+  assert.equal(b.db.get(`SELECT rule FROM product_tax_rules WHERE id=?`, [exempt])!["rule"], "EXEMPT");
+  assert.deepEqual(b.db.all(`SELECT party_id,days FROM payment_terms ORDER BY days`).map(row => [row["party_id"], row["days"]]), [[null, 15], [customer, 45]]);
+  assert.equal(b.db.get(`SELECT tax_rate_basis_points AS r FROM sale_items WHERE sale_id=?`, [sold])!["r"], 1925, "the replica keeps the rate frozen by the till that sold");
+  assert.equal(queries.receipt(b.context, sold).tax?.groups[0]?.taxMinor, 81);
+
+  // B changes the rate later; A adopts it, and A's older replayed facts never undo it.
+  commands.setTaxSettings(b.context, { enabled: true, label: "TVA", standardRateBasisPoints: 1000, updatedAt: later });
+  commands.setPaymentTerms(b.context, { party: "CUSTOMER", partyId: customer, days: null, updatedAt: later });
+  await send(b,a);
+  assert.equal(a.db.get(`SELECT standard_rate_basis_points AS r FROM shop_tax_settings`)!["r"], 1000);
+  assert.equal(a.db.get(`SELECT days FROM payment_terms WHERE party_id=?`, [customer])!["days"], null);
+  assert.equal(a.db.get(`SELECT tax_rate_basis_points AS r FROM sale_items WHERE sale_id=?`, [sold])!["r"], 1925, "history is never re-rated");
+  for (const e of eventsForDestination(a.context, dest(a,b)).filter(e => ["TAX_SETTINGS_SET","PAYMENT_TERMS_SET","PRODUCT_TAX_SET"].includes(e.envelope.event_type)))
+    assert.equal(applyEvent(b.context, await verifyEvent(b.context, e, crypto)), "duplicate");
+  assert.equal(b.db.get(`SELECT standard_rate_basis_points AS r FROM shop_tax_settings`)!["r"], 1000);
+
+  // A signed fact claiming less authority than its kind needs is quarantined with no effect.
+  const original = eventsForDestination(a.context, dest(a,b)).find(e => e.envelope.event_type === "TAX_SETTINGS_SET")!;
+  const forged = structuredClone(original.envelope); forged.event_id = randomUUIDv7(); forged.origin_sequence = 900; forged.required_permissions = ["sales.create"];
+  forged.payload = { enabled: false, label: "TVA", standard_rate_basis_points: 0, updated_at: "2026-10-06T08:00:00.000Z" };
+  assert.notEqual(applyEvent(b.context, await verifyEvent(b.context, await signed(a, forged), crypto)), "applied");
+  assert.equal(b.db.get(`SELECT enabled FROM shop_tax_settings`)!["enabled"], 1);
+  const badTerms = structuredClone(eventsForDestination(a.context, dest(a,b)).find(e => e.envelope.event_type === "PAYMENT_TERMS_SET")!.envelope);
+  badTerms.event_id = randomUUIDv7(); badTerms.origin_sequence = 901; badTerms.payload = { party: "CUSTOMER", days: null, updated_at: "2026-10-06T08:00:00.000Z" };
+  assert.equal(applyEvent(b.context, await verifyEvent(b.context, await signed(a, badTerms), crypto)), "quarantined", "a shop default must have days");
+});

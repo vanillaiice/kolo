@@ -1,21 +1,22 @@
 import * as reports from "./reports.ts";
 import { stockAlertPage } from "./queries.ts";
+import { shopTaxSettings } from "./settings.ts";
 import { defaultBucket } from "../data/reports/analytics.ts";
 import { multiplyRatio } from "../rules/amounts.ts";
 import { WorkspaceError, type OperationContext } from "../identity/types.ts";
 
 /** Report kinds, each read under its own core report permission. */
 export type ReportKind = "dashboard" | "sales" | "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "cashFlow" | "valuation" |
-  "fastMoving" | "stockAlerts" | "customerDebt" | "supplierDebt" | "purchases";
+  "fastMoving" | "stockAlerts" | "customerDebt" | "supplierDebt" | "purchases" | "tax";
 /** Every report kind, in the order the clients list them. */
-export const REPORT_KINDS: readonly ReportKind[] = ["dashboard", "sales", "salesByProduct", "salesByCategory", "salesByAccount", "salesByUser", "cashFlow", "valuation", "fastMoving", "stockAlerts", "customerDebt", "supplierDebt", "purchases"];
+export const REPORT_KINDS: readonly ReportKind[] = ["dashboard", "sales", "salesByProduct", "salesByCategory", "salesByAccount", "salesByUser", "cashFlow", "valuation", "fastMoving", "stockAlerts", "customerDebt", "supplierDebt", "purchases", "tax"];
 /** Reports of the present state (stock and balances owed). They ignore `from`/`until`, which are not validated for them. */
 export const UNDATED_REPORT_KINDS: ReadonlySet<ReportKind> = new Set(["valuation", "stockAlerts", "customerDebt", "supplierDebt"]);
 /** The permission each report kind is read under. */
 export const REPORT_PERMISSION: Readonly<Record<ReportKind, "reports.financial" | "reports.sales" | "reports.inventory" | "reports.customers" | "reports.suppliers">> = {
   dashboard: "reports.financial", sales: "reports.sales", salesByProduct: "reports.sales", salesByCategory: "reports.sales", salesByAccount: "reports.sales",
   salesByUser: "reports.sales", cashFlow: "reports.financial", valuation: "reports.financial", fastMoving: "reports.inventory", stockAlerts: "reports.inventory",
-  customerDebt: "reports.customers", supplierDebt: "reports.suppliers", purchases: "reports.suppliers",
+  customerDebt: "reports.customers", supplierDebt: "reports.suppliers", purchases: "reports.suppliers", tax: "reports.financial",
 };
 /** A labelled total; `count` is lines, transactions or entries depending on the report. */
 export interface ReportLine { readonly key: string; readonly label: string; readonly totalMinor: number; readonly count: number; }
@@ -30,7 +31,10 @@ export type ReportResult =
       readonly products: readonly { readonly productId: string; readonly name: string; readonly onHandThousandths: number; readonly unitCostMinor?: number; readonly valueMinor?: number }[] }
   | { readonly kind: "fastMoving"; readonly products: readonly { readonly productId: string; readonly name: string; readonly soldThousandths: number; readonly revenueMinor: number; readonly onHandThousandths: number }[] }
   | { readonly kind: "stockAlerts"; readonly products: readonly { readonly productId: string; readonly name: string; readonly onHandThousandths: number }[]; readonly truncated: boolean }
-  | { readonly kind: "purchases"; readonly totalMinor: number; readonly deliveries: number; readonly bySupplier: readonly ReportLine[]; readonly truncated: boolean };
+  | { readonly kind: "purchases"; readonly totalMinor: number; readonly deliveries: number; readonly bySupplier: readonly ReportLine[]; readonly truncated: boolean }
+  /** Prices include tax (ADR-033): gross is what customers paid, net is before tax. One group per rate, rate 0 included. */
+  | { readonly kind: "tax"; readonly label: string; readonly grossMinor: number; readonly taxMinor: number; readonly netMinor: number;
+      readonly groups: readonly { readonly rateBasisPoints: number; readonly grossMinor: number; readonly taxMinor: number; readonly netMinor: number }[] };
 /** How an analytics trend is sliced; weeks start on Monday. */
 export type AnalyticsBucket = "hour" | "day" | "week" | "month";
 /** One trend point keyed by local `YYYY-MM-DDTHH`, `YYYY-MM-DD` (day or week's Monday) or `YYYY-MM`; profit only with reports.financial. */
@@ -111,6 +115,11 @@ export function reportView(context: OperationContext, kind: ReportKind, from: st
     case "stockAlerts": {
       const page = stockAlertPage(context, { limit: Math.min(100, rows) });
       return { kind, truncated: page.next !== undefined, products: page.items.map(item => ({ productId: item.id, name: item.name, onHandThousandths: item.quantity })) };
+    }
+    case "tax": {
+      const value = reports.taxBetween(context, from, until);
+      return { kind, label: shopTaxSettings(context).label, grossMinor: value.grossMinor, taxMinor: value.taxMinor, netMinor: value.netMinor,
+        groups: value.groups.map(({ rateBasisPoints, grossMinor, taxMinor, netMinor }) => ({ rateBasisPoints, grossMinor, taxMinor, netMinor })) };
     }
     case "purchases": {
       const summary = reports.purchasesBetween(context, from, until), { lines, truncated } = capped(reports.purchasesBySupplier(context, from, until), rows);

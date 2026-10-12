@@ -145,7 +145,7 @@ it("schema 18 upgrades forward preserving catalogue metadata, events and append-
   for (const migration of MIGRATIONS.filter(item => item.version <= 18)) db.transaction(tx => { for (const sql of migration.statements) tx.run(sql); tx.run(`INSERT INTO schema_migrations VALUES (?,?,?)`, [migration.version, migration.name, at]); });
   const shop = randomUUIDv7(), category = randomUUIDv7(); db.run(`INSERT INTO businesses(id,name,currency,created_at,updated_at) VALUES (?,'Legacy','XAF',?,?)`, [shop, at, at]);
   db.run(`INSERT INTO categories(id,business_id,name,created_at,updated_at) VALUES (?,?,'Legacy category',?,?)`, [category, shop, at, at]);
-  assert.deepEqual(migrate(db).applied.map(item => item.version), [19, 20, 21, 22, 23, 24, 25, 26, 27]); assert.equal(db.get(`SELECT name FROM categories`)!["name"], "Legacy category");
+  assert.deepEqual(migrate(db).applied.map(item => item.version), [19, 20, 21, 22, 23, 24, 25, 26, 27, 28]); assert.equal(db.get(`SELECT name FROM categories`)!["name"], "Legacy category");
   assert.equal(db.get(`SELECT updated_by_device FROM categories`)!["updated_by_device"], null);
 });
 

@@ -8,6 +8,7 @@ import { useText, type TextKey } from "../../app/i18n.tsx";
 import { spacing, TOUCH_TARGET, useTheme, WIDE_LAYOUT } from "../../components/theme.ts";
 import { BelowScreenContext, Confirm } from "../../components/ui.tsx";
 import { DETAIL_ROUTES, SCREENS } from "./routes.tsx";
+import { useAlertAnnouncer } from "../more/alerts.tsx";
 
 const TAB_LABEL: Record<Tab, TextKey> = { sell: "tab.sell", products: "tab.products", activity: "tab.activity", more: "tab.more" };
 const TAB_GLYPH: Record<Tab, string> = { sell: "⊕", products: "▦", activity: "≡", more: "⋯" };
@@ -52,6 +53,8 @@ export function Shell(): React.JSX.Element {
     };
   }, [tab, stacks, landing, guarded]);
 
+  // Alerts raised as Android notifications open the Alerts list under More.
+  useAlertAnnouncer(useCallback(() => { setSelected("more"); setStacks(current => ({ ...current, more: [current.more[0]!, route("alerts", undefined)] })); }, []));
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       if (pendingLeave !== undefined) { setPendingLeave(undefined); return true; }

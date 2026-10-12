@@ -72,6 +72,7 @@ export function ProductScreen(): React.JSX.Element {
       {can("inventory.count") && <Button label={t("countStock")} variant="secondary" onPress={() => nav.push("stockMove", { productId, kind: "COUNT" })} />}
     </Section>}
     {can("inventory.view") && <RowGroup><ListRow title={t("history")} onPress={() => nav.push("stockHistory", { productId })} /></RowGroup>}
+    <RowGroup><ListRow title={t("productTax")} onPress={() => nav.push("productTax", { productId })} /></RowGroup>
     <PhotoSection productId={productId} name={item.name} />
     {action.notice}
     {item.active && can("products.edit") && <Button label={t("edit")} onPress={() => nav.push("productForm", { productId })} />}

@@ -47,7 +47,20 @@
           }
         }
       ],
-      ["expo-camera", { "cameraPermission": "kolo uses the camera to scan the code shown on your shop's main till.", "recordAudioAndroid": false }],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "kolo uses the camera to scan the code shown on your shop's main till.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/monochrome-icon.png",
+          "color": "#0c3426"
+        }
+      ],
       "./plugins/with-abi-splits.js",
       "./plugins/with-lan-http.js"
     ],

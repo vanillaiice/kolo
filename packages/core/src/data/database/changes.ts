@@ -1,7 +1,7 @@
 import type { Database } from "./driver.ts";
 
 /** Query domains invalidated after a successful SQLite commit; no business records are cached. */
-export type ChangedDomain = "products" | "inventory" | "sales" | "customers" | "suppliers" | "purchases" | "accounts" | "expenses" | "authority";
+export type ChangedDomain = "products" | "inventory" | "sales" | "customers" | "suppliers" | "purchases" | "accounts" | "expenses" | "authority" | "settings" | "notifications";
 const tables: Record<string, readonly ChangedDomain[]> = {
   business_returns: ["sales", "purchases", "inventory", "customers", "suppliers", "accounts"],
   business_return_items: ["sales", "purchases", "inventory"], business_return_refunds: ["accounts"],
@@ -11,6 +11,7 @@ const tables: Record<string, readonly ChangedDomain[]> = {
   suppliers: ["suppliers"], supplier_transactions: ["suppliers", "accounts"],
   purchases: ["purchases"], purchase_items: ["purchases"],
   financial_accounts: ["accounts"], account_movements: ["accounts"], expenses: ["expenses", "accounts"],
+  shop_tax_settings: ["settings", "sales"], product_tax_rules: ["products"], payment_terms: ["settings", "customers", "suppliers"], notification_state: ["notifications"],
   local_memberships: ["authority"], users: ["authority"], devices: ["authority"], businesses: ["authority"],
 };
 type Listener = { domains: readonly ChangedDomain[]; notify: () => void };

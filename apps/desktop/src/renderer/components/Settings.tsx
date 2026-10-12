@@ -3,6 +3,7 @@ import type { Language } from "../text.ts";
 import { useState } from "react";
 import { ErrorText, Field, useAction, useRead, useText } from "./ui.tsx";
 import { LegalLinks } from "./Legal.tsx";
+import { SystemNotificationsPanel, TaxPanel, TermsPanel } from "./ShopSettings.tsx";
 import { moveNav, NAV_IDS, type NavId } from "../nav-order.ts";
 import type { LegalKind } from "../legal.ts";
 
@@ -20,8 +21,10 @@ export function applyAppearance(value: Appearance): void {
 }
 
 /** Per-computer display and session preferences, available to every signed-in user. */
-export function Settings({ service, sessionId, canChangeFiles, canViewProducts, appearance, onAppearance, language, onLanguage, onLegal, navOrder, onNavOrder }: {
+export function Settings({ service, sessionId, canChangeFiles, canShopSettings, canViewProducts, appearance, onAppearance, language, onLanguage, onLegal, navOrder, onNavOrder }: {
   readonly service: ShopService; readonly sessionId: string; readonly canChangeFiles: boolean; readonly canViewProducts: boolean;
+  /** business.settings: shop-wide tax and payment terms, which sync to every till. */
+  readonly canShopSettings: boolean;
   readonly appearance: Appearance; readonly onAppearance: (value: Appearance) => void;
   readonly language: Language; readonly onLanguage: (value: Language) => void; readonly onLegal: (kind: LegalKind) => void;
   /** This computer's sidebar order; also changed by dragging menu items. */
@@ -42,6 +45,9 @@ export function Settings({ service, sessionId, canChangeFiles, canViewProducts, 
         <div className="segmented" role="radiogroup" aria-labelledby="appearance-title">{(["system", "light", "dark"] as const).map(item =>
           <label key={item} className={appearance === item ? "selected" : ""}><input type="radio" name="appearance" value={item} checked={appearance === item} onChange={() => onAppearance(item)}/>{t(`appearance.${item}`)}</label>)}</div>
       </div>
+      {canShopSettings && <TaxPanel service={service} sessionId={sessionId}/>}
+      {canShopSettings && <TermsPanel service={service} sessionId={sessionId}/>}
+      <SystemNotificationsPanel/>
       <div className="panel"><h2>{t("signIn")}</h2>
         <label className="check" htmlFor="remember-session"><input id="remember-session" type="checkbox" checked={preferences.data?.rememberSession ?? false}
           disabled={action.busy || preferences.data === undefined} onChange={event => remember(event.target.checked)}/>{t("rememberSession")}</label>

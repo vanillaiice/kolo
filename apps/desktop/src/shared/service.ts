@@ -224,6 +224,31 @@ export interface ServerSyncSummary { readonly pushed: number; readonly rejected:
 export interface BundleView { readonly total: number; readonly ready: number; readonly duplicate: number; readonly deferred: number; readonly review: number; }
 /** Whether a native save dialog wrote the prepared file (false when the user cancelled). */
 export interface SavedFile { readonly saved: boolean; }
+/** The shop's tax settings (ADR-033): prices include tax. `version` is absent until first saved. */
+export interface TaxSettingsView {
+  readonly enabled: boolean; readonly label: string;
+  /** Basis points: 1925 is 19.25 %. */
+  readonly standardRateBasisPoints: number; readonly registration?: string; readonly version?: string;
+}
+/** A product's tax rule and the rate a sale of it carries now (0 while tax is off). */
+export interface ProductTaxView { readonly rule: "STANDARD" | "EXEMPT" | "RATE"; readonly rateBasisPoints?: number; readonly effectiveRateBasisPoints: number; readonly version?: string; }
+/** The shop's default payment terms in days; 30 when never saved (`stored: false`). */
+export interface PaymentTermsView {
+  readonly customer: { readonly days: number; readonly stored: boolean; readonly version?: string };
+  readonly supplier: { readonly days: number; readonly stored: boolean; readonly version?: string };
+}
+/**
+ * A customer's or supplier's terms and standing now. Payments settle the oldest debt first; `overdueMinor` is unpaid
+ * debt past its due date, `dueSoonMinor` falls due within three days. `version` names the party's own terms record.
+ */
+export interface CreditStatusView {
+  readonly days: number; readonly source: "party" | "shop" | "default"; readonly partyDays?: number; readonly version?: string;
+  readonly balanceMinor: number; readonly overdueMinor: number; readonly dueSoonMinor: number; readonly oldestDueAt?: string; readonly nextDueAt?: string;
+}
+/** Current notifications (derived locally) with the unread count. */
+export interface NotificationsView { readonly items: readonly ShopNotification[]; readonly unread: number; readonly truncated: boolean; }
+export type { ShopNotification, NotificationKind } from "@kolo/core/application/notifications";
+import type { ShopNotification } from "@kolo/core/application/notifications";
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
 /** Per-computer session behaviour. */
 /** Per-computer preferences. `largeFiles` lifts transfer-file and photo-storage limits for powerful computers. */
@@ -459,6 +484,26 @@ export interface ShopService {
   /** Bounded actor-scoped saved receipt history. */
   /** Newest-first receipt history with each sale's exact total and customer, if any. */
   listReceipts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly number: string; readonly occurredAt: string; readonly totalMinor: number; readonly customerName?: string }>>>;
+  /** The shop's tax settings; any signed-in member may read them. */
+  taxSettings(input: SessionRequest): Promise<Result<TaxSettingsView>>;
+  /** Saves tax settings under business.settings from the displayed version (absent before the first save). */
+  updateTaxSettings(input: SessionRequest & { readonly version?: string; readonly enabled: boolean; readonly label: string; readonly standardRateBasisPoints: number; readonly registration?: string }): Promise<Result<TaxSettingsView>>;
+  /** A product's tax rule under products.view. */
+  productTax(input: SessionRequest & { readonly productId: string }): Promise<Result<ProductTaxView>>;
+  /** Sets a product's tax rule under products.edit; past sales keep the rate they were sold at. */
+  setProductTax(input: SessionRequest & { readonly productId: string; readonly version?: string; readonly rule: ProductTaxView["rule"]; readonly rateBasisPoints?: number }): Promise<Result<ProductTaxView>>;
+  /** Shop default payment terms for customers and suppliers. */
+  paymentTerms(input: SessionRequest): Promise<Result<PaymentTermsView>>;
+  /** Sets the shop's default terms (0–3650 days) for customers or suppliers under business.settings. */
+  setShopTerms(input: SessionRequest & { readonly party: "CUSTOMER" | "SUPPLIER"; readonly days: number; readonly version?: string }): Promise<Result<PaymentTermsView>>;
+  /** One customer's (customers.view) or supplier's (suppliers.view) terms and standing now. */
+  creditStatus(input: SessionRequest & { readonly party: "CUSTOMER" | "SUPPLIER"; readonly partyId: string }): Promise<Result<CreditStatusView>>;
+  /** Sets one party's own terms, or with `days: null` returns it to the shop default (customers.manage / suppliers.manage). */
+  setPartyTerms(input: SessionRequest & { readonly party: "CUSTOMER" | "SUPPLIER"; readonly partyId: string; readonly days: number | null; readonly version?: string }): Promise<Result<CreditStatusView>>;
+  /** Current notifications for the signed-in member: stock, debts, cash counts and sync, by permission. */
+  notifications(input: SessionRequest): Promise<Result<NotificationsView>>;
+  /** Marks notifications read (all without `keys`), or with `announced: true` only as shown by the system. */
+  markNotifications(input: SessionRequest & { readonly keys?: readonly string[]; readonly announced?: boolean }): Promise<Result<NotificationsView>>;
   /** Invalidation only: subscribers reread bounded pages; no business database mirror. */
   onChanged(listener: () => void): () => void;
 }

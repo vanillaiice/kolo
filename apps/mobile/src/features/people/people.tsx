@@ -13,6 +13,7 @@ import { usePermissions, useRevision, useSession } from "../../app/session.tsx";
 import { FormProblem, useAction } from "../../components/command.tsx";
 import { Button, Confirm, EmptyState, Facts, Field, ListRow, Notice, PagedList, Picker, RowGroup, Screen, Section, Toggle } from "../../components/ui.tsx";
 import { formatDate, nextVersion, requireVersion, useRecord, useRequestId } from "../shared.tsx";
+import { CreditFacts } from "../more/shop-settings.tsx";
 
 type Kind = "customer" | "supplier";
 const ENTRY_KEYS: Record<string, TextKey> = { CREDIT_SALE: "ledger.CREDIT_SALE", PURCHASE: "ledger.PURCHASE", PAYMENT: "ledger.PAYMENT", RETURN: "ledger.RETURN",
@@ -56,8 +57,10 @@ export function PersonScreen(): React.JSX.Element {
     <Section><Facts items={[[kind === "customer" ? t("customerOwes") : t("shopOwes"), formatMoney(item.outstandingMinor), item.outstandingMinor > 0 ? "danger" : "strong"],
       [t("phone"), item.phone], [t("limit"), limit === undefined ? undefined : formatMoney(limit)], [t("updated"), formatDate(item.updatedAt, language, false)]]} />
       {item.outstandingMinor < 0 && <Notice tone="info" text={t("inAdvance", { amount: formatMoney(-item.outstandingMinor) })} />}</Section>
+    <Section><CreditFacts kind={kind} id={id} /></Section>
     {canSettle && item.active && <Button label={t(kind === "customer" ? "receive" : "paySupplier")} onPress={() => nav.push("settle", { kind, id })} />}
-    <RowGroup><ListRow title={t("statement")} onPress={() => nav.push("statement", { kind, id })} /></RowGroup>
+    <RowGroup><ListRow title={t("statement")} onPress={() => nav.push("statement", { kind, id })} />
+      {canManage && item.active && <ListRow title={t("termsTitle")} onPress={() => nav.push("partyTerms", { kind, id })} />}</RowGroup>
     {action.notice}
     {canManage && item.active && <Button label={t("edit")} variant="secondary" onPress={() => nav.push("personForm", { kind, id })} />}
     {canManage && <Button label={t(item.active ? "archive" : "restore")} variant={item.active ? "danger" : "secondary"} onPress={() => item.active ? setArchiving(true) : toggle()} />}

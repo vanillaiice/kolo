@@ -377,9 +377,43 @@ const strings = {
   shop_removed: ["Cette boutique a été retirée du serveur. La caisse continue de fonctionner avec ses données.", "This shop was removed from the server. The till keeps working with its data."],
   enrollment_conflict: ["Cette boutique est déjà rattachée à ce serveur depuis une autre caisse.", "This shop is already attached to this server from another till."],
   server_not_approved: ["Le propriétaire n’a pas encore relié ce serveur. Reliez d’abord sa caisse principale.", "The owner has not connected this server yet. Connect their main till first."],
+  taxTitle: ["Taxe (TVA)", "Tax (VAT)"], taxHelp: ["Les prix affichés incluent la taxe : elle figure sur les reçus et dans le rapport de taxe, sans changer ce que paie le client.", "Prices include tax: it appears on receipts and in the tax report without changing what the customer pays."],
+  taxEnabled: ["Appliquer la taxe aux ventes", "Apply tax to sales"], taxLabel: ["Nom de la taxe", "Tax name"], taxRate: ["Taux normal (%)", "Standard rate (%)"],
+  taxRegistration: ["Numéro de contribuable (NIU)", "Tax number (NIU)"], taxRegistrationHelp: ["Facultatif, imprimé sur les reçus.", "Optional, printed on receipts."],
+  taxNewSalesOnly: ["Un changement s’applique aux nouvelles ventes ; les ventes passées gardent leur taux.", "A change applies to new sales; past sales keep their rate."],
+  taxSaved: ["Paramètres de taxe enregistrés.", "Tax settings saved."], taxRateInput: ["Saisissez un taux entre 0 et 100, avec au plus deux décimales.", "Enter a rate from 0 to 100 with at most two decimals."],
+  productTax: ["Taxe", "Tax"], "taxRule.STANDARD": ["Taux normal", "Standard rate"], "taxRule.EXEMPT": ["Exonéré", "Exempt"], "taxRule.RATE": ["Taux propre", "Own rate"],
+  productOwnRate: ["Taux propre (%)", "Own rate (%)"], productTaxOff: ["La taxe est désactivée dans les paramètres : ce produit se vend sans taxe.", "Tax is off in Settings: this product sells without tax."],
+  productTaxNow: ["Taux appliqué aux nouvelles ventes :", "Rate on new sales:"], productTaxSaved: ["Taxe du produit enregistrée.", "Product tax saved."],
+  taxIncluded: ["dont", "incl."], taxNumberShort: ["NIU", "Tax no."],
+  rep_tax: ["Taxe collectée", "Tax collected"], taxRateColumn: ["Taux", "Rate"], grossIncl: ["Ventes TTC", "Sales incl. tax"], taxAmount: ["Taxe", "Tax"], netExcl: ["Ventes HT", "Sales excl. tax"],
+  taxReportNote: ["Ventes de la période, retours déduits, au taux de chaque vente. Le bénéfice reste calculé taxe comprise.", "The period’s sales less returns, at each sale’s rate. Profit is still shown including tax."],
+  termsTitle: ["Délais de paiement", "Payment terms"], termsHelp: ["Nombre de jours avant qu’une dette soit due. Chaque client ou fournisseur peut avoir son propre délai.", "Days before a debt falls due. Each customer or supplier can have their own."],
+  termsCustomers: ["Clients (jours)", "Customers (days)"], termsSuppliers: ["Fournisseurs (jours)", "Suppliers (days)"], termsDefaultNote: ["30 jours tant qu’aucune valeur n’est enregistrée.", "30 days until a value is saved."],
+  termsSaved: ["Délais enregistrés.", "Terms saved."], termsInput: ["Saisissez un nombre de jours entre 0 et 3650.", "Enter a number of days from 0 to 3650."],
+  creditTitle: ["Échéances", "Due dates"], termsDays: ["Délai de paiement", "Payment terms"], daysSuffix: ["jours", "days"],
+  "termsSource.party": ["délai propre", "own terms"], "termsSource.shop": ["délai de la boutique", "shop default"], "termsSource.default": ["délai par défaut", "default"],
+  overdueLabel: ["En retard", "Overdue"], dueSoonLabel: ["Dû sous 3 jours", "Due within 3 days"], nextDue: ["Prochaine échéance", "Next due date"], oldestDue: ["Plus ancienne échéance", "Oldest due date"],
+  ownTerms: ["Délai propre (jours)", "Own terms (days)"], useShopTerms: ["Utiliser le délai de la boutique", "Use the shop default"], nothingOwed: ["Rien à payer.", "Nothing owed."],
+  notificationsTitle: ["Alertes", "Alerts"], noNotifications: ["Aucune alerte.", "No alerts."], markAllRead: ["Tout marquer comme lu", "Mark all as read"], openAlert: ["Ouvrir", "Open"], unreadAlerts: ["non lues", "unread"],
+  "n.stock_low": ["Stock bas", "Low stock"], "n.stock_negative": ["Stock négatif", "Negative stock"], "n.customer_overdue": ["Client en retard de paiement", "Customer payment overdue"],
+  "n.supplier_overdue": ["Fournisseur à payer, en retard", "Supplier payment overdue"], "n.supplier_due_soon": ["Paiement fournisseur bientôt dû", "Supplier payment due soon"],
+  "n.cash_difference": ["Écart de caisse", "Cash difference"], "n.sync_refused": ["Synchronisation refusée", "Sync refused"], "n.sync_stalled": ["Synchronisation en attente", "Sync waiting"],
+  "n.service_grace": ["Abonnement de synchronisation expiré", "Sync subscription expired"], "n.service_paused": ["Synchronisation en pause", "Sync paused"],
+  "nb.stock": ["{name} : {stock} en stock (seuil {min}).", "{name}: {stock} in stock (reorder at {min})."], "nb.stock_negative": ["{name} : {stock} en stock. Vérifiez les réceptions et les comptages.", "{name}: {stock} in stock. Check deliveries and counts."],
+  "nb.overdue": ["{name} : {amount} en retard depuis le {date}.", "{name}: {amount} overdue since {date}."], "nb.due_soon": ["{name} : {amount} à payer d’ici le {date}.", "{name}: {amount} to pay by {date}."],
+  "nb.cash": ["{name} : compté {counted}, attendu {expected}.", "{name}: counted {counted}, expected {expected}."],
+  "nb.stalled": ["Pas de synchronisation depuis le {date} ; des opérations attendent d’être envoyées.", "No sync since {date}; operations are waiting to be sent."], "nb.stalled_never": ["Jamais synchronisé ; des opérations attendent d’être envoyées.", "Never synced; operations are waiting to be sent."],
+  "nb.refused": ["{name} : la synchronisation a été refusée ({error}).", "{name}: sync was refused ({error})."], "nb.grace": ["La synchronisation s’arrêtera le {date} sans renouvellement.", "Sync stops on {date} unless renewed."],
+  systemNotifications: ["Notifications du système", "System notifications"], systemNotificationsLabel: ["Afficher les alertes dans les notifications de l’ordinateur", "Show alerts as computer notifications"],
+  systemNotificationsHelp: ["Sur cet ordinateur, quand un utilisateur est connecté. Chaque alerte n’est montrée qu’une fois, et de nouveau si elle change.", "On this computer while someone is signed in. Each alert is shown once, and again if it changes."],
+  systemNotificationsBlocked: ["Le système bloque les notifications de KOLO. Autorisez-les dans les réglages de l’ordinateur.", "The system is blocking KOLO’s notifications. Allow them in the computer’s settings."],
+  moreAlerts: ["autres alertes", "more alerts"],
   storage_failed: ["L’opération n’a pas abouti. Votre saisie reste disponible pour réessayer.", "The operation did not finish. Your entries remain available to retry."],
 } as const;
 export type TextKey = keyof typeof strings;
 export type Language = "fr" | "en";
 /** Keyed French/English DOM UI text, with no translated business calculations. */
 export function text(language: Language, key: TextKey): string { return strings[key][language === "fr" ? 0 : 1]; }
+/** Whether a stable code (such as a sync error) has its own text. */
+export function hasText(key: string): key is TextKey { return Object.hasOwn(strings, key); }

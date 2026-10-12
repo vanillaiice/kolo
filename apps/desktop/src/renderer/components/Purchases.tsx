@@ -7,6 +7,7 @@ import type { Permission } from "@kolo/core/identity/permissions";
 import type { ProductView, PurchaseRequest, Result, ShopService, SupplierDetails, SupplierView } from "../../shared/service.ts";
 import { BackToList, ErrorText, Field, Pager, ReadState, Select, call, useAction, useRead, useRevealDetail, useText } from "./ui.tsx";
 import { Balance, Statement } from "./Customers.tsx";
+import { CreditTermsPanel } from "./Credit.tsx";
 import { ReturnForm } from "./ReturnForm.tsx";
 
 type Props = { readonly service: ShopService; readonly sessionId: string; readonly revision: number; readonly permissions: readonly Permission[] };
@@ -152,6 +153,7 @@ function SupplierDetail({service,sessionId,revision,permissions,supplierId,onBac
     </div>
     {editing!==undefined&&<SupplierForm key={editing.version} service={service} sessionId={sessionId} supplier={editing} onReload={()=>setEditing(shown)} onDone={value=>{if(value!==undefined)setShown(value);setEditing(undefined);}}/>}
     {shown.active&&permissions.includes("purchases.pay")&&<PaySupplier service={service} sessionId={sessionId} supplier={shown} onSaved={setShown}/>}
+    <CreditTermsPanel service={service} sessionId={sessionId} revision={revision} party="SUPPLIER" partyId={supplierId} canManage={canManage&&shown.active}/>
     <Statement service={service} sessionId={sessionId} revision={revision} kind="supplier" id={supplierId}/>
   </div>;
 }

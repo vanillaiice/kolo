@@ -142,6 +142,17 @@ class DesktopApplication implements ShopService {
   report(input: unknown): Promise<Result<ReportResult>>;
   /** Period analytics with permission-scoped sections; see reports.ts. */
   analytics(input: unknown): Promise<Result<AnalyticsResult>>;
+  /** Tax, payment terms and notifications; see settings.ts. */
+  taxSettings(input: unknown): Promise<Result<TaxSettingsView>>;
+  updateTaxSettings(input: unknown): Promise<Result<TaxSettingsView>>;
+  productTax(input: unknown): Promise<Result<ProductTaxView>>;
+  setProductTax(input: unknown): Promise<Result<ProductTaxView>>;
+  paymentTerms(input: unknown): Promise<Result<PaymentTermsView>>;
+  setShopTerms(input: unknown): Promise<Result<PaymentTermsView>>;
+  creditStatus(input: unknown): Promise<Result<CreditStatusView>>;
+  setPartyTerms(input: unknown): Promise<Result<CreditStatusView>>;
+  notifications(input: unknown): Promise<Result<NotificationsView>>;
+  markNotifications(input: unknown): Promise<Result<NotificationsView>>;
   /** Sale and purchase returns; see returns.ts. */
   returnSource(input: unknown): Promise<Result<ReturnSourceView>>;
   previewReturn(input: unknown): Promise<Result<ReturnPreview>>;
@@ -620,6 +631,69 @@ unreadable records are treated as absent.
 
 ```ts
 desktopSessionMemory(directory: string, native: NativeSafeStorage, platform: string = process.platform): SessionMemory;
+```
+
+## [apps/desktop/src/electron/settings.ts](../../apps/desktop/src/electron/settings.ts)
+
+The shop's tax settings; any signed-in member may read them.
+
+```ts
+taxSettings(host: Host, input: unknown): TaxSettingsView;
+```
+
+Saves the shop's tax settings under business.settings from the displayed version.
+
+```ts
+updateTaxSettings(host: Host, input: unknown): TaxSettingsView;
+```
+
+A product's tax rule and the rate it would sell at now, under products.view.
+
+```ts
+productTax(host: Host, input: unknown): ProductTaxView;
+```
+
+Sets a product's tax rule under products.edit from the displayed version.
+
+```ts
+setProductTax(host: Host, input: unknown): ProductTaxView;
+```
+
+The shop's default payment terms for customers and suppliers.
+
+```ts
+paymentTerms(host: Host, input: unknown): PaymentTermsView;
+```
+
+Sets the shop's default terms for one party kind under business.settings.
+
+```ts
+setShopTerms(host: Host, input: unknown): PaymentTermsView;
+```
+
+One customer's or supplier's terms and what is overdue or due soon now.
+
+```ts
+creditStatus(host: Host, input: unknown): CreditStatusView;
+```
+
+Sets (or, with `days: null`, clears) one party's own terms under customers.manage or suppliers.manage.
+
+```ts
+setPartyTerms(host: Host, input: unknown): CreditStatusView;
+```
+
+Current notifications for the signed-in member, most serious first.
+
+```ts
+notifications(host: Host, input: unknown): NotificationsView;
+```
+
+Marks notifications read (all when `keys` is absent), or with `announced: true` only as shown by the system so
+they are not raised again. Returns the refreshed list.
+
+```ts
+markNotifications(host: Host, input: unknown): NotificationsView;
 ```
 
 ## [apps/desktop/src/electron/staff.ts](../../apps/desktop/src/electron/staff.ts)
@@ -1483,6 +1557,73 @@ export interface SavedFile {
 }
 ```
 
+The shop's tax settings (ADR-033): prices include tax. `version` is absent until first saved.
+
+```ts
+export interface TaxSettingsView {
+    readonly enabled: boolean;
+    readonly label: string;
+    readonly standardRateBasisPoints: number;
+    readonly registration?: string;
+    readonly version?: string;
+}
+```
+
+A product's tax rule and the rate a sale of it carries now (0 while tax is off).
+
+```ts
+export interface ProductTaxView {
+    readonly rule: "STANDARD" | "EXEMPT" | "RATE";
+    readonly rateBasisPoints?: number;
+    readonly effectiveRateBasisPoints: number;
+    readonly version?: string;
+}
+```
+
+The shop's default payment terms in days; 30 when never saved (`stored: false`).
+
+```ts
+export interface PaymentTermsView {
+    readonly customer: {
+        readonly days: number;
+        readonly stored: boolean;
+        readonly version?: string;
+    };
+    readonly supplier: {
+        readonly days: number;
+        readonly stored: boolean;
+        readonly version?: string;
+    };
+}
+```
+
+A customer's or supplier's terms and standing now. Payments settle the oldest debt first; `overdueMinor` is unpaid
+debt past its due date, `dueSoonMinor` falls due within three days. `version` names the party's own terms record.
+
+```ts
+export interface CreditStatusView {
+    readonly days: number;
+    readonly source: "party" | "shop" | "default";
+    readonly partyDays?: number;
+    readonly version?: string;
+    readonly balanceMinor: number;
+    readonly overdueMinor: number;
+    readonly dueSoonMinor: number;
+    readonly oldestDueAt?: string;
+    readonly nextDueAt?: string;
+}
+```
+
+Current notifications (derived locally) with the unread count.
+
+```ts
+export interface NotificationsView {
+    readonly items: readonly ShopNotification[];
+    readonly unread: number;
+    readonly truncated: boolean;
+}
+```
+
 Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it.
 
 Per-computer session behaviour.
@@ -1879,6 +2020,44 @@ export interface ShopService {
         readonly totalMinor: number;
         readonly customerName?: string;
     }>>>;
+    taxSettings(input: SessionRequest): Promise<Result<TaxSettingsView>>;
+    updateTaxSettings(input: SessionRequest & {
+        readonly version?: string;
+        readonly enabled: boolean;
+        readonly label: string;
+        readonly standardRateBasisPoints: number;
+        readonly registration?: string;
+    }): Promise<Result<TaxSettingsView>>;
+    productTax(input: SessionRequest & {
+        readonly productId: string;
+    }): Promise<Result<ProductTaxView>>;
+    setProductTax(input: SessionRequest & {
+        readonly productId: string;
+        readonly version?: string;
+        readonly rule: ProductTaxView["rule"];
+        readonly rateBasisPoints?: number;
+    }): Promise<Result<ProductTaxView>>;
+    paymentTerms(input: SessionRequest): Promise<Result<PaymentTermsView>>;
+    setShopTerms(input: SessionRequest & {
+        readonly party: "CUSTOMER" | "SUPPLIER";
+        readonly days: number;
+        readonly version?: string;
+    }): Promise<Result<PaymentTermsView>>;
+    creditStatus(input: SessionRequest & {
+        readonly party: "CUSTOMER" | "SUPPLIER";
+        readonly partyId: string;
+    }): Promise<Result<CreditStatusView>>;
+    setPartyTerms(input: SessionRequest & {
+        readonly party: "CUSTOMER" | "SUPPLIER";
+        readonly partyId: string;
+        readonly days: number | null;
+        readonly version?: string;
+    }): Promise<Result<CreditStatusView>>;
+    notifications(input: SessionRequest): Promise<Result<NotificationsView>>;
+    markNotifications(input: SessionRequest & {
+        readonly keys?: readonly string[];
+        readonly announced?: boolean;
+    }): Promise<Result<NotificationsView>>;
     onChanged(listener: () => void): () => void;
 }
 ```
@@ -2981,7 +3160,7 @@ receiptSigningMessage(receipt: PeerReceipt): string;
 Strict v2 payload schemas for every current business/authority event. No credentials/tokens.
 
 ```ts
-const EVENT_PAYLOAD_SCHEMAS: { readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly PURCHASE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly CATEGORY_SAVED: ZodObject<{ category: ZodObject<{ id: ZodUUID; name: ZodString; active: ZodBoolean; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_SAVED: ZodObject<{ product: ZodObject<{ id: ZodUUID; category_id: ZodOptional<ZodUUID>; name: ZodString; unit: ZodString; selling_price_minor: ZodNumber; purchase_price_minor: ZodOptional<ZodNumber>; sku: ZodOptional<ZodString>; barcode: ZodOptional<ZodString>; description: ZodOptional<ZodString>; brand: ZodOptional<ZodString>; divisible: ZodOptional<ZodBoolean>; active: ZodOptional<ZodBoolean>; tax_rate_basis_points: ZodOptional<ZodNumber>; minimum_stock: ZodOptional<ZodNumber>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_CATEGORIES_SET: ZodObject<{ product_id: ZodUUID; category_ids: ZodArray<ZodUUID>; updated_at: ZodISODateTime; }, $strict>; readonly CUSTOMER_SAVED: ZodObject<{ customer: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; credit_limit_minor: ZodOptional<ZodNumber>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_SAVED: ZodObject<{ supplier: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; contact: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly ACCOUNT_SAVED: ZodObject<{ account: ZodObject<{ id: ZodUUID; branch_id: ZodOptional<ZodUUID>; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; number: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SALE_COMPLETED: ZodObject<{ sale: ZodObject<{ id: ZodUUID; number: ZodString; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; name: ZodString; unit_price_minor: ZodNumber; quantity: ZodNumber; discount_minor: ZodOptional<ZodNumber>; tax_rate_basis_points: ZodOptional<ZodNumber>; unit_cost_minor: ZodOptional<ZodNumber>; }, $strict>>; customer_id: ZodOptional<ZodUUID>; credit_transaction_id: ZodOptional<ZodUUID>; discount_minor: ZodOptional<ZodNumber>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly PURCHASE_RECORDED: ZodObject<{ purchase: ZodObject<{ id: ZodUUID; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; unit_cost_minor: ZodNumber; quantity: ZodNumber; }, $strict>>; supplier_id: ZodOptional<ZodUUID>; supplier_transaction_id: ZodOptional<ZodUUID>; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reason: ZodString; occurred_at: ZodISODateTime; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CUSTOMER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; customer_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; supplier_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly STOCK_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CASH_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; ADJUSTMENT: "ADJUSTMENT"; CASH_IN: "CASH_IN"; CASH_OUT: "CASH_OUT"; TRANSFER_IN: "TRANSFER_IN"; TRANSFER_OUT: "TRANSFER_OUT"; }>; amount_minor: ZodNumber; counterpart_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>>; }, $strict>; readonly EXPENSE_RECORDED: ZodObject<{ expense: ZodObject<{ id: ZodUUID; category: ZodEnum<{ OTHER: "OTHER"; RENT: "RENT"; ELECTRICITY: "ELECTRICITY"; WATER: "WATER"; TRANSPORT: "TRANSPORT"; SALARY: "SALARY"; PACKAGING: "PACKAGING"; MAINTENANCE: "MAINTENANCE"; INTERNET: "INTERNET"; MARKETING: "MARKETING"; }>; account_id: ZodUUID; amount_minor: ZodNumber; occurred_at: ZodISODateTime; description: ZodOptional<ZodString>; reference: ZodOptional<ZodString>; reverses_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly WORKSPACE_CREATED: ZodObject<{ business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; accounts: ZodArray<ZodObject<{ id: ZodUUID; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; }, $strict>>; }, $strict>; readonly LEGACY_WORKSPACE_ADOPTED: ZodObject<{ business_id: ZodUUID; owner_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; provenance: ZodLiteral<"unsigned_v1_snapshot">; }, $strict>; readonly MEMBER_CREATED: ZodObject<{ user_id: ZodUUID; name: ZodString; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodLiteral<1>; }, $strict>; readonly PERMISSION_GRANTED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_REVOKED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly MEMBER_SUSPENDED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_REINSTATED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_ACCESS_RESET: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly OWNER_ACCESS_RECOVERED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_TRUSTED: ZodObject<{ device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; SERVER: "SERVER"; }>; public_key: ZodString; }, $strict>; authority_allowed: ZodBoolean; revision: ZodNumber; }, $strict>; readonly DEVICE_REVOKED: ZodObject<{ device_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_ENCRYPTION_KEY: ZodObject<{ device_id: ZodUUID; public_key: ZodString; }, $strict>; readonly SHOP_KEY_GRANTED: ZodObject<{ key_id: ZodUUID; epoch: ZodNumber; device_id: ZodUUID; sealed: ZodObject<{ ephemeral_public_key: ZodString; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>; readonly SERVER_ENDPOINT_SET: ZodObject<{ server_device_id: ZodUUID; url: ZodString; fingerprint: ZodString; revision: ZodNumber; }, $strict>; readonly SERVER_ENDPOINT_CLEARED: ZodObject<{ server_device_id: ZodUUID; revision: ZodNumber; }, $strict>; };
+const EVENT_PAYLOAD_SCHEMAS: { readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly PURCHASE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly CATEGORY_SAVED: ZodObject<{ category: ZodObject<{ id: ZodUUID; name: ZodString; active: ZodBoolean; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_SAVED: ZodObject<{ product: ZodObject<{ id: ZodUUID; category_id: ZodOptional<ZodUUID>; name: ZodString; unit: ZodString; selling_price_minor: ZodNumber; purchase_price_minor: ZodOptional<ZodNumber>; sku: ZodOptional<ZodString>; barcode: ZodOptional<ZodString>; description: ZodOptional<ZodString>; brand: ZodOptional<ZodString>; divisible: ZodOptional<ZodBoolean>; active: ZodOptional<ZodBoolean>; tax_rate_basis_points: ZodOptional<ZodNumber>; minimum_stock: ZodOptional<ZodNumber>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_CATEGORIES_SET: ZodObject<{ product_id: ZodUUID; category_ids: ZodArray<ZodUUID>; updated_at: ZodISODateTime; }, $strict>; readonly TAX_SETTINGS_SET: ZodObject<{ enabled: ZodBoolean; label: ZodString; standard_rate_basis_points: ZodNumber; registration: ZodOptional<ZodString>; updated_at: ZodISODateTime; }, $strict>; readonly PRODUCT_TAX_SET: ZodObject<{ product_id: ZodUUID; rule: ZodEnum<{ STANDARD: "STANDARD"; EXEMPT: "EXEMPT"; RATE: "RATE"; }>; rate_basis_points: ZodOptional<ZodNumber>; updated_at: ZodISODateTime; }, $strict>; readonly PAYMENT_TERMS_SET: ZodObject<{ party: ZodEnum<{ CUSTOMER: "CUSTOMER"; SUPPLIER: "SUPPLIER"; }>; party_id: ZodOptional<ZodUUID>; days: ZodNullable<ZodNumber>; updated_at: ZodISODateTime; }, $strict>; readonly CUSTOMER_SAVED: ZodObject<{ customer: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; credit_limit_minor: ZodOptional<ZodNumber>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_SAVED: ZodObject<{ supplier: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; contact: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly ACCOUNT_SAVED: ZodObject<{ account: ZodObject<{ id: ZodUUID; branch_id: ZodOptional<ZodUUID>; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; number: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SALE_COMPLETED: ZodObject<{ sale: ZodObject<{ id: ZodUUID; number: ZodString; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; name: ZodString; unit_price_minor: ZodNumber; quantity: ZodNumber; discount_minor: ZodOptional<ZodNumber>; tax_rate_basis_points: ZodOptional<ZodNumber>; unit_cost_minor: ZodOptional<ZodNumber>; }, $strict>>; customer_id: ZodOptional<ZodUUID>; credit_transaction_id: ZodOptional<ZodUUID>; discount_minor: ZodOptional<ZodNumber>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly PURCHASE_RECORDED: ZodObject<{ purchase: ZodObject<{ id: ZodUUID; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; unit_cost_minor: ZodNumber; quantity: ZodNumber; }, $strict>>; supplier_id: ZodOptional<ZodUUID>; supplier_transaction_id: ZodOptional<ZodUUID>; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reason: ZodString; occurred_at: ZodISODateTime; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CUSTOMER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; customer_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; supplier_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly STOCK_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CASH_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; ADJUSTMENT: "ADJUSTMENT"; CASH_IN: "CASH_IN"; CASH_OUT: "CASH_OUT"; TRANSFER_IN: "TRANSFER_IN"; TRANSFER_OUT: "TRANSFER_OUT"; }>; amount_minor: ZodNumber; counterpart_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>>; }, $strict>; readonly EXPENSE_RECORDED: ZodObject<{ expense: ZodObject<{ id: ZodUUID; category: ZodEnum<{ OTHER: "OTHER"; RENT: "RENT"; ELECTRICITY: "ELECTRICITY"; WATER: "WATER"; TRANSPORT: "TRANSPORT"; SALARY: "SALARY"; PACKAGING: "PACKAGING"; MAINTENANCE: "MAINTENANCE"; INTERNET: "INTERNET"; MARKETING: "MARKETING"; }>; account_id: ZodUUID; amount_minor: ZodNumber; occurred_at: ZodISODateTime; description: ZodOptional<ZodString>; reference: ZodOptional<ZodString>; reverses_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly WORKSPACE_CREATED: ZodObject<{ business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; accounts: ZodArray<ZodObject<{ id: ZodUUID; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; }, $strict>>; }, $strict>; readonly LEGACY_WORKSPACE_ADOPTED: ZodObject<{ business_id: ZodUUID; owner_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; provenance: ZodLiteral<"unsigned_v1_snapshot">; }, $strict>; readonly MEMBER_CREATED: ZodObject<{ user_id: ZodUUID; name: ZodString; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodLiteral<1>; }, $strict>; readonly PERMISSION_GRANTED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_REVOKED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly MEMBER_SUSPENDED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_REINSTATED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_ACCESS_RESET: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly OWNER_ACCESS_RECOVERED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_TRUSTED: ZodObject<{ device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; SERVER: "SERVER"; }>; public_key: ZodString; }, $strict>; authority_allowed: ZodBoolean; revision: ZodNumber; }, $strict>; readonly DEVICE_REVOKED: ZodObject<{ device_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_ENCRYPTION_KEY: ZodObject<{ device_id: ZodUUID; public_key: ZodString; }, $strict>; readonly SHOP_KEY_GRANTED: ZodObject<{ key_id: ZodUUID; epoch: ZodNumber; device_id: ZodUUID; sealed: ZodObject<{ ephemeral_public_key: ZodString; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>; readonly SERVER_ENDPOINT_SET: ZodObject<{ server_device_id: ZodUUID; url: ZodString; fingerprint: ZodString; revision: ZodNumber; }, $strict>; readonly SERVER_ENDPOINT_CLEARED: ZodObject<{ server_device_id: ZodUUID; revision: ZodNumber; }, $strict>; };
 ```
 
 Current supported event names; unknown signed names/versions can be retained unapplied.
@@ -3034,7 +3213,7 @@ parseJournalEnvelope(input: unknown): { event_id: string; business_id: string; o
 Rejects unknown current payload fields; unsupported signed versions are distinguishable.
 
 ```ts
-parseEventPayload<T extends EventType>(type: T, version: number, input: unknown): output<{ readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<...>>; refunds: ZodArray<...>; debt_transaction_id: ZodOptional<...>; }, $strict>; }, $strict>; ... 28 more ...; readonly SERVER_ENDPOINT_...;
+parseEventPayload<T extends EventType>(type: T, version: number, input: unknown): output<{ readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<...>>; refunds: ZodArray<...>; debt_transaction_id: ZodOptional<...>; }, $strict>; }, $strict>; ... 31 more ...; readonly SERVER_ENDPOINT_...;
 ```
 
 ## [packages/contracts/src/index.ts](../../packages/contracts/src/index.ts)
@@ -4002,6 +4181,75 @@ True while this empty device has a join request waiting for the owner, so the ap
 joinPending(database: Database): boolean;
 ```
 
+## [packages/core/src/application/notifications.ts](../../packages/core/src/application/notifications.ts)
+
+Local notifications (ADR-033, spec §49).
+
+Derived on demand from this device's SQLite: nothing is stored about a condition except this user's read and
+announced marks, keyed by a stable key and the fingerprint of the facts that made it. A changed fingerprint makes a
+notification unread (and unannounced) again; a condition that clears simply disappears. Each kind is included only
+for actors holding its permission, so a cashier is not told about supplier debts. Clients localize from `kind` and
+`facts`; no display text is produced here.
+
+What a notification is about.
+
+```ts
+export type NotificationKind = "stock_low" | "stock_negative" | "customer_overdue" | "supplier_overdue" | "supplier_due_soon" | "cash_difference" | "sync_refused" | "sync_stalled" | "service_grace" | "service_paused";
+```
+
+One current notification. Amounts are XAF, quantities thousandths, times ISO instants.
+
+```ts
+export interface ShopNotification {
+    readonly key: string;
+    readonly kind: NotificationKind;
+    readonly severity: "warning" | "critical";
+    readonly subjectId: string;
+    readonly name: string;
+    readonly facts: {
+        readonly onHandThousandths?: number;
+        readonly minimumThousandths?: number;
+        readonly overdueMinor?: number;
+        readonly dueSoonMinor?: number;
+        readonly balanceMinor?: number;
+        readonly oldestDueAt?: string;
+        readonly nextDueAt?: string;
+        readonly expectedMinor?: number;
+        readonly countedMinor?: number;
+        readonly differenceMinor?: number;
+        readonly countedAt?: string;
+        readonly error?: string;
+        readonly lastSuccessAt?: string;
+        readonly graceUntil?: string;
+    };
+    readonly fingerprint: string;
+    readonly read: boolean;
+    readonly announced: boolean;
+}
+```
+
+Current notifications for the signed-in user at `now`, most serious first, bounded to `limit` (1–500, default 200)
+with the unread count over all of them.
+
+```ts
+notifications(context: OperationContext, now: string, limit = 200): { readonly items: readonly ShopNotification[]; readonly unread: number; readonly truncated: boolean; };
+```
+
+Marks notifications read (and announced) for this user at `now`: the given keys, or every current one. Only current
+notifications are marked, with their current fingerprint, so a later change raises them again. Marks for conditions
+that have cleared are dropped. Returns the number marked.
+
+```ts
+markNotificationsRead(context: OperationContext, now: string, keys?: readonly string[]): number;
+```
+
+Marks notifications as announced (shown by the system) without reading them, so a desktop raises each changed
+fact once. Returns the number newly marked.
+
+```ts
+markNotificationsAnnounced(context: OperationContext, now: string, keys: readonly string[]): number;
+```
+
 ## [packages/core/src/application/operations.ts](../../packages/core/src/application/operations.ts)
 
 Application inputs carry facts/IDs; authority and persistence time come from unlock ports.
@@ -4140,6 +4388,42 @@ audit commit together. Returns false when a newer set is already stored.
 setProductCategories(context: OperationContext, input: {
     readonly productId: string;
     readonly categoryIds: readonly string[];
+    readonly updatedAt: string;
+}): boolean;
+```
+
+Saves the shop's tax settings under business.settings (ADR-033): prices include tax, and new sale lines carry the
+standard rate (or a product's own rule) while tax is enabled. Last write wins by `updatedAt`, then device; returns
+false when a newer version is stored. Settings, `TAX_SETTINGS_SET` and audit commit together.
+
+```ts
+setTaxSettings(context: OperationContext, input: Omit<TaxSettings, "updatedAt"> & {
+    readonly updatedAt: string;
+}): boolean;
+```
+
+Sets a product's tax rule under products.edit (ADR-033): the standard rate, exempt, or its own rate (1–10000 basis
+points). Last write wins per product; false when a newer rule is stored. Rule, `PRODUCT_TAX_SET` and audit commit
+together. Past sales keep the rate they were sold at.
+
+```ts
+setProductTaxRule(context: OperationContext, input: {
+    readonly productId: string;
+} & ProductTaxRule & {
+    readonly updatedAt: string;
+}): boolean;
+```
+
+Sets payment terms in days (ADR-033): the shop default for customers or suppliers under business.settings, or one
+customer's (customers.manage) or supplier's (suppliers.manage) own terms; `days: null` returns a party to the shop
+default. Last write wins per key; false when a newer record is stored. Terms, `PAYMENT_TERMS_SET` and audit commit
+together. Due dates are derived, so this re-ages existing debts without editing any ledger.
+
+```ts
+setPaymentTerms(context: OperationContext, input: {
+    readonly party: TermsParty;
+    readonly partyId?: string | undefined;
+    readonly days: number | null;
     readonly updatedAt: string;
 }): boolean;
 ```
@@ -4371,6 +4655,11 @@ export interface Receipt {
     readonly totalMinor: number;
     readonly paidMinor: number;
     readonly outstandingMinor: number;
+    readonly tax?: {
+        readonly label: string;
+        readonly registration?: string | undefined;
+        readonly groups: readonly TaxGroup[];
+    } | undefined;
 }
 ```
 
@@ -4551,7 +4840,7 @@ productCategories(context: OperationContext, productId: string): { readonly cate
 Report kinds, each read under its own core report permission.
 
 ```ts
-export type ReportKind = "dashboard" | "sales" | "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "cashFlow" | "valuation" | "fastMoving" | "stockAlerts" | "customerDebt" | "supplierDebt" | "purchases";
+export type ReportKind = "dashboard" | "sales" | "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "cashFlow" | "valuation" | "fastMoving" | "stockAlerts" | "customerDebt" | "supplierDebt" | "purchases" | "tax";
 ```
 
 Every report kind, in the order the clients list them.
@@ -4652,6 +4941,18 @@ export type ReportResult = {
     readonly deliveries: number;
     readonly bySupplier: readonly ReportLine[];
     readonly truncated: boolean;
+} | {
+    readonly kind: "tax";
+    readonly label: string;
+    readonly grossMinor: number;
+    readonly taxMinor: number;
+    readonly netMinor: number;
+    readonly groups: readonly {
+        readonly rateBasisPoints: number;
+        readonly grossMinor: number;
+        readonly taxMinor: number;
+        readonly netMinor: number;
+    }[];
 };
 ```
 
@@ -4935,6 +5236,12 @@ Reads topCustomers for the unlocked shop under current reports.customers authori
 
 ```ts
 topCustomers(context: OperationContext, ...args: ReportArgs<typeof analytics.topCustomers>): CustomerRank[];
+```
+
+Reads the period's tax by rate (ADR-033) for the unlocked shop under current reports.financial authority.
+
+```ts
+taxBetween(context: OperationContext, ...args: ReportArgs<typeof tax.taxBetween>): TaxSummary;
 ```
 
 ## [packages/core/src/application/returns.ts](../../packages/core/src/application/returns.ts)
@@ -5253,6 +5560,39 @@ True when this unlocked device may enroll the shop itself rather than waiting fo
 
 ```ts
 canEnrollServer(context: OperationContext): boolean;
+```
+
+## [packages/core/src/application/settings.ts](../../packages/core/src/application/settings.ts)
+
+The shop's tax settings, readable by any unlocked member: tills need the label and rate to show receipts.
+
+```ts
+shopTaxSettings(context: OperationContext): TaxSettings;
+```
+
+A product's tax rule and the rate a sale would carry now, under products.view.
+
+```ts
+productTax(context: OperationContext, productId: string): ProductTaxRule & { readonly effectiveRateBasisPoints: number; };
+```
+
+Shop default terms for customers and suppliers; readable with customers.view, suppliers.view or business.settings.
+
+```ts
+shopPaymentTerms(context: OperationContext): { readonly customer: { readonly days: number; readonly stored: boolean; readonly version?: string; }; readonly supplier: { readonly days: number; readonly stored: boolean; readonly version?: string; }; };
+```
+
+One customer's or supplier's terms and aged balance at `now`, under customers.view or suppliers.view.
+
+```ts
+creditStatus(context: OperationContext, party: TermsParty, partyId: string, now: string): EffectiveTerms & DebtAging;
+```
+
+Customers (or suppliers) with a positive balance, aged under their terms: most overdue first, then most due soon.
+Bounded to `limit` (1–500, default 100) with a `truncated` flag.
+
+```ts
+agedBalances(context: OperationContext, party: TermsParty, now: string, limit = 100): { readonly items: readonly (DebtAging & { readonly partyId: string; readonly name: string; readonly termsDays: number; })[]; readonly truncated: boolean; };
 ```
 
 ## [packages/core/src/application/sync-scheduler.ts](../../packages/core/src/application/sync-scheduler.ts)
@@ -5920,7 +6260,7 @@ wouldExceedCreditLimit(tx: Queryable, businessId: string, customer: Customer, fu
 Query domains invalidated after a successful SQLite commit; no business records are cached.
 
 ```ts
-export type ChangedDomain = "products" | "inventory" | "sales" | "customers" | "suppliers" | "purchases" | "accounts" | "expenses" | "authority";
+export type ChangedDomain = "products" | "inventory" | "sales" | "customers" | "suppliers" | "purchases" | "accounts" | "expenses" | "authority" | "settings" | "notifications";
 ```
 
 Subscribes to committed changes. Unsubscribe on screen unmount/database replacement.
@@ -6305,6 +6645,18 @@ check without rewriting child references.
 const SERVER_SYNC_MIGRATION: Migration;
 ```
 
+## [packages/core/src/data/database/tax-terms-migration.ts](../../packages/core/src/data/database/tax-terms-migration.ts)
+
+Forward-only tax, payment terms and notification state (ADR-033).
+
+Tax settings, product tax rules and payment terms are last-write-wins records carried by their own signed events, so
+an older till keeps those events unapplied instead of rejecting a changed payload. Immutable ledgers are untouched:
+due dates and tax amounts are derived. `notification_state` is this device's read/announced marks, never synced.
+
+```ts
+const TAX_TERMS_MIGRATION: Migration;
+```
+
 ## [packages/core/src/data/database/transfer-migration.ts](../../packages/core/src/data/database/transfer-migration.ts)
 
 Forward-only pairing progress: public proofs/opaque native references, never passwords or private keys.
@@ -6632,6 +6984,79 @@ believed.
 
 ```ts
 reconcile(tx: Queryable, businessId: string, accountId: string, countedMinor: number): Reconciliation;
+```
+
+## [packages/core/src/data/finance/terms.ts](../../packages/core/src/data/finance/terms.ts)
+
+Payment terms and the due dates they imply (ADR-033).
+
+Terms are state: last write wins by `(updated_at, updated_by_device)`, like customer details. Due dates are never
+stored; they are derived from the append-only ledgers, so changing terms re-ages history without editing it.
+
+Whose debts the terms govern: what customers owe the shop, or what the shop owes suppliers.
+
+```ts
+export type TermsParty = "CUSTOMER" | "SUPPLIER";
+```
+
+The stored row key: the party's own ID, or `<business>:<party>` for the shop default.
+
+```ts
+paymentTermsKey(businessId: string, party: TermsParty, partyId?: string): string;
+```
+
+One terms record as written by `PAYMENT_TERMS_SET`. `days` null on a party means "use the shop default".
+
+```ts
+export interface PaymentTermsRecord {
+    readonly businessId: string;
+    readonly party: TermsParty;
+    readonly partyId?: string | undefined;
+    readonly days: number | null;
+    readonly updatedAt: string;
+}
+```
+
+Writes terms under last-write-wins, inside the caller's transaction. Returns false when a newer record is already
+stored, so a losing local or replayed write changes nothing.
+
+```ts
+writePaymentTerms(tx: Queryable, record: PaymentTermsRecord, deviceId: string): boolean;
+```
+
+Terms in force for one party, and where they come from.
+
+```ts
+export interface EffectiveTerms {
+    readonly days: number;
+    readonly source: "party" | "shop" | "default";
+    readonly partyDays?: number | undefined;
+    readonly partyVersion?: string | undefined;
+}
+```
+
+The shop default for a party kind, with the stored version when there is one.
+
+```ts
+shopTerms(tx: Queryable, businessId: string, party: TermsParty): { readonly days: number; readonly stored: boolean; readonly version?: string; };
+```
+
+Terms in force for one customer or supplier.
+
+```ts
+termsFor(tx: Queryable, businessId: string, party: TermsParty, partyId: string): EffectiveTerms;
+```
+
+The aging of one party's ledger under its current terms.
+
+```ts
+agingOf(tx: Queryable, businessId: string, party: TermsParty, partyId: string, now: string): DebtAging & { readonly termsDays: number; };
+```
+
+Every party of a kind that owes (or is owed) a positive balance, aged under its terms, highest overdue first.
+
+```ts
+agedParties(tx: Queryable, businessId: string, party: TermsParty, now: string): readonly (DebtAging & { readonly partyId: string; readonly name: string; readonly termsDays: number; })[];
 ```
 
 ## [packages/core/src/data/inventory/movements.ts](../../packages/core/src/data/inventory/movements.ts)
@@ -7047,6 +7472,77 @@ Lists the products a business sells, by name.
 listProducts(tx: Queryable, businessId: string, options: {
     readonly includeArchived?: boolean;
 } = {}): Product[];
+```
+
+## [packages/core/src/data/products/tax.ts](../../packages/core/src/data/products/tax.ts)
+
+Tax settings and product tax rules (ADR-033). Prices include tax; these records only decide which rate a sale line
+carries, frozen on the line when it sells. Both are last-write-wins state by `(updated_at, updated_by_device)`.
+
+The shop's tax settings.
+
+```ts
+export interface TaxSettings {
+    readonly enabled: boolean;
+    readonly label: string;
+    readonly standardRateBasisPoints: number;
+    readonly registration?: string | undefined;
+    readonly updatedAt?: string | undefined;
+}
+```
+
+What a shop that has never saved its tax settings gets: tax off, Cameroon's standard rate ready to switch on.
+
+```ts
+const DEFAULT_TAX_SETTINGS: TaxSettings;
+```
+
+A product's tax: the shop's standard rate, none, or its own rate.
+
+```ts
+export type ProductTaxRule = {
+    readonly rule: "STANDARD" | "EXEMPT";
+    readonly updatedAt?: string | undefined;
+} | {
+    readonly rule: "RATE";
+    readonly rateBasisPoints: number;
+    readonly updatedAt?: string | undefined;
+};
+```
+
+The shop's settings, or the defaults when none were saved.
+
+```ts
+taxSettings(tx: Queryable, businessId: string): TaxSettings;
+```
+
+Writes the settings under last-write-wins inside the caller's transaction; false when a newer version is stored.
+
+```ts
+writeTaxSettings(tx: Queryable, businessId: string, settings: TaxSettings & {
+    readonly updatedAt: string;
+}, deviceId: string): boolean;
+```
+
+A product's rule. With none stored it follows the standard rate, except that a non-zero legacy
+`products.tax_rate_basis_points` (never written by current apps) counts as its own rate.
+
+```ts
+productTaxRule(tx: Queryable, businessId: string, productId: string): ProductTaxRule;
+```
+
+Writes a product's rule under last-write-wins inside the caller's transaction; false when a newer rule is stored.
+
+```ts
+writeProductTaxRule(tx: Queryable, businessId: string, productId: string, rule: ProductTaxRule & {
+    readonly updatedAt: string;
+}, deviceId: string): boolean;
+```
+
+The rate a sale line of this product carries now: 0 while tax is off or the product is exempt.
+
+```ts
+effectiveTaxRate(tx: Queryable, businessId: string, productId: string, settings: TaxSettings = taxSettings(tx, businessId)): number;
 ```
 
 ## [packages/core/src/data/purchases/purchases.ts](../../packages/core/src/data/purchases/purchases.ts)
@@ -7694,6 +8190,29 @@ and the other falls due when the van comes back.
 
 ```ts
 dashboard(tx: Queryable, businessId: string, from: string, to: string): Dashboard;
+```
+
+## [packages/core/src/data/reports/tax.ts](../../packages/core/src/data/reports/tax.ts)
+
+A period's tax-inclusive sales by rate (ADR-033), with the totals across rates.
+
+```ts
+export interface TaxSummary {
+    readonly groups: readonly TaxGroup[];
+    readonly grossMinor: number;
+    readonly taxMinor: number;
+    readonly netMinor: number;
+}
+```
+
+Tax collected over `[from, to)` by the rate frozen on each sale line, net of sale returns made in the period.
+
+Bill discounts are spread over a sale's lines by the deterministic allocation returns use, and returns count at the
+amount refunded or credited for the line, so the gross column adds up to the period's net sales. Tax is rounded once
+per rate. Rate 0 (untaxed or exempt) is kept as its own group.
+
+```ts
+taxBetween(tx: Queryable, businessId: string, from: string, to: string): TaxSummary;
 ```
 
 ## [packages/core/src/data/returns/returns.ts](../../packages/core/src/data/returns/returns.ts)
@@ -8779,6 +9298,18 @@ Exact editable decimal quantity; avoids dividing large integer thousandths throu
 quantityInput(thousandths: number): string;
 ```
 
+Parses a percentage with up to two decimals (comma or dot), 0–100, to basis points exactly: "19,25" is 1925.
+
+```ts
+rateEntry(value: string): number;
+```
+
+Exact editable percentage for basis points: 1925 is "19.25", 1000 is "10".
+
+```ts
+rateInput(basisPoints: number): string;
+```
+
 ## [packages/core/src/domain/money.ts](../../packages/core/src/domain/money.ts)
 
 Turning amounts into the text a shopkeeper reads (§46).
@@ -8902,6 +9433,13 @@ not match what was weighed.
 
 ```ts
 parseQuantity(text: string): ParsedAmount;
+```
+
+A tax rate in basis points as people write it: "19,25 %" in French (narrow no-break space before the sign),
+"19.25%" in English. Trailing zeroes are dropped, so 1000 reads "10 %".
+
+```ts
+formatRate(basisPoints: number, language: Language = "fr"): string;
 ```
 
 ## [packages/core/src/domain/pos/cart.ts](../../packages/core/src/domain/pos/cart.ts)
@@ -9613,4 +10151,124 @@ Partial refund equals the change in cumulative rounded entitlement; the final re
 
 ```ts
 incrementalReturnMinor(originalNetMinor: number, originalQuantity: number, alreadyReturned: number, returning: number): number;
+```
+
+## [packages/core/src/rules/tax.ts](../../packages/core/src/rules/tax.ts)
+
+Tax rates are basis points: 1925 is 19.25 %, 10000 is 100 %.
+
+```ts
+const TAX_RATE_SCALE: 10000;
+```
+
+Checks a rate before it reaches arithmetic or storage.
+
+```ts
+checkTaxRate(rateBasisPoints: number): number;
+```
+
+The tax contained in a tax-inclusive amount (ADR-033): `amount × rate / (10000 + rate)`, exact and rounded half away
+from zero. Signed, so a period whose returns exceed its sales yields negative tax.
+
+```ts
+includedTax(amountMinor: number, rateBasisPoints: number): number;
+```
+
+Tax-inclusive amounts at one rate: what the customer paid, the tax inside it and the amount before tax.
+
+```ts
+export interface TaxGroup {
+    readonly rateBasisPoints: number;
+    readonly grossMinor: number;
+    readonly taxMinor: number;
+    readonly netMinor: number;
+}
+```
+
+Groups signed tax-inclusive amounts by rate and computes each group's tax once, so rounding happens per rate rather
+than per line. Groups are ordered by rate, highest first; a group whose amounts cancel to zero is kept.
+
+```ts
+taxGroups(amounts: readonly {
+    readonly rateBasisPoints: number;
+    readonly amountMinor: number;
+}[]): readonly TaxGroup[];
+```
+
+A sale line with the rate frozen on it at the time of sale.
+
+```ts
+export interface TaxedLine extends ReturnPriceLine {
+    readonly taxRateBasisPoints: number;
+}
+```
+
+A sale's tax by rate. Each line is reduced by its own discount and its deterministic share of the bill discount (the
+allocation returns use), so the groups' gross amounts add up exactly to the sale total.
+
+```ts
+saleTaxGroups(lines: readonly TaxedLine[], saleDiscountMinor: number): readonly TaxGroup[];
+```
+
+## [packages/core/src/rules/terms.ts](../../packages/core/src/rules/terms.ts)
+
+Terms applied when a shop has stored none (ADR-033).
+
+```ts
+const DEFAULT_TERMS_DAYS: 30;
+```
+
+How far ahead an amount counts as "due soon".
+
+```ts
+const DUE_SOON_DAYS: 3;
+```
+
+Checks payment terms in whole days, 0 (due at once) to 3650.
+
+```ts
+checkTermsDays(days: number): number;
+```
+
+When a debt that occurred at `occurredAt` falls due under `days` of terms (UTC instant).
+
+```ts
+dueAt(occurredAt: string, days: number): string;
+```
+
+One signed ledger entry: positive adds to what is owed, negative reduces it.
+
+```ts
+export interface LedgerEntry {
+    readonly id: string;
+    readonly amountMinor: number;
+    readonly occurredAt: string;
+}
+```
+
+What is owed and when it falls due. Amounts are XAF; times are ISO instants.
+
+```ts
+export interface DebtAging {
+    readonly balanceMinor: number;
+    readonly overdueMinor: number;
+    readonly dueSoonMinor: number;
+    readonly oldestDueAt?: string | undefined;
+    readonly nextDueAt?: string | undefined;
+    readonly lastPassedDueAt?: string | undefined;
+}
+```
+
+Ages an outstanding balance (ADR-033). Payments and other reductions settle the oldest debt first, so what remains
+is exactly the newest debts that add up to the balance; the oldest of those may be partly settled. `debts` are the
+positive entries in any order. A balance of zero or less (paid up, or in credit) owes nothing.
+
+```ts
+ageOutstanding(debts: readonly LedgerEntry[], balanceMinor: number, termsDays: number, now: string, soonDays = DUE_SOON_DAYS): DebtAging;
+```
+
+Ages a whole signed ledger: its sum is the balance and its positive entries are the debts.
+
+```ts
+ageLedger(entries: readonly LedgerEntry[], termsDays: number, now: string, soonDays = DUE_SOON_DAYS): DebtAging;
 ```

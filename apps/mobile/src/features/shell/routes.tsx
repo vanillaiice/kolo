@@ -10,6 +10,8 @@ import { StaffMemberScreen, StaffNewScreen, StaffScreen } from "../staff/staff.t
 import { AddTillScreen, BackupCreateScreen, BackupRestoreScreen, DevicesScreen, ExchangeConfirmScreen, ExchangeReceiveScreen, ExchangeSendScreen, ExchangeStatusScreen, RecoveryKeyScreen } from "../devices/devices.tsx";
 import { ServerSyncScreen } from "../devices/server-sync.tsx";
 import { AboutScreen, MoreScreen, ResetScreen, SettingsScreen } from "../more/more.tsx";
+import { AlertsScreen } from "../more/alerts.tsx";
+import { PartyTermsScreen, ProductTaxScreen, ShopTaxScreen, ShopTermsScreen } from "../more/shop-settings.tsx";
 
 /** Every route's screen. Screens read their parameters with `useParams`. */
 export const SCREENS: Record<RouteName, ComponentType> = {
@@ -24,6 +26,7 @@ export const SCREENS: Record<RouteName, ComponentType> = {
   devices: DevicesScreen, backupCreate: BackupCreateScreen, backupRestore: BackupRestoreScreen, addTill: AddTillScreen, exchangeSend: ExchangeSendScreen,
   exchangeReceive: ExchangeReceiveScreen, exchangeConfirm: ExchangeConfirmScreen, exchangeStatus: ExchangeStatusScreen, recoveryKey: RecoveryKeyScreen, serverSync: ServerSyncScreen,
   settings: SettingsScreen, about: AboutScreen, reset: ResetScreen,
+  alerts: AlertsScreen, shopTax: ShopTaxScreen, shopTerms: ShopTermsScreen, partyTerms: PartyTermsScreen, productTax: ProductTaxScreen,
 };
 
 /** Routes shown beside their list on wide screens (list/detail, catalogue/cart). */

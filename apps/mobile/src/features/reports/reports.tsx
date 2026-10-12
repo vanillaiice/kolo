@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { analyticsView, reportView, REPORT_KINDS, REPORT_PERMISSION, UNDATED_REPORT_KINDS, type AnalyticsBucket, type AnalyticsResult, type ReportLine, type ReportResult } from "@kolo/core/application/report-views";
 import { localDayPeriod } from "@kolo/core/domain/entry";
-import { formatMoney, formatQuantity } from "@kolo/core/domain/money";
+import { formatMoney, formatQuantity, formatRate } from "@kolo/core/domain/money";
 import { localeOf, useText, type Language, type TextKey } from "../../app/i18n.tsx";
 import { useNav, useParams } from "../../app/navigation.tsx";
 import { useDraft, usePermissions, useRevision, useSession } from "../../app/session.tsx";
@@ -81,7 +81,7 @@ export function ReportScreen(): React.JSX.Element {
 }
 
 function ReportBody({ value }: { readonly value: ReportResult }): React.JSX.Element {
-  const { t } = useText(), s = useStyles();
+  const { t, language } = useText(), s = useStyles();
   switch (value.kind) {
     case "dashboard": return <>
       <View style={[s.row, { alignItems: "stretch" }]}>
@@ -104,6 +104,10 @@ function ReportBody({ value }: { readonly value: ReportResult }): React.JSX.Elem
     case "fastMoving": return <Bars data={value.products.map(item => ({ key: item.productId, label: item.name, value: item.soldThousandths, display: `${formatQuantity(item.soldThousandths)} · ${money(item.revenueMinor)}` }))} />;
     case "stockAlerts": return value.products.length === 0 ? <EmptyState title={t("noStockAlerts")} /> : <RowGroup>{value.products.map(item => <ListRow key={item.productId} title={item.name}
       trailing={formatQuantity(item.onHandThousandths)} trailingTone={item.onHandThousandths < 0 ? "danger" : "normal"} subtitle={item.onHandThousandths < 0 ? t("negativeStock") : t("belowMinimum")} />)}</RowGroup>;
+    case "tax": return <><View style={[s.row, { alignItems: "stretch" }]}><Stat label={t("taxGross")} value={money(value.grossMinor)} /><Stat label={`${t("taxAmount")} · ${value.label}`} value={money(value.taxMinor)} />
+      <Stat label={t("taxNet")} value={money(value.netMinor)} /></View><Notice text={t("taxReportHelp")} />
+      {value.groups.length === 0 ? <EmptyState title={t("noTaxSales")} /> : <View>{value.groups.map(group => <Section key={group.rateBasisPoints} title={formatRate(group.rateBasisPoints, language)}>
+        <Facts items={[[t("taxGross"), money(group.grossMinor), group.grossMinor < 0 ? "danger" : undefined], [t("taxAmount"), money(group.taxMinor), "strong"], [t("taxNet"), money(group.netMinor)]]} /></Section>)}</View>}</>;
     case "purchases": return <><View style={[s.row, { alignItems: "stretch" }]}><Stat label={t("purchasesTotal")} value={money(value.totalMinor)} /><Stat label={t("deliveries")} value={String(value.deliveries)} /></View>
       {lines(value.bySupplier.map(line => ({ ...line, label: line.key === "" ? t("noSupplier") : line.label })), "deliveryCount", t)}</>;
   }

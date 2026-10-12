@@ -19,7 +19,7 @@ export function sanitizeSnapshot(database:Database,sourceDeviceId:string):void{
  database.run("PRAGMA secure_delete=ON");
  database.transaction(tx=>{
   // Server connections and opt-outs belong to the source till; a receiving till connects on its own (ADR-030).
-  for(const table of ["device_session","local_credential_recovery","local_member_setup","workspace_setup","workspace_enrollment","pairing_invites","server_endpoints","server_endpoint_declined"])if(tx.get(`SELECT name FROM sqlite_schema WHERE type='table' AND name=?`,[table])!==undefined)tx.run(`DELETE FROM ${table}`);
+  for(const table of ["device_session","local_credential_recovery","local_member_setup","workspace_setup","workspace_enrollment","pairing_invites","server_endpoints","server_endpoint_declined","notification_state"])if(tx.get(`SELECT name FROM sqlite_schema WHERE type='table' AND name=?`,[table])!==undefined)tx.run(`DELETE FROM ${table}`);
   tx.run(`DELETE FROM local_installation`);
   tx.run(`UPDATE local_memberships SET credential_reference='remote.'||?||'.'||user_id,failures=0,next_attempt_at=NULL`,[sourceDeviceId]);
  });
