@@ -25,6 +25,8 @@ import {
 
 /** Options for opening a database. */
 export interface OpenOptions {
+  /** Offline inspection: never creates a file or changes journal settings. */
+  readonly readOnly?: boolean;
   /**
    * Where the file lives. Defaults to `:memory:`, which is what tests want:
    * each one gets a database of its own and nothing survives between them.
@@ -36,7 +38,13 @@ export interface OpenOptions {
  * Opens a SQLite database with the settings this application needs.
  */
 export function openDatabase(options: OpenOptions = {}): Database {
-  const connection = new DatabaseSync(options.location ?? ":memory:");
+  const connection = new DatabaseSync(options.location ?? ":memory:", { readOnly: options.readOnly ?? false });
+
+  if (options.readOnly) {
+    connection.exec("PRAGMA query_only = ON");
+    connection.exec("PRAGMA busy_timeout = 5000");
+    return new NodeSqliteDatabase(connection, true);
+  }
 
   // Foreign keys are off by default in SQLite, which would silently disable
   // every relationship the schema declares. Nothing else here matters if this
@@ -64,9 +72,11 @@ class NodeSqliteDatabase implements Database {
   /** Depth of nested transaction calls; only the outermost commits. */
   #depth = 0;
   #changed = new Set<ChangedDomain>();
+  #readOnly: boolean;
 
-  constructor(connection: DatabaseSync) {
+  constructor(connection: DatabaseSync, readOnly = false) {
     this.#connection = connection;
+    this.#readOnly = readOnly;
   }
 
   run(sql: string, parameters: readonly SqlValue[] = []): WriteResult {
@@ -116,7 +126,7 @@ class NodeSqliteDatabase implements Database {
       }
     }
 
-    this.#connection.exec("BEGIN IMMEDIATE");
+    this.#connection.exec(this.#readOnly ? "BEGIN" : "BEGIN IMMEDIATE");
     let committed = false;
     this.#changed.clear();
     this.#depth = 1;

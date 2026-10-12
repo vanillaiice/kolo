@@ -65,6 +65,11 @@ it. It includes downloads, demo screenshots, self-hosting links and promotional 
 The technical overview, repository layout and commands are in
 [docs/README.md](docs/README.md). Product rules live in [SPECIFICATION.md](SPECIFICATION.md).
 
+The [offline CLI](apps/cli/README.md) provides reports, JSON/CSV exports, backup
+verification and decryption, support checks, and signed demo/performance fixtures.
+Its separately paired headless till supports bulk imports, sync and scheduled exports.
+Run `npm run kolo -- --help` to get started.
+
 ## License
 
 The apps and shared packages are [GPL-3.0-only](LICENSE). The optional sync server in

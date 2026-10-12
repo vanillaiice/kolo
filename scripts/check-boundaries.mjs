@@ -7,7 +7,7 @@ function walk(directory) {
     ? walk(join(directory, entry.name)) : /\.(ts|tsx|cts)$/.test(entry.name) ? [join(directory, entry.name)] : []);
 }
 let errors = 0;
-for (const root of ["packages/core/src", "packages/contracts/src", "apps/mobile/src", "apps/desktop/src/renderer", "apps/desktop/src/shared", "apps/server/src", "apps/admin/src"]) {
+for (const root of ["packages/core/src", "packages/contracts/src", "apps/mobile/src", "apps/desktop/src/renderer", "apps/desktop/src/shared", "apps/server/src", "apps/admin/src", "apps/cli/src"]) {
   for (const nativePath of walk(root)) {
     const path = nativePath.replaceAll("\\", "/");
     // Tests and their `*.fixtures.ts` helpers may reach real adapters to set up state.

@@ -12,7 +12,10 @@ An optional server will synchronize signed events between installations.
 | `packages/contracts` | Runtime-validated exchange payloads and signed formats | Implemented |
 | `apps/desktop` | Electron + React; the main process owns SQLite and credentials | Workflows complete; release acceptance in progress |
 | `apps/mobile` | Expo / React Native, Android first | Desktop parity; device acceptance pending |
-| `apps/server` | Fastify + PostgreSQL optional sync server | Health and capabilities only |
+| `apps/server` | Fastify + PostgreSQL optional sync server (encrypted relay, hosted billing) | Implemented; TLS deployment pending |
+| `apps/admin` | Operator dashboard served by the server on its own loopback listener | Implemented |
+| `apps/cli` | `kolo` CLI: offline reports/exports/checks, backup tools, fixtures, separately paired headless till | Implemented ([guide](../apps/cli/README.md)) |
+| `apps/landing` | Bilingual static website | Implemented; not deployed |
 | `infrastructure` | Development database and self-host scaffold | Scaffold |
 | `docs` | Decisions, implementation guides, generated API reference | Current |
 

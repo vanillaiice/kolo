@@ -1456,3 +1456,23 @@ Verification: Android release build (`npm run build:mobile:android`, with ANDROI
 merged manifest declares POST_NOTIFICATIONS; mobile typecheck, 24 mobile tests, Metro export, boundaries; `expo config` introspection shows the
 notification icon/colour resources. Not verified on a device: permission prompt, channel, banner and tap navigation.
 
+## 2026-10-12: `kolo` CLI (offline tooling and headless till)
+
+Implemented by the user; reviewed here. `apps/cli` (`npm run kolo -- --help`):
+
+- **Offline (step 1):** `report`, `export` (JSON/CSV, formula-neutralized), `check` (SQLite integrity, foreign keys,
+  stock-ledger and cross-shop scope, journal/outbox/delivery state) on a private read-only copy of a standalone SQLite
+  file (WAL/SHM companions refused) or a verified encrypted backup; `backup verify|inspect|decrypt`; `demo` and
+  `fixture` build signed, restorable shops through core's authorized operations. Outputs are created exclusively with
+  mode 0600; passwords only from `KOLO_BACKUP_PASSWORD` or a password file.
+- **Headless till (step 2):** `kolo till` is its own paired device (file pairing or join code with the owner's
+  Allow) with a 0700 state directory, AES-GCM file vault and process lock; sync, file exchange, permission-checked
+  product/price/stock imports (atomic, idempotent by job ID with deterministic event IDs), live product export,
+  reports and backups.
+
+Review: 6 CLI tests pass (pairing across restarts, duplicate/altered imports, rollback of a partly invalid batch,
+interrupted signing resumed, revoked permission via exchange, vault without plaintext keys, unsafe state refused,
+join fingerprint pinning, sealed sync). Manual run: demo → inspect → reports with periods → check → CSV export →
+decrypt (0600) → report/check on the copy; overwrite, missing input, unknown report, invalid date and wrong password
+fail with exit 2. Boundaries and documentation checks pass. Not verified: a headless till against a real deployed
+server, Windows ACL behaviour of the state directory.

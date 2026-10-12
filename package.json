@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build:packages": "npm run build -w @kolo/contracts && npm run build -w @kolo/core",
-    "build": "npm run build:packages && npm run build -w @kolo/admin && npm run build -w @kolo/server && npm run build -w @kolo/desktop && npm run build:landing",
+    "build": "npm run build:packages && npm run build -w @kolo/cli && npm run build -w @kolo/admin && npm run build -w @kolo/server && npm run build -w @kolo/desktop && npm run build:landing",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
     "test": "npm run build:packages && npm run test --workspaces --if-present",
     "check": "npm run boundaries && npm run typecheck && npm test && npm run test:release && npm run docs:check && npm run build && npm run check:landing",
@@ -48,7 +48,8 @@
     "dev:landing": "npm run build:landing && node apps/landing/preview.mjs",
     "check:landing": "npm run build:landing && node apps/landing/check.mjs && node --test apps/landing/releases.test.mjs",
     "refresh:landing-releases": "node apps/landing/refresh-releases.mjs",
-    "test:server:pg": "node scripts/test-server-postgres.mjs"
+    "test:server:pg": "node scripts/test-server-postgres.mjs",
+    "kolo": "npm run build:packages --silent && npm run build -w @kolo/cli --silent && node apps/cli/dist/main.js"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

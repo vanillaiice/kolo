@@ -1,0 +1,16 @@
+{
+  "name": "@kolo/cli",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "description": "Offline shop inspection and isolated development fixtures",
+  "bin": { "kolo": "dist/main.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --experimental-strip-types src/*.test.ts"
+  },
+  "dependencies": { "@kolo/core": "0.1.0", "@kolo/contracts": "0.1.0" },
+  "engines": { "node": ">=24.16.0 <25" }
+}

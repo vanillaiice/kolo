@@ -6523,6 +6523,7 @@ Options for opening a database.
 
 ```ts
 export interface OpenOptions {
+    readonly readOnly?: boolean;
     readonly location?: string;
 }
 ```
