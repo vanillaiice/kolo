@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+<rect width="1200" height="630" fill="#f4f7f3"/><rect y="600" width="1200" height="30" fill="#f1c642"/>
+<image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDI0IiBoZWlnaHQ9IjEwMjQiIHZpZXdCb3g9IjAgMCAxMDI0IDEwMjQiPgogIDxyZWN0IHdpZHRoPSIxMDI0IiBoZWlnaHQ9IjEwMjQiIHJ4PSIyMzAiIGZpbGw9IiMwYzM0MjYiLz4KICA8ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxOTUgMjcyKSI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTAgMEgxMTJWNDgwSDBaIE0xMTIgMjE1TDMzMCAwSDQ3MEwxMTIgMzU1WiBNMTkwIDI3N0wyNzMgMTk1TDQ3MCA0ODBIMzMwWiIvPjxjaXJjbGUgY3g9IjU3MiIgY3k9IjQxOCIgcj0iNjIiIGZpbGw9IiNlODQ3NWMiLz48L2c+Cjwvc3ZnPgo=" x="70" y="60" width="90" height="90"/>
+<text x="70" y="285" font-family="DejaVu Sans, sans-serif" font-size="110" font-weight="bold" fill="#0c3426">KOLO<tspan fill="#e8475c">.</tspan></text>
+<text x="75" y="380" font-family="DejaVu Sans, sans-serif" font-size="32" fill="#142b21">Your shop. Under control.</text>
+<text x="75" y="435" font-family="DejaVu Sans, sans-serif" font-size="32" fill="#142b21">Votre boutique. Sous contrôle.</text>
+<text x="75" y="530" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#465d50">Windows · Linux · Android     /     Offline · Hors ligne</text>
+<rect x="875" y="65" width="250" height="475" rx="20" fill="#0c3426"/>
+<text x="930" y="260" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#bfd6c7">SALES / VENTES</text>
+<text x="930" y="320" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#bfd6c7">STOCK</text>
+<text x="930" y="380" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#bfd6c7">FCFA</text>
+</svg>

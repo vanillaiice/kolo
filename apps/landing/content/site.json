@@ -1,0 +1,10 @@
+{
+  "url": "https://kolo.hblabs.xyz/",
+  "operator": "hblabs",
+  "privacyEmail": "contact@hblabs.xyz",
+  "hostingProvider": "hblabs",
+  "hostingLogRetention": {
+    "en": null,
+    "fr": null
+  }
+}

@@ -41,17 +41,24 @@ All images show the demo shop.
 ## How it works
 
 - **Works without internet.** Every sale and stock movement is saved on the device first.
-- **Phone and computer.** An Android app and a Windows desktop app share the same rules.
+- **Phone and computer.** Android, Windows and Linux apps share the same rules.
 - **Your data stays yours.** Encrypted backups and file transfers move a shop between devices.
 - **French and English**, with amounts in FCFA (XAF).
-- **Online sync is optional** and planned: a hosted or self-hosted server that keeps
-  several devices in step.
+- **Online sync is optional.** A hosted or self-hosted server relays encrypted shop
+  data to keep connected devices in step.
 
 ## Status
 
-KOLO is in beta on Windows and Android; both apps cover the full shop workflow.
-Barcode scanning (camera and scanners) and online sync are not available yet. Beta
+KOLO is in beta on Windows, Linux and Android; the apps cover the full shop workflow.
+Camera-based product barcode scanning is not available yet. iOS and distribution
+through Google Play and F-Droid are coming later. Beta
 builds appear on the [Releases](https://github.com/vanillaiice/kolo/releases) page.
+
+## Landing page
+
+The bilingual static website lives in [apps/landing](apps/landing/README.md). Run
+`npm run dev:landing` to preview it or `npm run check:landing` to build and validate
+it. It includes downloads, demo screenshots, self-hosting links and promotional assets.
 
 ## For developers
 

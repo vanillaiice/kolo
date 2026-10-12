@@ -1,0 +1,295 @@
+{
+  "title": "KOLO: Votre boutique, au quotidien",
+  "description": "Vendez, gérez votre stock et suivez les crédits clients avec KOLO. Gestion de boutique hors ligne sur Windows, Linux et Android, en français et en anglais.",
+  "skip": "Aller au contenu",
+  "nav": [
+    "Fonctions",
+    "Captures",
+    "Téléchargements",
+    "Développeurs"
+  ],
+  "language": "Langue",
+  "menu": "Menu",
+  "eyebrow": "Pensé pour le quotidien de votre boutique",
+  "headline": "Votre boutique.\nVotre journée.\nSous contrôle.",
+  "lead": "Ventes, stock et crédits clients. Gérez votre boutique, même sans Internet.",
+  "download": "Télécharger KOLO",
+  "explore": "Découvrir les fonctions",
+  "beta": "Bêta publique",
+  "heroNote": "Sur votre ordinateur. Sur votre téléphone Android. En français ou en anglais.",
+  "demo": "Captures réalisées avec les données d’une boutique de démonstration.",
+  "strip": [
+    "Vendez sans Internet",
+    "Montants en FCFA (XAF)",
+    "Vos données restent les vôtres"
+  ],
+  "featuresEyebrow": "De la première vente à la fermeture",
+  "featuresTitle": "Une vision claire de votre boutique.",
+  "featuresLead": "Pour les commerçants et leur personnel. Épiceries, boutiques, supermarchés, pharmacies et grossistes.",
+  "features": [
+    {
+      "number": "01",
+      "title": "Servez vos clients simplement",
+      "body": "Cherchez un produit, ajoutez-le à la vente et encaissez. Gérez les remises, les paiements en plusieurs modes et les crédits clients, puis imprimez ou partagez le reçu.",
+      "detail": "Des codes personnels et des droits adaptés pour votre personnel."
+    },
+    {
+      "number": "02",
+      "title": "Sachez ce qu’il reste en rayon",
+      "body": "Suivez votre stock, enregistrez les livraisons et faites vos inventaires. Retrouvez clients, fournisseurs et achats au même endroit.",
+      "detail": "Les alertes de stock bas vous aident à préparer le réapprovisionnement."
+    },
+    {
+      "number": "03",
+      "title": "Suivez l’argent de la boutique",
+      "body": "Consultez les ventes, le bénéfice et les dépenses de la journée. Voyez ce que les clients vous doivent et ce que vous devez aux fournisseurs.",
+      "detail": "Des rapports clairs, sans chercher dans plusieurs cahiers."
+    }
+  ],
+  "galleryEyebrow": "Découvrez l’application",
+  "galleryTitle": "De vrais écrans. Vos tâches du quotidien.",
+  "galleryLead": "Découvrez la caisse, le stock et les rapports sur ordinateur, ainsi que la vente sur Android. Sélectionnez une image pour l’agrandir.",
+  "desktop": "Ordinateur",
+  "android": "Android",
+  "close": "Fermer l’image",
+  "gallery": [
+    [
+      "desktop-till",
+      "Une vente en cours",
+      "Cherchez des produits, préparez une vente et suivez le total."
+    ],
+    [
+      "desktop-products",
+      "Produits et stock",
+      "Consultez votre catalogue et les quantités disponibles."
+    ],
+    [
+      "desktop-analytics",
+      "Une vue d’ensemble",
+      "Suivez l’évolution des ventes et du bénéfice."
+    ],
+    [
+      "mobile-sell-cart",
+      "Vendez depuis votre téléphone",
+      "Votre catalogue et la vente en cours sur Android."
+    ],
+    [
+      "mobile-cart",
+      "Vérifiez la vente",
+      "Quantités, client et montant à payer au même endroit."
+    ],
+    [
+      "mobile-products",
+      "Votre stock à portée de main",
+      "Retrouvez les produits et les quantités sur votre téléphone."
+    ]
+  ],
+  "offlineEyebrow": "Internet peut couper. Votre boutique continue.",
+  "offlineTitle": "Continuez à vendre. Connectez-vous au besoin.",
+  "offlineBody": "Les ventes et les mouvements de stock sont d’abord enregistrés sur votre appareil. Votre boutique peut fonctionner sans serveur ni connexion Internet.",
+  "offlineItems": [
+    [
+      "Sauvegardez votre boutique",
+      "Créez des sauvegardes chiffrées et utilisez des fichiers pour transférer les données entre appareils. Gardez une copie en lieu sûr."
+    ],
+    [
+      "Reliez vos appareils",
+      "La synchronisation chiffrée facultative relie vos caisses connectées. Ajoutez un appareil par code ou QR, avec l’accord du propriétaire."
+    ],
+    [
+      "Choisissez votre installation",
+      "Utilisez KOLO seul, ou reliez vos appareils à un serveur de synchronisation que vous hébergez vous-même."
+    ]
+  ],
+  "downloadsEyebrow": "Prêt pour votre comptoir",
+  "downloadsTitle": "Choisissez votre appareil.",
+  "downloadsLead": "KOLO est en bêta publique. Téléchargez une version ci-dessous et explorez une boutique de démonstration si vous souhaitez commencer par un essai.",
+  "release": "Version publiée",
+  "releaseFallback": "Consultez les versions bêta publiées sur GitHub.",
+  "releaseNotes": "Notes de version et sommes de contrôle",
+  "windowsBody": "Pour un ordinateur de boutique sous Windows.",
+  "windowsPrimary": "Télécharger pour Windows",
+  "windowsSecondary": "Version portable",
+  "linuxBody": "Pour les ordinateurs Linux (64 bits).",
+  "linuxPrimary": "Télécharger l’AppImage",
+  "linuxSecondary": "Paquet Debian (.deb)",
+  "androidBody": "Pour les téléphones et tablettes Android.",
+  "androidPrimary": "Télécharger l’APK Android",
+  "androidSecondary": "APK plus petits selon le téléphone",
+  "androidHelp": "L’APK universel fonctionne sur les deux types de téléphones pris en charge. Choisissez ARM64 pour la plupart des téléphones récents, ou ARMv7 pour les anciens téléphones 32 bits.",
+  "installerNote": "Installation bêta : Windows peut afficher un avertissement pour une version non signée. Les APK Android s’installent manuellement. Pour une mise à jour, installez la nouvelle version par-dessus l’ancienne.",
+  "coming": "À venir",
+  "stores": [
+    "Google Play",
+    "F-Droid",
+    "iOS"
+  ],
+  "unavailable": "Voir les versions",
+  "version": "Version de l’application",
+  "developersEyebrow": "Pour les développeurs et les opérateurs",
+  "developersTitle": "Code ouvert. Votre propre installation.",
+  "developersBody": "Les applications ordinateur et Android fonctionnent de façon autonome. Le serveur facultatif transmet les données chiffrées entre appareils, sans avoir besoin de lire vos ventes ou votre stock.",
+  "developersDetails": [
+    "Docker Compose + PostgreSQL pour le serveur de synchronisation",
+    "TypeScript, Electron, Expo et Fastify",
+    "Applications : GPL-3.0-only · Serveur : AGPL-3.0-only"
+  ],
+  "selfhost": "Guide d’auto-hébergement",
+  "source": "Explorer le code",
+  "promotersEyebrow": "Faites découvrir KOLO",
+  "promotersTitle": "Présentez-le. Partagez-le.",
+  "promotersBody": "Un petit kit pour une visite en boutique, une présentation ou une publication : le logo officiel, des captures de démonstration et de courtes descriptions dans les deux langues.",
+  "logos": "Télécharger le logo (SVG)",
+  "screenshots": "Télécharger les captures",
+  "copy": "Descriptions (FR + EN)",
+  "promotersNote": "Les captures présentent des données fictives. Présentez KOLO comme une bêta et indiquez que les futures plateformes sont à venir.",
+  "faqTitle": "Quelques réponses utiles",
+  "faq": [
+    [
+      "Faut-il Internet pour vendre ?",
+      "Non. Les ventes, le stock, les crédits clients et les rapports fonctionnent sur l’appareil. Internet est nécessaire pour synchroniser via un serveur."
+    ],
+    [
+      "Mon personnel peut-il utiliser KOLO ?",
+      "Oui. Chaque membre du personnel peut avoir un code personnel et des droits adaptés à son rôle."
+    ],
+    [
+      "KOLO est-il gratuit ?",
+      "Les applications sont à code ouvert et vous pouvez héberger gratuitement votre propre serveur de synchronisation. Un service hébergé peut demander un abonnement ; aucun achat de service hébergé n’est proposé ici."
+    ],
+    [
+      "Et si je change de téléphone ou d’ordinateur ?",
+      "Restaurez votre boutique depuis une sauvegarde chiffrée, ou rejoignez une boutique existante depuis un autre appareil. Gardez vos sauvegardes en dehors de l’appareil utilisé au comptoir."
+    ],
+    [
+      "Peut-on scanner les codes-barres des produits ?",
+      "Vous pouvez saisir un code-barres à la caisse. Le scan des produits par caméra n’est pas encore disponible. Le scan QR pour rejoindre une boutique est une autre fonction."
+    ],
+    [
+      "Quelles langues et quelle monnaie sont prises en charge ?",
+      "Le français et l’anglais, avec des montants en FCFA (XAF). iOS et la distribution sur Google Play et F-Droid sont prévus plus tard."
+    ]
+  ],
+  "footerLine": "Pensé pour le quotidien de votre boutique.",
+  "footerDocs": "Documentation",
+  "footerLicense": "Licence",
+  "top": "Retour en haut",
+  "videoTitle": "Découvrez une journée en boutique",
+  "videoFallback": "Télécharger la vidéo de démonstration",
+  "promoDescription": "KOLO aide les boutiques à vendre, gérer le stock et suivre les crédits clients, les fournisseurs, les dépenses et les rapports. L’application fonctionne hors ligne sur Windows, Linux et Android, en français et en anglais, avec des montants en FCFA (XAF). La synchronisation chiffrée facultative relie les appareils via un serveur hébergé ou auto-hébergé. KOLO est en bêta publique. iOS et la distribution sur Google Play et F-Droid sont prévus plus tard.",
+  "policies": {
+    "privacyLink": "Confidentialité",
+    "cookiesLink": "Cookies",
+    "home": "Retour à KOLO",
+    "updated": "Dernière mise à jour : 12 octobre 2026",
+    "contactHeading": "Contact pour la confidentialité",
+    "contactFallback": "Pour toute question sur la confidentialité, contactez hblabs par le canal grâce auquel vous avez obtenu KOLO. Ne publiez pas de données de boutique, sauvegardes, mots de passe ou autres informations privées dans les tickets publics GitHub.",
+    "contactLabel": "Contact",
+    "hostingHeading": "Hébergement du site",
+    "hostingProvider": "Hébergeur",
+    "hostingRetention": "Conservation des journaux d’accès",
+    "reset": "Oublier ma préférence de langue",
+    "resetDone": "Votre préférence de langue enregistrée a été supprimée.",
+    "resetFailed": "Votre navigateur ne permet pas l’accès au stockage de ce site. Vous pouvez effacer les données du site dans ses paramètres.",
+    "storageHeading": "Préférence de langue",
+    "storageColumns": [
+      "Nom",
+      "Stockage",
+      "Valeur",
+      "Finalité",
+      "Conservation"
+    ],
+    "storageValues": [
+      "kolo-landing-language",
+      "Stockage local du navigateur",
+      "en ou fr",
+      "Mémoriser la langue que vous choisissez",
+      "Jusqu’à l’effacement des données du site ou à leur suppression avec le bouton ci-dessous"
+    ],
+    "privacy": {
+      "title": "Politique de confidentialité",
+      "description": "Comment le site KOLO traite les préférences du navigateur, les requêtes d’hébergement et les liens externes.",
+      "intro": "Cette politique concerne le site de présentation et de téléchargement de KOLO, maintenu par hblabs. Elle ne couvre pas les applications KOLO pour ordinateur ou mobile, ni un serveur de synchronisation hébergé ou auto-hébergé, qui sont des services distincts.",
+      "sections": [
+        {
+          "title": "Ce que fait ce site",
+          "paragraphs": [
+            "Vous pouvez découvrir KOLO, consulter les captures de démonstration et télécharger les supports de présentation sans compte. Ce site ne comporte ni inscription, ni formulaire de contact ou de paiement, ni publicité, ni script de mesure d’audience, ni pixel de suivi. Il ne lit ni ne transmet les ventes, stocks, fiches clients ou sauvegardes de votre boutique."
+          ]
+        },
+        {
+          "title": "Requêtes envoyées à l’hébergeur",
+          "paragraphs": [
+            "Pour fournir une page ou un fichier, le serveur reçoit des informations techniques telles que votre adresse IP, l’URL demandée, l’heure de la requête et les informations du navigateur jointes à cette requête. L’hébergeur peut conserver des journaux d’accès ou de sécurité pour fournir le site, diagnostiquer les problèmes et prévenir les abus.",
+            "Ce site est auto-hébergé sur un serveur exploité par hblabs. Les éventuels journaux d’accès ou de sécurité restent sur cette infrastructure. Leur durée de conservation dépend de la configuration du serveur ; contactez-nous pour obtenir des précisions sur ces journaux."
+          ]
+        },
+        {
+          "title": "Votre préférence de langue",
+          "paragraphs": [
+            "Lorsque vous choisissez le français ou l’anglais, le site enregistre ce choix dans votre navigateur sous le nom kolo-landing-language. Cette valeur contient uniquement en ou fr, n’est pas envoyée à un serveur par le JavaScript du site et reste jusqu’à sa suppression. La politique relative aux cookies fournit les détails et un bouton pour l’effacer."
+          ]
+        },
+        {
+          "title": "Téléchargements et sites externes",
+          "paragraphs": [
+            "Les polices, captures et toute vidéo fournie localement sont servies par ce site. Aucun lecteur de réseau social ou de vidéo tiers n’est intégré.",
+            "Les téléchargements de l’application, le code source et la documentation renvoient vers GitHub. L’ouverture de ces liens envoie une requête à GitHub ou à son infrastructure de téléchargement, qui applique ses propres règles de confidentialité. Le mainteneur récupère les informations de version lors de la génération du site, pas votre navigateur."
+          ]
+        },
+        {
+          "title": "Vos choix et demandes",
+          "paragraphs": [
+            "Vous pouvez supprimer la préférence de langue avec le bouton de la politique relative aux cookies ou dans les paramètres de données de site de votre navigateur. Vous pouvez aussi bloquer le stockage local ; les pages dans chaque langue restent utilisables.",
+            "Selon les lois qui vous sont applicables, vous pouvez disposer de droits d’accès, de rectification, d’effacement, de limitation ou d’opposition au traitement, ainsi que du droit de saisir une autorité de protection des données compétente. Contactez hblabs pour les données d’hébergement ou toute question sur la confidentialité, en limitant les informations personnelles envoyées au nécessaire."
+          ]
+        },
+        {
+          "title": "Modifications de cette politique",
+          "paragraphs": [
+            "Cette page sera mise à jour si l’hébergement, le stockage ou le traitement des données du site change. La date ci-dessus identifie la notice actuelle."
+          ]
+        }
+      ]
+    },
+    "cookies": {
+      "title": "Politique relative aux cookies",
+      "description": "La préférence de langue du site KOLO et la suppression du stockage dans votre navigateur.",
+      "intro": "Le site KOLO lui-même ne dépose aucun cookie HTTP. Il utilise le stockage local du navigateur pour la langue que vous choisissez. Cette page explique ce stockage et comment le gérer.",
+      "sections": [
+        {
+          "title": "Aucun traceur publicitaire ou de mesure d’audience",
+          "paragraphs": [
+            "Le site actuel ne comporte ni cookie publicitaire, ni outil de mesure d’audience, ni pixel de suivi, ni empreinte de navigateur, ni lecteur tiers intégré. Un hébergeur peut ajouter ses propres mécanismes de sécurité ; tout stockage ajouté par cet hébergeur doit être documenté lors de la configuration de l’hébergement."
+          ]
+        },
+        {
+          "title": "Ce qu’est le stockage local",
+          "paragraphs": [
+            "Le stockage local permet à un site d’enregistrer une petite valeur dans votre navigateur. Contrairement à un cookie HTTP, elle n’est pas automatiquement jointe aux requêtes. KOLO l’utilise uniquement pour mémoriser la langue que vous choisissez explicitement. Ce n’est pas un identifiant publicitaire ou de visiteur."
+          ]
+        },
+        {
+          "title": "Comment le supprimer",
+          "paragraphs": [
+            "Utilisez le bouton ci-dessous pour supprimer la préférence de langue. Vous pouvez aussi effacer les données de ce site dans les paramètres de votre navigateur ou bloquer le stockage local. Après suppression, la page d’accueil utilise la langue de votre navigateur. Un nouveau choix EN ou FR enregistre une nouvelle préférence.",
+            "La suppression ne touche pas aux données de votre boutique, à la langue de l’application ou aux sauvegardes KOLO. Vous pouvez toujours accéder directement à la page française ou anglaise."
+          ]
+        },
+        {
+          "title": "Lorsque vous quittez ce site",
+          "paragraphs": [
+            "Un lien de téléchargement ou de documentation GitHub vous conduit vers un autre service. Ce service peut utiliser des cookies ou du stockage selon sa propre politique. Le site KOLO ne contrôle pas le stockage des services externes."
+          ]
+        },
+        {
+          "title": "Modifications",
+          "paragraphs": [
+            "Si de nouveaux stockages, outils de mesure d’audience ou services intégrés sont ajoutés, cette politique sera mise à jour et les contrôles de consentement nécessaires seront ajoutés avant leur fonctionnement."
+          ]
+        }
+      ]
+    }
+  },
+  "footerMadeBy": "Créé par"
+}

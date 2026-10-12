@@ -1,0 +1,89 @@
+[
+  {
+    "tag_name": "v0.3.0",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-11T18:05:57Z",
+    "html_url": "https://github.com/vanillaiice/kolo/releases/tag/v0.3.0",
+    "assets": [
+      {
+        "name": "KOLO-0.2.0-android-arm64-v8a.apk",
+        "state": "uploaded",
+        "size": 55100042,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/KOLO-0.2.0-android-arm64-v8a.apk"
+      },
+      {
+        "name": "KOLO-0.2.0-android-armeabi-v7a.apk",
+        "state": "uploaded",
+        "size": 43712174,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/KOLO-0.2.0-android-armeabi-v7a.apk"
+      },
+      {
+        "name": "KOLO-0.2.0-android-universal.apk",
+        "state": "uploaded",
+        "size": 103985473,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/KOLO-0.2.0-android-universal.apk"
+      },
+      {
+        "name": "KOLO-0.3.0-linux-amd64.deb",
+        "state": "uploaded",
+        "size": 103823048,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/KOLO-0.3.0-linux-amd64.deb"
+      },
+      {
+        "name": "KOLO-0.3.0-linux-x86_64.AppImage",
+        "state": "uploaded",
+        "size": 132747409,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/KOLO-0.3.0-linux-x86_64.AppImage"
+      },
+      {
+        "name": "KOLO-0.3.0-win-x64-portable.exe",
+        "state": "uploaded",
+        "size": 116387743,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/KOLO-0.3.0-win-x64-portable.exe"
+      },
+      {
+        "name": "KOLO-0.3.0-win-x64-setup.exe",
+        "state": "uploaded",
+        "size": 116601466,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/KOLO-0.3.0-win-x64-setup.exe"
+      },
+      {
+        "name": "KOLO-0.3.0-win-x64-setup.exe.blockmap",
+        "state": "uploaded",
+        "size": 122024,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/KOLO-0.3.0-win-x64-setup.exe.blockmap"
+      },
+      {
+        "name": "latest-linux.yml",
+        "state": "uploaded",
+        "size": 543,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/latest-linux.yml"
+      },
+      {
+        "name": "latest.yml",
+        "state": "uploaded",
+        "size": 353,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/latest.yml"
+      },
+      {
+        "name": "SHA256SUMS-android.txt",
+        "state": "uploaded",
+        "size": 299,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/SHA256SUMS-android.txt"
+      },
+      {
+        "name": "SHA256SUMS-linux.txt",
+        "state": "uploaded",
+        "size": 192,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/SHA256SUMS-linux.txt"
+      },
+      {
+        "name": "SHA256SUMS-windows.txt",
+        "state": "uploaded",
+        "size": 193,
+        "browser_download_url": "https://github.com/vanillaiice/kolo/releases/download/v0.3.0/SHA256SUMS-windows.txt"
+      }
+    ]
+  }
+]

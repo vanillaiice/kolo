@@ -1,0 +1,295 @@
+{
+  "title": "KOLO: Your shop, running smoothly",
+  "description": "Sell, manage stock and follow customer credit with KOLO. Offline-first shop management for Windows, Linux and Android, in English and French.",
+  "skip": "Skip to content",
+  "nav": [
+    "Features",
+    "Screenshots",
+    "Downloads",
+    "Developers"
+  ],
+  "language": "Language",
+  "menu": "Menu",
+  "eyebrow": "Made for the everyday shop",
+  "headline": "Your shop.\nYour day.\nUnder control.",
+  "lead": "Sales, stock, and customer credit. Keep your shop running, even without internet.",
+  "download": "Download KOLO",
+  "explore": "See how it works",
+  "beta": "Public beta",
+  "heroNote": "On your computer. On your Android phone. In English or French.",
+  "demo": "Screens shown with demo-shop data.",
+  "strip": [
+    "Sell without internet",
+    "Amounts in FCFA (XAF)",
+    "Your data stays yours"
+  ],
+  "featuresEyebrow": "From the first sale to closing time",
+  "featuresTitle": "Less guessing. More running your shop.",
+  "featuresLead": "For shop owners and the people behind the counter. Groceries, boutiques, supermarkets, pharmacies and wholesalers.",
+  "features": [
+    {
+      "number": "01",
+      "title": "Keep the queue moving",
+      "body": "Find a product, add it to the sale, and take payment. Handle discounts, split payments and customer credit, then print or share a receipt.",
+      "detail": "Personal staff codes and permissions keep access clear."
+    },
+    {
+      "number": "02",
+      "title": "Know what is on the shelf",
+      "body": "Follow stock, record deliveries and count what is really there. Keep customers, suppliers and purchases in the same place.",
+      "detail": "Low-stock alerts help you spot what needs restocking."
+    },
+    {
+      "number": "03",
+      "title": "See where the money goes",
+      "body": "Check the day’s sales, profit and expenses. See what customers owe you and what you owe suppliers.",
+      "detail": "Clear reports, without hunting through notebooks."
+    }
+  ],
+  "galleryEyebrow": "A look inside",
+  "galleryTitle": "Real screens. Everyday tasks.",
+  "galleryLead": "Explore the till, stock and reports on desktop, and selling on Android. Select a picture for a closer look.",
+  "desktop": "Desktop",
+  "android": "Android",
+  "close": "Close image",
+  "gallery": [
+    [
+      "desktop-till",
+      "A sale in progress",
+      "Search products, build a sale and follow the total."
+    ],
+    [
+      "desktop-products",
+      "Products and stock",
+      "See your catalogue and what is left in stock."
+    ],
+    [
+      "desktop-analytics",
+      "The bigger picture",
+      "Follow sales and profit over time."
+    ],
+    [
+      "mobile-sell-cart",
+      "Sell from your phone",
+      "Your catalogue and current sale on Android."
+    ],
+    [
+      "mobile-cart",
+      "Review the sale",
+      "Quantities, customer and payment total in one place."
+    ],
+    [
+      "mobile-products",
+      "Stock in your pocket",
+      "Look up products and quantities on your phone."
+    ]
+  ],
+  "offlineEyebrow": "Internet comes and goes. Your shop carries on.",
+  "offlineTitle": "Keep selling. Connect when you need to.",
+  "offlineBody": "Sales and stock movements are saved on your device first. Your shop can work without a server or an internet connection.",
+  "offlineItems": [
+    [
+      "Back up your shop",
+      "Save encrypted backups and use files to move shop data between devices. Keep a copy somewhere safe."
+    ],
+    [
+      "Bring your devices together",
+      "Optional encrypted sync keeps connected tills in step. Add a device with a code or QR and the owner’s approval."
+    ],
+    [
+      "Choose your setup",
+      "Use KOLO on its own, or connect your devices to a sync server you run yourself."
+    ]
+  ],
+  "downloadsEyebrow": "Ready for your counter",
+  "downloadsTitle": "Choose your device.",
+  "downloadsLead": "KOLO is in public beta. Download a build below and start with a demo shop if you want to explore first.",
+  "release": "Published release",
+  "releaseFallback": "Browse published beta releases on GitHub.",
+  "releaseNotes": "Release notes & checksums",
+  "windowsBody": "For a shop computer running Windows.",
+  "windowsPrimary": "Download Windows installer",
+  "windowsSecondary": "Portable version",
+  "linuxBody": "For Linux computers (64-bit).",
+  "linuxPrimary": "Download AppImage",
+  "linuxSecondary": "Debian package (.deb)",
+  "androidBody": "For Android phones and tablets.",
+  "androidPrimary": "Download Android APK",
+  "androidSecondary": "Smaller APKs by phone type",
+  "androidHelp": "The universal APK works on both supported phone types. Choose ARM64 for most recent phones, or ARMv7 for older 32-bit phones.",
+  "installerNote": "Beta installation: Windows may show a warning for an unsigned build. Android APKs are installed manually. To update, install the new version over the old one.",
+  "coming": "Coming later",
+  "stores": [
+    "Google Play",
+    "F-Droid",
+    "iOS"
+  ],
+  "unavailable": "View releases",
+  "version": "App version",
+  "developersEyebrow": "For developers & operators",
+  "developersTitle": "Open source. A setup you can own.",
+  "developersBody": "The desktop and Android apps run independently. The optional sync server relays encrypted shop data between devices; it does not need to read your sales or stock.",
+  "developersDetails": [
+    "Docker Compose + PostgreSQL for the sync server",
+    "TypeScript, Electron, Expo and Fastify",
+    "Apps: GPL-3.0-only · Sync server: AGPL-3.0-only"
+  ],
+  "selfhost": "Self-hosting guide",
+  "source": "Explore the source",
+  "promotersEyebrow": "Help introduce KOLO",
+  "promotersTitle": "Show it. Share it.",
+  "promotersBody": "A small kit for a shop visit, a presentation or a post: the official logo, demo screenshots and short descriptions in both languages.",
+  "logos": "Download logo (SVG)",
+  "screenshots": "Download screenshots",
+  "copy": "Descriptions (EN + FR)",
+  "promotersNote": "Screenshots show illustrative shop data. Describe KOLO as a beta and keep future platforms marked as coming later.",
+  "faqTitle": "A few things to know",
+  "faq": [
+    [
+      "Do I need internet to sell?",
+      "No. Sales, stock, customer credit and reports work on the device. Internet is needed when syncing through a server."
+    ],
+    [
+      "Can my staff use KOLO?",
+      "Yes. Each staff member can have a personal code and permissions for their role."
+    ],
+    [
+      "Is KOLO free?",
+      "The apps are open source, and running your own sync server is free. A hosted sync service can have a paid subscription; no hosted checkout is offered here."
+    ],
+    [
+      "What if I replace my phone or computer?",
+      "Use an encrypted backup to restore your shop, or join an existing shop from another device. Keep backups outside the device you use at the counter."
+    ],
+    [
+      "Does it scan product barcodes?",
+      "You can enter a product barcode at the till. Camera-based product scanning is not available yet. QR scanning for joining a shop is a separate feature."
+    ],
+    [
+      "What languages and currency are supported?",
+      "English and French, with amounts in FCFA (XAF). iOS, Google Play and F-Droid availability will follow later."
+    ]
+  ],
+  "footerLine": "Made for the everyday shop.",
+  "footerDocs": "Documentation",
+  "footerLicense": "License",
+  "top": "Back to top",
+  "videoTitle": "Watch a shop workflow",
+  "videoFallback": "Download the demonstration video",
+  "promoDescription": "KOLO helps shops sell, manage stock, follow customer credit, suppliers, expenses and reports. It works offline on Windows, Linux and Android, with English and French interfaces and amounts in FCFA (XAF). Optional encrypted sync connects devices through a hosted or self-hosted server. KOLO is in public beta. iOS and distribution through Google Play and F-Droid are coming later.",
+  "policies": {
+    "privacyLink": "Privacy policy",
+    "cookiesLink": "Cookie policy",
+    "home": "Back to KOLO",
+    "updated": "Last updated: 12 October 2026",
+    "contactHeading": "Privacy contact",
+    "contactFallback": "For privacy questions, contact hblabs through the channel from which you received KOLO. Do not share shop records, backups, passwords or other private information in public GitHub issues.",
+    "contactLabel": "Contact",
+    "hostingHeading": "Website hosting",
+    "hostingProvider": "Hosting provider",
+    "hostingRetention": "Access-log retention",
+    "reset": "Forget my language preference",
+    "resetDone": "Your saved language preference has been removed.",
+    "resetFailed": "Your browser does not allow access to this site’s storage. You can clear site data in your browser settings.",
+    "storageHeading": "Language preference",
+    "storageColumns": [
+      "Name",
+      "Storage",
+      "Value",
+      "Purpose",
+      "Retention"
+    ],
+    "storageValues": [
+      "kolo-landing-language",
+      "Browser local storage",
+      "en or fr",
+      "Remember the language you select",
+      "Until you clear site data or remove it using the button below"
+    ],
+    "privacy": {
+      "title": "Privacy policy",
+      "description": "How the KOLO website handles browser preferences, hosting requests and external links.",
+      "intro": "This policy covers the KOLO information and download website maintained by hblabs. It does not cover the KOLO desktop or mobile apps, or a hosted or self-hosted sync server; those are separate services.",
+      "sections": [
+        {
+          "title": "What this website does",
+          "paragraphs": [
+            "You can read about KOLO, view demo screenshots and download promotional assets without an account. This website has no signup, contact form, payment form, advertising, analytics scripts or tracking pixels. It does not read or upload your shop’s sales, stock, customer records or backups."
+          ]
+        },
+        {
+          "title": "Requests to the website host",
+          "paragraphs": [
+            "To deliver a page or file, the server receives technical information such as your IP address, the requested URL, the request time and browser information sent with the request. The host may keep access or security logs for delivering the website, diagnosing problems and protecting it from abuse.",
+            "This website is self-hosted on a server operated by hblabs. Any access or security logs remain on that hosting infrastructure. The retention period is determined by the server configuration; contact us for details about hosting logs."
+          ]
+        },
+        {
+          "title": "Your language preference",
+          "paragraphs": [
+            "When you select English or French, the website stores that choice in your browser under kolo-landing-language. It contains only en or fr, is not sent to a server by this website’s JavaScript, and stays until you clear it. See the cookie policy for the full details and a removal button."
+          ]
+        },
+        {
+          "title": "Downloads and external websites",
+          "paragraphs": [
+            "Fonts, screenshots and any locally supplied video are served by this website. The website does not load embedded social-media or video players.",
+            "App downloads, source code and documentation link to GitHub. Opening these links sends a request to GitHub or its download infrastructure, which has its own privacy practices. Release information is fetched by the maintainer when rebuilding the site, not by your browser."
+          ]
+        },
+        {
+          "title": "Your choices and privacy requests",
+          "paragraphs": [
+            "You can remove the saved language preference using the cookie-policy button or your browser’s site-data settings. You can also block local storage; the language-specific pages remain usable.",
+            "Depending on the laws that apply to you, you may have rights to access, correct or erase personal data, restrict or object to processing, and complain to a relevant data-protection authority. Contact hblabs about website-hosting data or privacy questions. Avoid sending more personal information than needed."
+          ]
+        },
+        {
+          "title": "Changes to this policy",
+          "paragraphs": [
+            "We will update this page if the website’s hosting, storage or data handling changes. The date above identifies the current notice."
+          ]
+        }
+      ]
+    },
+    "cookies": {
+      "title": "Cookie policy",
+      "description": "The KOLO website’s language preference and how to remove browser storage.",
+      "intro": "The KOLO website itself sets no HTTP cookies. It uses browser local storage for your selected language. This page explains that storage so you can manage it.",
+      "sections": [
+        {
+          "title": "No advertising or analytics trackers",
+          "paragraphs": [
+            "The current website includes no advertising cookies, analytics tools, tracking pixels, fingerprinting or third-party embedded players. A hosting provider may add its own security mechanisms; any provider-added storage must be documented when hosting is configured."
+          ]
+        },
+        {
+          "title": "What local storage means",
+          "paragraphs": [
+            "Local storage is a small value saved by a website in your browser. Unlike an HTTP cookie, it is not automatically attached to requests. KOLO uses it only to remember the language you explicitly select. It is not an advertising or visitor identifier."
+          ]
+        },
+        {
+          "title": "How to remove it",
+          "paragraphs": [
+            "Use the button below to remove the stored language preference. You can also clear this website’s data in your browser settings or disable local storage. After removal, the root page uses your browser’s language preference. Selecting EN or FR again saves a new choice.",
+            "Removing the preference does not delete any shop data, change the app language or affect KOLO backups. You can always visit the English or French page directly."
+          ]
+        },
+        {
+          "title": "When you leave this website",
+          "paragraphs": [
+            "Following a GitHub download or documentation link takes you to another service. That service may use cookies or storage under its own policy. The KOLO website does not control storage on external services."
+          ]
+        },
+        {
+          "title": "Changes",
+          "paragraphs": [
+            "If new storage, analytics or embedded services are added, this policy will be updated and any required consent controls will be added before those features run."
+          ]
+        }
+      ]
+    }
+  },
+  "footerMadeBy": "Made by"
+}
