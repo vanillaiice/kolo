@@ -75,7 +75,7 @@ export function PhotoEditor({ service, sessionId, product, onSaved }: { service:
   return <div className="photo-editor">
     <ProductThumb service={service} sessionId={sessionId} product={product} className="photo-preview"/>
     <div className="photo-actions">
-      <input ref={input} id={`photo-${product.id}`} className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { void pick(event.target.files?.[0]); }}/>
+      <input ref={input} id={`photo-${product.id}`} className="sr-only" type="file" aria-label={t(product.photo === undefined ? "addPhoto" : "changePhoto")} tabIndex={-1} accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { void pick(event.target.files?.[0]); }}/>
       <button type="button" className="secondary" disabled={busy} onClick={() => input.current?.click()}>{busy ? t("processingPhoto") : t(product.photo === undefined ? "addPhoto" : "changePhoto")}</button>
       {product.photo !== undefined && <button type="button" className="text-button" disabled={busy} onClick={() => { void action.run(() => service.removeProductPhoto({ sessionId, productId: product.id })).then(value => { if (value !== undefined) onSaved(value); }); }}>{t("removePhoto")}</button>}
       <p className="hint">{t("photoHelp")}</p>
