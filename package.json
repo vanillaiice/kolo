@@ -32,7 +32,7 @@
     "smoke:credentials": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/smoke-credentials.mjs",
     "smoke:desktop": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/smoke-desktop.mjs",
     "smoke:server": "docker build -f apps/server/Dockerfile -t kolo-server:foundation . && node scripts/smoke-server.mjs",
-    "smoke:desktop:workflow": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/smoke-desktop-workflow.mjs",
+    "smoke:desktop:workflow": "npm run build:packages && npm run build -w @kolo/desktop && npm run build -w @kolo/cli && node scripts/smoke-desktop-workflow.mjs",
     "stage:desktop": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/stage-desktop.mjs",
     "pack:desktop": "npm run stage:desktop && electron-builder --config apps/desktop/electron-builder.json --dir --publish never",
     "dist:desktop:win": "npm run stage:desktop && electron-builder --config apps/desktop/electron-builder.json --win --x64 --publish never",
@@ -49,7 +49,8 @@
     "check:landing": "npm run build:landing && node apps/landing/check.mjs && node --test apps/landing/releases.test.mjs",
     "refresh:landing-releases": "node apps/landing/refresh-releases.mjs",
     "test:server:pg": "node scripts/test-server-postgres.mjs",
-    "kolo": "npm run build:packages --silent && npm run build -w @kolo/cli --silent && node apps/cli/dist/main.js"
+    "kolo": "npm run build:packages --silent && npm run build -w @kolo/cli --silent && node apps/cli/dist/main.js",
+    "test:e2e": "npm run build:packages && npm run build -w @kolo/server && npm run build -w @kolo/cli && node scripts/test-e2e-sync.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

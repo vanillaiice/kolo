@@ -1476,3 +1476,19 @@ join fingerprint pinning, sealed sync). Manual run: demo → inspect → reports
 decrypt (0600) → report/check on the copy; overwrite, missing input, unknown report, invalid date and wrong password
 fail with exit 2. Boundaries and documentation checks pass. Not verified: a headless till against a real deployed
 server, Windows ACL behaviour of the state directory.
+
+## 2026-10-12: CLI in the test infrastructure
+
+- **Shared integrity checker:** `kolo check`'s checks moved to `core/data/database/integrity` and gained credit-sale
+  debt, return-beyond-original and tax-rule scope invariants, with corruption/attention severities. Core suites,
+  desktop host tests and the server's PostgreSQL tills now assert consistency in teardown (`closeConsistent`).
+  Enabling it flagged another device's origin counter copied into a paired/restored till; that row never allocates
+  (restores and re-pairs get new device IDs), so the counter check is now limited to the database's own till.
+- **Electron smoke cross-check:** the workflow smoke verifies the app's real backup with the CLI (signature,
+  integrity, sales report of 2 sales / 250 FCFA).
+- **End-to-end sync (`npm run test:e2e`):** disposable PostgreSQL, built server process, owner till and a CLI
+  headless till joining by code; import → owner → sale → CLI convergence over HTTP, no plaintext in `pg_dump`, both
+  tills consistent. Added to the pre-push hook when Docker is reachable.
+
+Verification: core 745 (3 new), desktop 60, CLI 9 tests; `test:server:pg` 28/28; Electron workflow smoke with the backup
+cross-check; `test:e2e` passed, and a deliberately wrong expectation made it fail and clean up its container.

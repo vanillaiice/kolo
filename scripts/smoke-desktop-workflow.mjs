@@ -31,12 +31,37 @@ async function phase(name) {
     child.once("close", code => { clearTimeout(timer); resolve(!timedOut && crash && killed ? 0 : code ?? 1); });
   });
 }
+/**
+ * Independent check of what the real app wrote: the CLI authenticates the desktop's own backup, runs core's
+ * integrity checks over it and reads the sales report. A broken backup or inconsistent shop fails the smoke.
+ */
+function crossCheckBackup() {
+  const backup = join(directory, "last-backup.json"), cli = resolve("apps/cli/dist/main.js");
+  if (!existsSync(backup)) { process.stderr.write("Desktop workflow saved no backup to cross-check\n"); process.exitCode = 1; return; }
+  const env = { ...process.env, KOLO_BACKUP_PASSWORD: "correct horse battery" };
+  const kolo = args => {
+    const result = spawnSync(process.execPath, [cli, ...args, backup], { env, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`kolo ${args.join(" ")} failed: ${result.stderr.trim()}`);
+    return JSON.parse(result.stdout);
+  };
+  try {
+    const verified = kolo(["backup", "verify"]);
+    if (verified.verified !== true || verified.businessName !== "Desktop validation") throw new Error("backup does not describe the validated shop");
+    const integrity = kolo(["check", "--backup"]);
+    if (integrity.consistent !== true) throw new Error(`integrity findings: ${JSON.stringify(integrity.issues)}`);
+    const sales = kolo(["report", "sales", "--backup"]);
+    // Two sales (250 + 500 FCFA) less the 500 FCFA bag returned before the backup was taken.
+    if (sales.transactions !== 2 || sales.totalMinor !== 250) throw new Error(`unexpected sales in backup: ${JSON.stringify(sales)}`);
+    process.stdout.write("CLI verified the desktop backup: signature, integrity checks and sales report passed\n");
+  } catch (error) { process.stderr.write(`Desktop backup cross-check failed: ${error.message}\n`); process.exitCode = 1; }
+}
 try {
   if (installer) install(process.env.KOLO_DESKTOP_BASELINE_INSTALLER ?? installer);
   for (const name of ["create", "reopen", "entry-recovery", "resilience", "crash-commit", "crash-reopen", "import-replace", "import-reopen", "remember-on", "remember-reopen", "remember-locked"]) {
     if (installer && name === "reopen") install(installer);
     const code = await phase(name); if (code !== 0) { process.exitCode = code; break; }
   }
+  if (!process.exitCode) crossCheckBackup();
 }
 finally {
   if (installDirectory) {

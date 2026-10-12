@@ -4,4 +4,5 @@
 npm run check
 npm run bundle:mobile
 # Server tests against a disposable PostgreSQL when Docker is reachable; otherwise they skip in `check`.
-if docker info >/dev/null 2>&1; then npm run test:server:pg; else echo "pre-push: Docker unavailable, PostgreSQL server tests skipped"; fi
+# Then the real multi-process end-to-end sync (server process + PostgreSQL + owner till + CLI headless till).
+if docker info >/dev/null 2>&1; then npm run test:server:pg && npm run test:e2e; else echo "pre-push: Docker unavailable, PostgreSQL server and end-to-end sync tests skipped"; fi

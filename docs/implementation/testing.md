@@ -33,6 +33,20 @@ skips without `KOLO_TEST_DATABASE_URL`; `npm run smoke:server` runs it in a fres
 private Docker network/database and cleans up only its own resources. Electron persistence tests call the
 actual Node SQLite adapter on a temporary file and reopen it.
 
+**Integrity after every test.** `core/data/database/integrity` (`checkIntegrity`, also `kolo check`) separates
+corruption (SQLite damage, foreign keys, stock movements vs sale/purchase lines, credit-sale debt vs the sale's own
+arithmetic, returns beyond the original, cross-shop references, this till's journal counter) from attention states
+(quarantined, unsupported or stuck sync work). Core suites that build real databases, the desktop host tests and the
+server's real-PostgreSQL tills close their databases through `closeConsistent`, so every scenario also proves the
+shop is still consistent afterwards.
+
+**CLI as an independent checker.** `npm run smoke:desktop:workflow` ends by running `kolo backup verify`, `kolo
+check --backup` and `kolo report sales --backup` on the backup the real Electron app saved. `npm run test:e2e`
+(`scripts/test-e2e-sync.mjs`) starts a disposable PostgreSQL 18, the built server as its own process with a code from
+`invite`, an owner till and a `kolo till` process that joins by code; they sync over HTTP, the headless till imports
+products the owner then sells, and the run checks convergence, a plaintext-free `pg_dump` and both tills' integrity.
+The pre-push hook runs it (after `test:server:pg`) when Docker is reachable.
+
 ## Test layers
 
 | Layer | Method | Required failure cases |
