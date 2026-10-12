@@ -11,9 +11,9 @@ import { generateServerKey } from "./identity.js";
 import { createAdmin, resetTotp } from "./admin/accounts.js";
 import { createAdminApplication } from "./admin/admin-app.js";
 import { createMetrics } from "./admin/operations.js";
-import { adminUrl, cleanup, connect, freshDatabase, owner, started, sync } from "./sync.fixtures.js";
+import { cleanup, connect, freshDatabase, owner, started, sync } from "./sync.fixtures.js";
 
-const skip = adminUrl === undefined;
+const skip = false;
 const closers: (() => Promise<unknown>)[] = [];
 after(async () => { for (const close of closers.splice(0)) await close(); await cleanup(); });
 

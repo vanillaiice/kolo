@@ -2793,6 +2793,16 @@ Test-only fixtures for real PostgreSQL and real SQLite tills; only the network a
 const adminUrl: string;
 ```
 
+Which PostgreSQL the tests run against: a real server from `KOLO_TEST_DATABASE_URL` (the authoritative gate,
+`npm run test:server:pg`), otherwise in-process PGlite (PostgreSQL compiled to WASM) behind its wire-protocol socket,
+so the suite also runs in every `npm test`. PGlite is one engine connection multiplexed across clients and is
+PostgreSQL 17, so concurrency and version behaviour is only proven by the real-server run. A test that cannot hold
+on PGlite should skip with `engine === "pglite"` rather than be weakened; none needs to today.
+
+```ts
+const engine: "postgres" | "pglite";
+```
+
 ```ts
 const at: "2026-10-11T06:00:00.000Z";
 const secret: "fixture-owner-secret";

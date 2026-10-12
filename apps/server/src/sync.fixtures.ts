@@ -1,5 +1,8 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, pbkdf2Sync, randomBytes, randomUUIDv7, sign, verify } from "node:crypto";
 import { Client } from "pg";
+import { createServer as createNetServer } from "node:net";
+import type { PGlite } from "@electric-sql/pglite";
+import type { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import type { FastifyInstance } from "fastify";
 import { openDatabase as openSqlite } from "@kolo/core/data/database/node-sqlite";
 import { migrate } from "@kolo/core/data/database/migrations";
@@ -24,6 +27,18 @@ import { CLI_ACTOR, issueCode } from "./admin/operations.js";
 
 /** Test-only fixtures for real PostgreSQL and real SQLite tills; only the network address is local. */
 export const adminUrl = process.env["KOLO_TEST_DATABASE_URL"];
+/**
+ * Which PostgreSQL the tests run against: a real server from `KOLO_TEST_DATABASE_URL` (the authoritative gate,
+ * `npm run test:server:pg`), otherwise in-process PGlite (PostgreSQL compiled to WASM) behind its wire-protocol socket,
+ * so the suite also runs in every `npm test`. PGlite is one engine connection multiplexed across clients and is
+ * PostgreSQL 17, so concurrency and version behaviour is only proven by the real-server run. A test that cannot hold
+ * on PGlite should skip with `engine === "pglite"` rather than be weakened; none needs to today.
+ */
+export const engine: "postgres" | "pglite" = adminUrl === undefined ? "pglite" : "postgres";
+const pglites: { readonly db: PGlite; readonly server: PGLiteSocketServer }[] = [];
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => { const probe = createNetServer().listen(0, "127.0.0.1", () => { const address = probe.address(); probe.close(() => resolve(typeof address === "object" && address !== null ? address.port : 0)); }).on("error", reject); });
+}
 export const at = "2026-10-11T06:00:00.000Z", secret = "fixture-owner-secret";
 
 /** Node/OpenSSL implementation of the sealing port, as the desktop adapter does it. */
@@ -88,6 +103,14 @@ export async function paired(source: Device, label: string, authority = false): 
 
 /** A fresh, fully migrated PostgreSQL database per server; dropped after the run. */
 export async function freshDatabase(): Promise<string> {
+  if (engine === "pglite") {
+    // A whole PGlite instance per database stands in for CREATE DATABASE; the pool's ten connections share it.
+    // Loaded only here: images and runs against a real server never need the dev-only PGlite packages.
+    const [{ PGlite }, { PGLiteSocketServer }] = await Promise.all([import("@electric-sql/pglite"), import("@electric-sql/pglite-socket")]);
+    const db = await PGlite.create(), port = await freePort(), server = new PGLiteSocketServer({ db, host: "127.0.0.1", port, maxConnections: 16 });
+    await server.start(); pglites.push({ db, server });
+    return `postgres://postgres@127.0.0.1:${port}/postgres?sslmode=disable`;
+  }
   const name = `kolo_sync_${randomUUIDv7().replaceAll("-", "")}`, admin = new Client({ connectionString: adminUrl });
   await admin.connect(); try { await admin.query(`CREATE DATABASE ${name}`); } finally { await admin.end(); }
   databases.push(name);
@@ -135,6 +158,7 @@ export async function cleanup(): Promise<void> {
   for (const value of servers.splice(0)) await value.app.close();
   // Every till must still satisfy core's invariants after whatever the test sent through the server.
   closeConsistent(sqlite.splice(0));
+  for (const { db, server } of pglites.splice(0)) { await server.stop(); await db.close(); }
   if (adminUrl !== undefined && databases.length > 0) { const admin = new Client({ connectionString: adminUrl }); await admin.connect(); try { for (const name of databases.splice(0)) await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); } finally { await admin.end(); } }
 }
 

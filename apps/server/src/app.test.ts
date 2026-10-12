@@ -61,13 +61,18 @@ it("rejects invalid deployment configuration without echoing credentials", () =>
   assert.throws(() => readConfig({ KOLO_LOG_LEVEL: "verbose" }), /KOLO_LOG_LEVEL/);
 });
 
-it("reports ready against real PostgreSQL once migrated", { skip: !process.env["KOLO_TEST_DATABASE_URL"] }, async () => {
-  const db = openDatabase(process.env["KOLO_TEST_DATABASE_URL"]!);
-  try { await migrateToLatest(db); } finally { await db.destroy(); }
-  const application = await createApplication({ host: "127.0.0.1", port: 0, databaseUrl: process.env["KOLO_TEST_DATABASE_URL"] }, { key: generateServerKey().key });
+it("reports ready against PostgreSQL once migrated", async () => {
+  // A real server from KOLO_TEST_DATABASE_URL (the Docker image smoke runs exactly this), else in-process PGlite.
+  const fixtures = process.env["KOLO_TEST_DATABASE_URL"] === undefined ? await import("./sync.fixtures.js") : undefined;
+  const url = process.env["KOLO_TEST_DATABASE_URL"] ?? await fixtures!.freshDatabase();
   try {
-    const response = await application.inject({ method: "GET", url: "/readyz" });
-    assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { status: "ready" });
-  } finally { await application.close(); }
+    const db = openDatabase(url);
+    try { await migrateToLatest(db); } finally { await db.destroy(); }
+    const application = await createApplication({ host: "127.0.0.1", port: 0, databaseUrl: url }, { key: generateServerKey().key });
+    try {
+      const response = await application.inject({ method: "GET", url: "/readyz" });
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(response.json(), { status: "ready" });
+    } finally { await application.close(); }
+  } finally { await fixtures?.cleanup(); }
 });

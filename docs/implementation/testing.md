@@ -28,9 +28,12 @@ and real file-backed SQLite device-preference tests (restart, independent busine
 replacement, corrupt/unsupported values and failed-write retry). These host tests do
 not render React Native or exercise installed expo-sqlite. Native/platform verification
 is a separate gate.
-Server tests make real HTTP requests or Fastify `inject()` calls. The real-PostgreSQL readiness test
-skips without `KOLO_TEST_DATABASE_URL`; `npm run smoke:server` runs it in a fresh
-private Docker network/database and cleans up only its own resources. Electron persistence tests call the
+Server tests make real HTTP requests or Fastify `inject()` calls. Without `KOLO_TEST_DATABASE_URL` every
+database test runs on PGlite (PostgreSQL compiled to WASM, dev-only) behind `@electric-sql/pglite-socket`, one
+in-process instance per fresh database, so `npm test` skips none of them. PGlite multiplexes one engine connection
+and is PostgreSQL 17, so `npm run test:server:pg` (PostgreSQL 18 in Docker, also in the pre-push hook) remains the
+authoritative run for concurrency and version behaviour. `npm run smoke:server` runs the readiness test inside the
+built image against a private Docker database and never loads PGlite. Electron persistence tests call the
 actual Node SQLite adapter on a temporary file and reopen it.
 
 **Integrity after every test.** `core/data/database/integrity` (`checkIntegrity`, also `kolo check`) separates

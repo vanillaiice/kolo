@@ -13,9 +13,9 @@ import { connectServer, pendingShopServer, synchronizeServer, SyncTransportError
 import { shopKeys } from "@kolo/core/application/sealed-sync";
 import { protectedCredentials } from "@kolo/core/identity/credentials";
 import { normalizeJoinCode, parseJoinLink } from "@kolo/contracts/sync";
-import { adminUrl, at, cleanup, connect, count, credentialCrypto, crypto, memoryVault, owner, paired, product, query, sale, started, sync } from "./sync.fixtures.js";
+import { at, cleanup, connect, count, credentialCrypto, crypto, memoryVault, owner, paired, product, query, sale, started, sync } from "./sync.fixtures.js";
 
-const skip = adminUrl === undefined, directories: string[] = [];
+const skip = false, directories: string[] = [];
 after(async () => { await cleanup(); for (const directory of directories) rmSync(directory, { recursive: true, force: true }); });
 function scratch(): string { const directory = mkdtempSync(join(tmpdir(), "kolo-join-")); directories.push(directory); return directory; }
 /** A brand-new, empty till with the real credential vault and real snapshot files. */

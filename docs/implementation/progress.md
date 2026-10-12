@@ -1492,3 +1492,15 @@ server, Windows ACL behaviour of the state directory.
 
 Verification: core 745 (3 new), desktop 60, CLI 9 tests; `test:server:pg` 28/28; Electron workflow smoke with the backup
 cross-check; `test:e2e` passed, and a deliberately wrong expectation made it fail and clean up its container.
+
+## 2026-10-12: Server tests on PGlite by default
+
+The 23 server tests that needed `KOLO_TEST_DATABASE_URL` skipped in every `npm test`/`npm run check`. Without that
+variable, `freshDatabase()` now starts an in-process PGlite (`@electric-sql/pglite` 0.5.8) behind
+`@electric-sql/pglite-socket` 0.2.11 (wire protocol, 16 multiplexed connections), one instance per fresh database in
+place of `CREATE DATABASE`; the server's `pg.Pool` and the tests' `pg.Client` helpers are unchanged. Both are exact,
+dev-only server dependencies (two packages, about 26 MB) and are imported lazily, so the production image and
+real-server runs never load them. `kysely-pglite` was rejected: unmaintained since 2024 and it ships a CLI toolchain.
+
+Verification: `npm test -w @kolo/server` 28 passed, 0 skipped (about 26 s); `npm run test:server:pg` 28/28 on
+PostgreSQL 18; `npm run smoke:server` passed in the built image. No test needed a PGlite-specific skip.

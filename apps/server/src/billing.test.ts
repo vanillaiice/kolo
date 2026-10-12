@@ -6,9 +6,9 @@ import { serverConnections } from "@kolo/core/application/server-sync";
 import { openDatabase } from "./database.js";
 import { CLI_ACTOR, recordShopPayment, purgeRemovedShops, setShopStatus } from "./admin/operations.js";
 import { entitlementOf } from "./billing.js";
-import { adminUrl, cleanup, connect, count, crypto, owner, paired, product, query, sale, started, sync } from "./sync.fixtures.js";
+import { cleanup, connect, count, crypto, owner, paired, product, query, sale, started, sync } from "./sync.fixtures.js";
 
-const skip = adminUrl === undefined;
+const skip = false;
 after(cleanup);
 const day = 86_400_000;
 const inactive = (error: unknown) => error instanceof SyncTransportError && error.code === "hosted_service_inactive" && error.status === 403;

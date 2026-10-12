@@ -14,9 +14,9 @@ import { CLEAR_EVENT_TYPES, enrollmentSigningMessage, sessionSigningMessage, syn
 import { migrateToLatest, openDatabase, SERVER_MIGRATIONS } from "./database.js";
 import { loadServerKey } from "./identity.js";
 import { CLI_ACTOR, cancelCode, purgeRemovedShops, setShopStatus } from "./admin/operations.js";
-import { adminUrl, cleanup, connect, count, crypto, freshDatabase, owner, paired, product, query, sale, started, sync, type Device, type Server } from "./sync.fixtures.js";
+import { cleanup, connect, count, crypto, freshDatabase, owner, paired, product, query, sale, started, sync, type Device, type Server } from "./sync.fixtures.js";
 
-const skip = adminUrl === undefined;
+const skip = false;
 after(cleanup);
 
 async function session(device: Device, target: Server): Promise<string> {
