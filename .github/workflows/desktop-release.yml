@@ -88,6 +88,30 @@ jobs:
           shopt -s nullglob
           gh release upload "$RELEASE_TAG" release/desktop/*.exe release/desktop/*.AppImage release/desktop/*.deb \
             release/desktop/*.blockmap release/desktop/latest*.yml release/desktop/SHA256SUMS-*.txt --clobber
+      # Microsoft Store package: unsigned on purpose, because the Store signs it. It reuses the
+      # unpacked app and stays out of the GitHub release; upload it in Partner Center.
+      - name: Build the Microsoft Store package
+        if: matrix.platform == 'windows'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          STORE_IDENTITY_NAME: ${{ vars.KOLO_STORE_IDENTITY_NAME }}
+          STORE_PUBLISHER: ${{ vars.KOLO_STORE_PUBLISHER }}
+        run: |
+          identity=()
+          if [ -n "$STORE_IDENTITY_NAME" ] && [ -n "$STORE_PUBLISHER" ]; then
+            identity=(-c.appx.identityName="$STORE_IDENTITY_NAME" -c.appx.publisher="$STORE_PUBLISHER")
+          else
+            echo "::warning::KOLO_STORE_IDENTITY_NAME/KOLO_STORE_PUBLISHER are unset; the package is for validation only"
+          fi
+          npx electron-builder --config apps/desktop/electron-builder.json --win appx --x64 --publish never \
+            --prepackaged release/desktop/win-unpacked "${identity[@]}"
+      - if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: kolo-desktop-msstore
+          if-no-files-found: error
+          path: release/desktop/*.appx
 
   publish:
     needs: desktop

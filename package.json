@@ -1,6 +1,6 @@
 {
   "name": "kolo",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "license": "GPL-3.0-only",
   "type": "module",
@@ -36,6 +36,7 @@
     "stage:desktop": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/stage-desktop.mjs",
     "pack:desktop": "npm run stage:desktop && electron-builder --config apps/desktop/electron-builder.json --dir --publish never",
     "dist:desktop:win": "npm run stage:desktop && electron-builder --config apps/desktop/electron-builder.json --win --x64 --publish never",
+    "dist:desktop:store": "npm run stage:desktop && electron-builder --config apps/desktop/electron-builder.json --win appx --x64 --publish never",
     "smoke:desktop:packaged": "node scripts/smoke-desktop-workflow.mjs --packaged",
     "benchmark:desktop": "npm run build:packages && npm run build -w @kolo/desktop && node scripts/benchmark-desktop.mjs",
     "benchmark:mobile:host": "npm run build:packages && node scripts/mobile-fixture.mjs",

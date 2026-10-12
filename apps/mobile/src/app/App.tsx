@@ -5,6 +5,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import * as SplashScreen from "expo-splash-screen";
 import { currentInstallation, recoverWorkspaceSetup, lockWorkspace, unlockedActor, rememberMember, resumeWorkspace, type RememberedMember } from "@kolo/core/identity/workspace";
 import { sealPendingEvents } from "@kolo/core/application/exchange";
+import { LocalSyncScheduler } from "@kolo/core/application/local-sync";
 import { ServerSyncScheduler } from "@kolo/core/application/sync-scheduler";
 import { resumeOwnerRecovery } from "@kolo/core/identity/recovery";
 import { resumeMemberProvisioning } from "@kolo/core/identity/members";
@@ -164,6 +165,18 @@ function AppContent(): React.JSX.Element {
     const retry = setInterval(schedule, SEAL_RETRY_MS);
     schedule();
     return () => { disposed = true; unsubscribe(); clearInterval(retry); if (timer !== undefined) clearTimeout(timer); };
+  }, [unlocked, boot.state]);
+
+  // Direct local-network peers use the same foreground lifecycle and durable signed event journal.
+  useEffect(() => {
+    if (unlocked === undefined || boot.state !== "ready") return;
+    const scheduler = new LocalSyncScheduler(sealingCryptoOnDevice);
+    let disposed = false;
+    const tick = (): void => { if (!disposed && AppState.currentState === "active") void scheduler.tick(unlocked.context).catch(() => undefined); };
+    const unsubscribe = subscribeChanges(activeDatabase.current!, ALL_DOMAINS, () => scheduler.soon());
+    const state = AppState.addEventListener("change", value => { if (value === "active") { scheduler.soon(); tick(); } });
+    const timer = setInterval(tick, SYNC_TICK_MS); tick();
+    return () => { disposed = true; unsubscribe(); state.remove(); clearInterval(timer); };
   }, [unlocked, boot.state]);
 
   // Optional server sync while signed in and in the foreground: every minute, soon after a local change and on return to

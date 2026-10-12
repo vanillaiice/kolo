@@ -17,10 +17,10 @@ import * as queries from "./queries.ts";
 const at = "2026-10-06T09:00:00.000Z", secret = "fixture-secret";
 const databases: Database[] = [], paths: string[] = [];
 afterEach(() => { closeConsistent(databases.splice(0)); for (const path of paths.splice(0)) rmSync(path, { recursive: true, force: true }); });
-async function fixture(location?: string) {
+async function fixture(location?: string, now = () => at) {
   const db = openDatabase(location === undefined ? {} : { location }); databases.push(db); migrate(db);
   const material = { publicKey: generateKeyPairSync("ed25519", { publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } }).publicKey, keyReference: randomUUIDv7(), credentialReference: randomUUIDv7() };
-  const ports: WorkspacePorts = { database: db, now: () => at, newId: randomUUIDv7, credentials: { provision: async () => material, inspect: async () => material, verify: async (_ref, candidate) => candidate === secret } };
+  const ports: WorkspacePorts = { database: db, now, newId: randomUUIDv7, credentials: { provision: async () => material, inspect: async () => material, verify: async (_ref, candidate) => candidate === secret } };
   const installation = await createWorkspace({ businessName: "Fixture", ownerName: "Owner", deviceLabel: "Till", platform: "ANDROID", currency: "XAF", secret }, ports);
   const context = await unlockWorkspace({ userId: installation.ownerId, secret }, ports);
   const account = queries.paymentAccounts(context).items[0]!;
@@ -62,6 +62,28 @@ it("offline shop day persists split-credit sale, collection, payable payment, co
   assert.equal(queries.productStock(next, p).onHandThousandths, 2000); assert.equal(queries.receipt(next, saleId).totalMinor, 2000);
   assert.equal(queries.statement(next, "customer", customer).items.length, 2);
   assert.equal(queries.purchases(next).items[0]?.totalMinor, 900); assert.equal(queries.expenses(next).items.length, 2);
+});
+
+it("customer credit is consumed across purchases and receipts keep the historical account balance", async () => {
+  const f = await fixture(undefined,()=>"2026-10-06T09:05:00.000Z"), customer = randomUUIDv7(), p = f.product();
+  commands.saveCustomer(f.context, { id:customer,name:"Awa",active:true,creditLimitMinor:100,createdAt:at,updatedAt:at });
+  commands.receiveCustomerPayment(f.context, { id:randomUUIDv7(),customerId:customer,accountId:f.account.id,amountMinor:600,eventId:randomUUIDv7(),occurredAt:"2026-10-06T09:01:00.000Z" });
+  const sell = (time:string) => {
+    const id = randomUUIDv7();
+    commands.completeSale(f.context,{id,number:`V-${id}`,customerId:customer,creditTransactionId:randomUUIDv7(),eventId:randomUUIDv7(),occurredAt:time,
+      lines:[{id:randomUUIDv7(),movementId:randomUUIDv7(),productId:p,name:"Rice",quantity:1000,unitPriceMinor:350}],payments:[]});
+    return id;
+  };
+  const first = sell("2026-10-06T09:02:00.000Z"), second = sell("2026-10-06T09:03:00.000Z");
+  const firstAccount = {balanceBeforeMinor:-600,balanceAfterMinor:-250,creditAppliedMinor:350,debtAddedMinor:0};
+  assert.deepEqual(queries.receipt(f.context,first).customerAccount, firstAccount);
+  assert.deepEqual(queries.receipt(f.context,second).customerAccount, {balanceBeforeMinor:-250,balanceAfterMinor:100,creditAppliedMinor:250,debtAddedMinor:100});
+  commands.receiveCustomerPayment(f.context, { id:randomUUIDv7(),customerId:customer,accountId:f.account.id,amountMinor:100,eventId:randomUUIDv7(),occurredAt:"2026-10-06T09:04:00.000Z" });
+  assert.deepEqual(queries.receipt(f.context,first).customerAccount, firstAccount, "later payments do not rewrite the earlier balance");
+  const page = queries.statement(f.context,"customer",customer,{limit:2}), rest = queries.statement(f.context,"customer",customer,{after:page.next!});
+  assert.deepEqual([...page.items,...rest.items].map(row=>row["balance_minor"]),[0,100,-250,-600]);
+  assert.deepEqual(page.items[1]!["sale_total_minor"],350); assert.equal(page.items[1]!["sale_paid_minor"],0);
+  assert.deepEqual(queries.receipts(f.context).items.map(row=>[row.totalMinor,row.paidMinor,row.outstandingMinor]),[[350,0,350],[350,0,350]]);
 });
 
 it("bounded keyset catalogue handles duplicate names, archived rows, literal wildcards and no cross-shop records", async () => {
@@ -146,7 +168,7 @@ it("schema 18 upgrades forward preserving catalogue metadata, events and append-
   for (const migration of MIGRATIONS.filter(item => item.version <= 18)) db.transaction(tx => { for (const sql of migration.statements) tx.run(sql); tx.run(`INSERT INTO schema_migrations VALUES (?,?,?)`, [migration.version, migration.name, at]); });
   const shop = randomUUIDv7(), category = randomUUIDv7(); db.run(`INSERT INTO businesses(id,name,currency,created_at,updated_at) VALUES (?,'Legacy','XAF',?,?)`, [shop, at, at]);
   db.run(`INSERT INTO categories(id,business_id,name,created_at,updated_at) VALUES (?,?,'Legacy category',?,?)`, [category, shop, at, at]);
-  assert.deepEqual(migrate(db).applied.map(item => item.version), [19, 20, 21, 22, 23, 24, 25, 26, 27, 28]); assert.equal(db.get(`SELECT name FROM categories`)!["name"], "Legacy category");
+  assert.deepEqual(migrate(db).applied.map(item => item.version), MIGRATIONS.filter(m => m.version > 18).map(m => m.version)); assert.equal(db.get(`SELECT name FROM categories`)!["name"], "Legacy category");
   assert.equal(db.get(`SELECT updated_by_device FROM categories`)!["updated_by_device"], null);
 });
 

@@ -1,0 +1,6 @@
+# Only generated public assets and container configuration enter the image.
+*
+!Dockerfile
+!Caddyfile
+!dist/
+!dist/**

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# Use an installed Kamal, or an explicitly configured executable.
+kamal_bin="${KAMAL_BIN:-kamal}"
+[ $# -gt 0 ] || set -- deploy
+case "$1" in
+  setup|deploy|redeploy)
+    node build.mjs
+    node check.mjs
+    node --test releases.test.mjs
+    ;;
+esac
+exec "$kamal_bin" "$@"

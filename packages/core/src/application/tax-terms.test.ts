@@ -206,7 +206,7 @@ it("migration 28 upgrades a populated schema 27 shop, and snapshots drop this de
   db.run(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL) STRICT`);
   for (const migration of MIGRATIONS.filter(item => item.version <= 27)) db.transaction(tx => { for (const statement of migration.statements) tx.run(statement); tx.run(`INSERT INTO schema_migrations VALUES (?,?,?)`, [migration.version, migration.name, at]); });
   db.run(`INSERT INTO businesses(id,name,currency,created_at,updated_at) VALUES ('b','Shop','XAF',?,?)`, [at, at]);
-  assert.deepEqual(migrate(db).applied.map(item => item.version), [28]);
+  assert.deepEqual(migrate(db).applied.map(item => item.version), MIGRATIONS.filter(m => m.version > 27).map(m => m.version));
   assert.equal(db.get(`SELECT name FROM businesses`)!["name"], "Shop");
   for (const table of ["shop_tax_settings", "product_tax_rules", "payment_terms", "notification_state"]) assert.equal(db.get(`SELECT count(*) AS n FROM ${table}`)!["n"], 0);
   assert.throws(() => db.run(`INSERT INTO payment_terms(id,business_id,party,party_id,days,updated_at,updated_by_device) VALUES ('wrong','b','CUSTOMER',NULL,5,?,'d')`, [at]), "a default is keyed by business and party");

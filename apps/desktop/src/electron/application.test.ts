@@ -29,10 +29,10 @@ function native(): NativeSafeStorage {
     encryptStringAsync:async message=>{const iv=randomBytes(12),cipher=createCipheriv("aes-256-gcm",key,iv);return Buffer.concat([iv,cipher.update(message,"utf8"),cipher.final(),cipher.getAuthTag()]);},
     decryptStringAsync:async bytes=>{const decipher=createDecipheriv("aes-256-gcm",key,bytes.subarray(0,12));decipher.setAuthTag(bytes.subarray(-16));return {result:Buffer.concat([decipher.update(bytes.subarray(12,-16)),decipher.final()]).toString("utf8"),shouldReEncrypt:false};} };
 }
-function fixture() {
+function fixture(now=()=>"2026-10-06T12:00:00.000Z") {
   const directory=mkdtempSync(join(tmpdir(),"kolo-desktop-application-")),database=openDesktopDatabase(join(directory,"shop.db")),os=native();
   const credentials=localCredentialsOnDesktop(join(directory,"vault"),os);
-  const ports:WorkspacePorts={database,credentials,newId:randomUUIDv7,now:()=>"2026-10-06T12:00:00.000Z"};
+  const ports:WorkspacePorts={database,credentials,newId:randomUUIDv7,now};
   const application=new DesktopApplication(ports,desktopExchangeCrypto);
   return {directory,database,ports,os,application,async dispose(){await application.dispose();closeConsistent([database]);rmSync(directory,{recursive:true,force:true});}};
 }
@@ -74,6 +74,32 @@ it("real desktop setup, cash checkout/retry, signature and restart preserve stoc
     assert.equal(next.get("SELECT count(*) AS n FROM sales")!["n"],1);
   }finally{await reopened?.dispose();next?.close();await f.application.dispose();try{f.database.close();}catch{/* Fixture was already closed to verify restart. */}rmSync(f.directory,{recursive:true,force:true});}
 });
+it("prepaid customer credit, debt crossings and stale checkout balances stay consistent with receipts and cash",async()=>{
+  let tick=0;const f=fixture(()=>new Date(Date.parse("2026-10-06T12:00:00.000Z")+tick++*1000).toISOString());
+  try{
+    const sessionId=(await owner(f)).sessionId!,item=value(await f.application.createProduct(product(sessionId)));
+    const cash=value(await f.application.listCashAccounts({sessionId})).items[0]!.id;
+    const customer=value(await f.application.createCustomer({sessionId,requestId:randomUUID(),name:"Awa"}));
+    value(await f.application.receiveCustomerPayment({sessionId,requestId:randomUUID(),customerId:customer.id,accountId:cash,amountMinor:600}));
+    const request={sessionId,requestId:randomUUID(),customerId:customer.id,expectedCustomerBalanceMinor:-600,
+      lines:[{productId:item.id,quantity:1000,unitPriceMinor:500}],payments:[]};
+    const first=value(await f.application.checkout(request));
+    const impact={balanceBeforeMinor:-600,balanceAfterMinor:-100,creditAppliedMinor:500,debtAddedMinor:0};
+    assert.deepEqual(value(await f.application.getReceipt({sessionId,saleId:first.saleId})).customerAccount,impact);
+    assert.equal(value(await f.application.checkout(request)).saleId,first.saleId,"a matching retry uses its saved result despite the changed balance");
+    failure(await f.application.checkout({...request,requestId:randomUUID()}),"request_conflict");
+    assert.equal(f.database.get("SELECT count(*) AS n FROM sales")!["n"],1,"stale balance writes nothing");
+    const second=value(await f.application.checkout({...request,requestId:randomUUID(),expectedCustomerBalanceMinor:-100}));
+    assert.deepEqual(value(await f.application.getReceipt({sessionId,saleId:second.saleId})).customerAccount,{balanceBeforeMinor:-100,balanceAfterMinor:400,creditAppliedMinor:100,debtAddedMinor:400});
+    const ledger=value(await f.application.customerStatement({sessionId,customerId:customer.id})).items;
+    assert.deepEqual(ledger.map(row=>[row.amountMinor,row.balanceMinor]),[[500,400],[500,-100],[-600,-600]]);
+    assert.deepEqual([ledger[0]!.saleTotalMinor,ledger[0]!.salePaidMinor],[500,0]);
+    assert.deepEqual(value(await f.application.getReceipt({sessionId,saleId:first.saleId})).customerAccount,impact);
+    assert.equal(balanceOfAccount(f.database,String(f.database.get("SELECT id FROM businesses")!["id"]),cash).onHandMinor,600,"using prepaid credit never invents a cash payment");
+    for(const balance of [0.5,NaN,Number.MAX_SAFE_INTEGER+1])failure(await f.application.checkout({...request,requestId:randomUUID(),expectedCustomerBalanceMinor:balance}),"invalid_input");
+  }finally{await f.dispose();}
+});
+
 it("strict runtime validation rejects malformed/oversized/claimed-authority requests without effects",async()=>{
   const f=fixture();try{
     failure(await f.application.createShop({businessName:"Shop",ownerName:"Owner",deviceLabel:"PC",cashAccountName:"Cash",secret:"654321",businessId:randomUUID()}),"invalid_input");

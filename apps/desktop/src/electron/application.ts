@@ -35,6 +35,10 @@ import { createHash } from "node:crypto";
 import { photoUsage, productPhoto, productPhotoDigest, removeProductPhoto, setProductPhoto } from "@kolo/core/application/photos";
 import { PhotoError, PHOTO_LIMITS } from "@kolo/core/data/products/photos";
 import { memoryPreferences, type DevicePreferences } from "./preferences.ts";
+import { LocalNetwork } from "./local-network.ts";
+import { LocalSyncScheduler,localPeerConnections,synchronizeLocalPeer } from "@kolo/core/application/local-sync";
+import * as localJoin from "@kolo/core/application/local-join";
+import { parseLocalJoinLink } from "@kolo/contracts/local-sync";
 
 const customerFields = ["name", "phone", "address", "notes", "creditLimitMinor"] as const;
 function customerDetails(data: Record<string, unknown>): CustomerDetails {
@@ -80,6 +84,8 @@ export class DesktopApplication implements ShopService {
   readonly #sealingCrypto: SealingCrypto | undefined;
   /** Joins this window opened; their network sessions end with the signed-in session. */
   readonly #joins = new Map<string, join.OpenJoin>();
+  readonly #local:LocalNetwork|undefined;
+  readonly #localSync:LocalSyncScheduler|undefined;
   #remember = false;
   constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void>; readonly onReset?: () => void }, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences(), syncTransport: (url: string) => SyncTransport = sync.httpTransport) {
     this.#transfer = files; this.#memory = memory; this.#preferences = preferences;
@@ -87,8 +93,10 @@ export class DesktopApplication implements ShopService {
     this.#sealingCrypto = crypto !== undefined && "hkdf" in crypto && "ephemeralAgreement" in crypto ? crypto as SealingCrypto : undefined;
     this.#syncTransport = syncTransport; this.#autoSync = this.#sealingCrypto === undefined ? undefined : new sync.AutoSync(this.#sealingCrypto, syncTransport);
     this.ports = ports; this.crypto = crypto; this.#host = { ports, actor: (data, required) => this.#actor(data, required) };
+    this.#local=this.#sealingCrypto===undefined||files===undefined?undefined:new LocalNetwork(ports,this.#sealingCrypto,files.files,()=>this.#context,()=>this.#notify());
+    this.#localSync=this.#sealingCrypto===undefined?undefined:new LocalSyncScheduler(this.#sealingCrypto);
     lockWorkspace(ports.database);
-    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority", "settings"], () => { this.#autoSync?.soon(); this.#notify(); });
+    this.#unsubscribe = subscribeChanges(ports.database, ["products", "inventory", "sales", "customers", "suppliers", "purchases", "accounts", "expenses", "authority", "settings"], () => { this.#autoSync?.soon(); this.#localSync?.soon(); this.#notify(); });
   }
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   async initialize(): Promise<void> {
@@ -108,6 +116,7 @@ export class DesktopApplication implements ShopService {
     this.#closed = true; this.#invalidate(); this.#unsubscribe(); this.#listeners.clear();
     await transfer.release(this.#staged); this.#staged = undefined;
     await Promise.allSettled([...this.#pending]);
+    await this.#local?.close();
   }
   /** Retries signing asynchronously; financial success never depends on signing or delivery. */
   async seal(): Promise<void> {
@@ -118,6 +127,7 @@ export class DesktopApplication implements ShopService {
     finally { this.#sealing = false; }
     // Connected servers sync in the background on their own schedule; trading never waits for it.
     if (!this.#closed) await this.#track(this.#autoSync?.tick(this.#context) ?? Promise.resolve()).catch(() => undefined);
+    if(!this.#closed&&this.#context!==undefined){await this.#track(this.#local?.start(false)??Promise.resolve()).catch(()=>undefined);await this.#track(this.#localSync?.tick(this.#context)??Promise.resolve()).catch(()=>undefined);}
   }
   /** Invalidation-only subscription; observer errors cannot change command success. */
   onChanged(listener: () => void): () => void { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
@@ -511,8 +521,10 @@ export class DesktopApplication implements ShopService {
    */
   checkout(input: unknown): ReturnType<ShopService["checkout"]> {
     return this.#run(() => {
-      const data = object(input, ["sessionId", "requestId", "accountId", "payments", "customerId", "discountMinor", "lines"]), context = this.#actor(data, ["sales.create", "products.view"]);
+      const data = object(input, ["sessionId", "requestId", "accountId", "payments", "customerId", "expectedCustomerBalanceMinor", "discountMinor", "lines"]), context = this.#actor(data, ["sales.create", "products.view"]);
       const id = uuid(data["requestId"]), customerId = optional(data["customerId"], uuid), discountMinor = whole(data["discountMinor"] ?? 0);
+      const expectedBalance = data["expectedCustomerBalanceMinor"];
+      if (expectedBalance !== undefined && (customerId === undefined || typeof expectedBalance !== "number" || !Number.isSafeInteger(expectedBalance))) throw new WorkspaceError("invalid_input");
       if (!Array.isArray(data["lines"]) || data["lines"].length < 1 || data["lines"].length > 200) throw new WorkspaceError("invalid_input");
       const lines = data["lines"].map(value => { const item = object(value, ["productId", "quantity", "unitPriceMinor"]);
         return { productId: uuid(item["productId"]), quantity: whole(item["quantity"], 1), unitPriceMinor: whole(item["unitPriceMinor"]) }; });
@@ -542,6 +554,10 @@ export class DesktopApplication implements ShopService {
           return { saleId: id };
         }
         if (legacy) { const account = accountOf(tx, context.businessId, uuid(data["accountId"])); if (account?.active !== true || account.kind !== "CASH") throw new WorkspaceError("scope_mismatch"); }
+        if (expectedBalance !== undefined) {
+          if (!capabilities(context).includes("customers.view")) throw new WorkspaceError("permission_denied");
+          if (balanceOf(tx, context.businessId, customerId!).outstandingMinor !== expectedBalance) throw new CommandError("request_conflict");
+        }
         if (settled.outstandingMinor > 0) {
           const permissions = capabilities(context), customer = customerOf(tx, context.businessId, customerId!);
           if (!permissions.includes("customers.credit")) throw new WorkspaceError("permission_denied");
@@ -630,6 +646,7 @@ export class DesktopApplication implements ShopService {
       const data = object(input, ["sessionId", "customerId", "after", "limit"]), context = this.#actor(data);
       const result = statement(context, "customer", uuid(data["customerId"]), page(data));
       return { ...result, items: result.items.map(row => ({ id: String(row["id"]), occurredAt: String(row["occurred_at"]), type: String(row["type"]), amountMinor: Number(row["amount_minor"]), balanceMinor: Number(row["balance_minor"]),
+        ...(typeof row["sale_total_minor"] === "number" ? { saleTotalMinor: row["sale_total_minor"], salePaidMinor: Number(row["sale_paid_minor"]) } : {}),
         ...(row["reference_kind"] === "SALE" && typeof row["reference_id"] === "string" ? { saleId: row["reference_id"] } : {}),
         ...(typeof row["reason"] === "string" && row["reason"] !== "" ? { note: row["reason"] } : {}) })) };
     });
@@ -700,12 +717,32 @@ export class DesktopApplication implements ShopService {
   saveImportReceipt(input?: unknown): ReturnType<ShopService["saveImportReceipt"]> { return this.#file(host => transfer.saveImportReceipt(host, input)); }
   openImportReceipt(input?: unknown): ReturnType<ShopService["openImportReceipt"]> { return this.#file(host => transfer.openImportReceipt(host, input)); }
   retryExchange(input?: unknown): ReturnType<ShopService["retryExchange"]> { return this.#file(host => transfer.retryExchange(host, input)); }
+  /** Reads/resumes this installation’s enabled LAN listener and paired local delivery status. */
+  localNetworkState(input:unknown):ReturnType<ShopService["localNetworkState"]>{return this.#run(async()=>{const data=object(input,["sessionId"]),context=this.#actor(data,["business.settings"]);await this.#local?.start(false);return {running:this.#local?.running()??false,urls:this.#local?.urls()??[],connections:localPeerConnections(context)};});}
+  /** Stops inbound LAN access; local records and peer trust remain. */
+  stopLocalNetwork(input:unknown):ReturnType<ShopService["stopLocalNetwork"]>{return this.#run(async()=>{this.#actor(object(input,["sessionId"]),["business.settings","users.manage"]);await this.#local?.close(true);this.#notify();return null;});}
+  /** Shows a ten-minute QR for a new device on the same Wi-Fi or hotspot. */
+  startLocalJoin(input:unknown):ReturnType<ShopService["startLocalJoin"]>{return this.#run(()=>sync.syncTranslated(async()=>{const data=object(input,["sessionId","authorityAllowed","url"]);this.#actor(data,["business.settings","users.manage"]);if(this.#local===undefined)throw new CommandError("unavailable");return this.#local.invite(boolean(data["authorityAllowed"]),optional(data["url"],value=>text(value,2048)));}));}
+  /** Reads the candidate name for the owner’s still-live local invitation. */
+  pollLocalJoin(input:unknown):ReturnType<ShopService["pollLocalJoin"]>{return this.#run(()=>{const data=object(input,["sessionId","joinId"]);this.#actor(data,["business.settings","users.manage"]);if(this.#local===undefined)throw new CommandError("unavailable");return this.#local.status(text(data["joinId"],64));});}
+  /** Approves the local candidate and makes its encrypted snapshot available. */
+  approveLocalJoin(input:unknown):ReturnType<ShopService["approveLocalJoin"]>{return this.#run(()=>transfer.translated(async()=>{const data=object(input,["sessionId","joinId"]);this.#actor(data,["business.settings","users.manage"]);if(this.#local===undefined)throw new CommandError("unavailable");await this.#local.approve(text(data["joinId"],64));return null;}));}
+  /** Revokes the selected local invitation. */
+  cancelLocalJoin(input:unknown):ReturnType<ShopService["cancelLocalJoin"]>{return this.#run(()=>{const data=object(input,["sessionId","joinId"]);this.#actor(data,["business.settings","users.manage"]);this.#local?.cancel(text(data["joinId"],64));return null;});}
+  /** Immediately exchanges queued signed changes with this installation’s configured local hosts. */
+  syncLocalNetwork(input:unknown):ReturnType<ShopService["syncLocalNetwork"]>{return this.#run(()=>sync.syncTranslated(async()=>{const context=this.#actor(object(input,["sessionId"]),["business.settings"]);if(this.#sealingCrypto===undefined)throw new CommandError("unavailable");let sent=0,received=0;for(const peer of localPeerConnections(context)){if(peer.url===null)continue;const outcome=await synchronizeLocalPeer(context,peer.deviceId,this.#sealingCrypto);sent+=outcome.sent;received+=outcome.received;}this.#notify();return {sent,received};}));}
+  /** Empty computer: verifies a copied LAN pairing link before displaying the shop. */
+  lookupLocalJoin(input:unknown):ReturnType<ShopService["lookupLocalJoin"]>{return this.#file(()=>sync.syncTranslated(async()=>{const data=object(input,["link"]),link=text(data["link"],4096),parsed=parseLocalJoinLink(link);if(parsed===undefined)throw new CommandError("invalid_code");if(this.#sealingCrypto===undefined)throw new CommandError("unavailable");if(currentInstallation(this.ports.database).state!=="empty")throw new CommandError("not_empty");return localJoin.lookupLocalJoin(link,localJoin.localJoinTransport(parsed.url),this.#sealingCrypto);}));}
+  /** Empty computer: provisions a native identity and requests owner approval through the LAN mailbox. */
+  requestLocalJoin(input:unknown):ReturnType<ShopService["requestLocalJoin"]>{return this.#file(()=>sync.syncTranslated(async()=>{const data=object(input,["link","deviceLabel","secret"]),link=text(data["link"],4096),parsed=parseLocalJoinLink(link);if(parsed===undefined)throw new CommandError("invalid_code");if(this.#sealingCrypto===undefined)throw new CommandError("unavailable");const transport=localJoin.localJoinTransport(parsed.url),invitation=await localJoin.lookupLocalJoin(link,transport,this.#sealingCrypto);await localJoin.requestLocalJoin(link,invitation,{label:text(data["deviceLabel"],120),secret:text(data["secret"],256,false),platform:"DESKTOP"},this.ports,transport,this.#sealingCrypto);return null;}));}
+  /** Empty computer: activates the exact owner-approved local snapshot when ready. */
+  finishLocalJoin(input:unknown):ReturnType<ShopService["finishLocalJoin"]>{return this.#file(host=>sync.syncTranslated(async()=>{const data=object(input,["link"]),link=text(data["link"],4096),parsed=parseLocalJoinLink(link);if(parsed===undefined)throw new CommandError("invalid_code");if(this.#sealingCrypto===undefined)throw new CommandError("unavailable");const result=await localJoin.finishLocalJoin(link,this.ports,host.transfer.files,localJoin.localJoinTransport(parsed.url),this.#sealingCrypto);if(result===undefined)return null;await host.activate(result.database);return {activated:true};}));}
   /** Optional sync server; see server-sync.ts. Network work runs in the main process only. */
   serverState(input: unknown): ReturnType<ShopService["serverState"]> { return this.#sync(host => sync.serverState(host, input)); }
   checkServer(input: unknown): ReturnType<ShopService["checkServer"]> { return this.#sync(host => sync.checkServer(host, input)); }
-  connectServer(input: unknown): ReturnType<ShopService["connectServer"]> { return this.#sync(host => sync.connectServer(host, input)); }
+  connectServer(input: unknown): ReturnType<ShopService["connectServer"]> { return this.#sync(async host => { const result = await sync.connectServer(host, input); this.#notify(); return result; }); }
   syncServer(input: unknown): ReturnType<ShopService["syncServer"]> { return this.#sync(host => sync.syncServer(host, input)); }
-  disconnectServer(input: unknown): ReturnType<ShopService["disconnectServer"]> { return this.#sync(host => sync.disconnectServer(host, input)); }
+  disconnectServer(input: unknown): ReturnType<ShopService["disconnectServer"]> { return this.#sync(async host => { const result = await sync.disconnectServer(host, input); this.#notify(); return result; }); }
   startJoinCode(input: unknown): ReturnType<ShopService["startJoinCode"]> { return this.#join(host => join.startJoinCode(host, input)); }
   pollJoinCode(input: unknown): ReturnType<ShopService["pollJoinCode"]> { return this.#join(host => join.pollJoinCode(host, input)); }
   approveJoinCode(input: unknown): ReturnType<ShopService["approveJoinCode"]> { return this.#join(host => join.approveJoinCode(host, input)); }
@@ -791,6 +828,7 @@ export class DesktopApplication implements ShopService {
   #invalidate(advance = true): void {
     if (advance) this.#epoch++;
     lockWorkspace(this.ports.database); this.#context = undefined; this.#sessionId = undefined; this.#joins.clear();
+    if(this.#local!==undefined)void this.#track(this.#local.close()).catch(()=>undefined);
     // A checked file is tied to the session that checked it; locking forgets it.
     if (this.#staged !== undefined && this.#staged.kind !== "invite" && this.#staged.kind !== "backup") { this.#staged = undefined; }
   }

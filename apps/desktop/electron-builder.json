@@ -40,6 +40,19 @@
   "portable": {
     "artifactName": "KOLO-${version}-win-${arch}-portable.${ext}"
   },
+  "appx": {
+    "identityName": "hblabs.KOLO",
+    "applicationId": "KOLO",
+    "displayName": "KOLO",
+    "publisherDisplayName": "hblabs",
+    "backgroundColor": "#0C3426",
+    "languages": [
+      "fr-FR",
+      "en-US"
+    ],
+    "showNameOnTiles": false,
+    "artifactName": "KOLO-${version}-win-${arch}-store.${ext}"
+  },
   "linux": {
     "target": [
       "AppImage",

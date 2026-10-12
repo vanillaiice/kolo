@@ -19,8 +19,15 @@ export function smokeDialogs(): TransferDialogs {
 }
 /** Disposable actual Electron DOM/IPC/native-vault workflow; invoked only by the explicit smoke flag. */
 export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void> {
-  const evaluate = <T>(source: string): Promise<T> => window.webContents.executeJavaScript(source) as Promise<T>;
+  process.stdout.write(`Desktop workflow phase: ${phase}\n`);
+  window.show();window.focus();window.webContents.focus();
+  const evaluate = async <T,>(source: string): Promise<T> => {
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    try{return await Promise.race([window.webContents.executeJavaScript(source) as Promise<T>,new Promise<T>((_resolve,reject)=>{timer=setTimeout(()=>reject(new Error(`Desktop DOM evaluation timed out: ${source.slice(0,80)}`)),15_000);})]);}
+    finally{if(timer!==undefined)clearTimeout(timer);}
+  };
   const audit = async (screen: string): Promise<void> => {
+    process.stdout.write(`Desktop workflow audit: ${screen}\n`);
     const path = process.env["KOLO_DESKTOP_AXE_PATH"];
     if (path === undefined) throw new Error("Accessibility audit requires the runner's axe-core path");
     await evaluate(await readFile(path, "utf8"));
@@ -29,7 +36,7 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
       for (const theme of ["light", "dark"] as const) {
         nativeTheme.themeSource = theme;
         await wait(`window.matchMedia('(prefers-color-scheme: dark)').matches===${theme === "dark"}`);
-        await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        await evaluate("new Promise(resolve=>{const timer=setTimeout(resolve,100);requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));})");
         assert.equal(await evaluate("getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim()"), theme === "dark" ? "#1f2b25" : "#f4f7f3", "theme follows native appearance changes");
         const violations = await evaluate(`axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']}}).then(result=>result.violations.map(item=>({id:item.id,nodes:item.nodes.map(node=>({target:node.target,summary:node.failureSummary}))})))`);
         assert.deepEqual(violations, [], `Accessibility audit: ${screen} (${theme}): ${JSON.stringify(violations)}`);
@@ -41,7 +48,7 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
   const snapshot = async (name: string): Promise<void> => {
     const directory = process.env["KOLO_DESKTOP_SCREENSHOT_DIR"];
     if (directory === undefined) return;
-    await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    await evaluate("new Promise(resolve=>{const timer=setTimeout(resolve,100);requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));})");
     await mkdir(directory, {recursive:true});
     await writeFile(join(directory, `${name}.png`), (await window.webContents.capturePage()).toPNG());
   };
@@ -87,7 +94,7 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await clickVisible(".legal-dialog .tabs button", "Logiciels open source"); await wait("document.querySelector('.legal-body tbody')?.textContent.includes('Electron')", "licenses tab");
     await clickVisible(".legal-dialog .legal-header .secondary"); await wait("document.querySelector('dialog.legal-dialog')===null", "legal closed");
     // The welcome screen offers exactly two starts: create a shop, or import a file.
-    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('.entry-choice')).map(element=>element.dataset.authAction)"), ["create", "import"]);
+    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('.entry-choice')).map(element=>element.dataset.authAction)"), ["create", "join", "import"]);
     await click("[data-auth-action=import]"); await wait("document.querySelector('#choose-import-file')!==null");
     await audit("French import entry"); await snapshot("import-fr");
     await click(".entry-back"); await wait("document.querySelector('[data-auth-action=create]')!==null");
@@ -182,7 +189,7 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await navigate("Till"); await wait("document.querySelector('.product-tile')?.textContent.includes('Rice 25kg')", "edited product in till"); await wait("document.querySelector('.product-tile img.has-photo')!==null", "photo on till tile"); await snapshot("till-photo");
     await click(".product-tile"); await fill("#customer-search", "Aw"); await wait("document.querySelector('.customer-results button')!==null", "customer search");
     await click(".customer-results button"); await wait("document.querySelector('.customer-choice')?.textContent.includes('Awa')", "customer chosen");
-    await fill(".payment-row input", "200"); await wait("Array.from(document.querySelectorAll('.settlement-line')).some(element=>element.textContent.includes('300'))", "credit remainder");
+    await click("#sale-on-debt"); await fill("#debt-received", "200"); await wait("Array.from(document.querySelectorAll('.settlement-line')).some(element=>element.textContent.includes('300'))", "credit remainder");
     await fill("#cash-received", "500"); await wait("document.querySelector('.change-line')?.textContent.includes('300')", "change due"); await snapshot("till-credit");
     await click(".checkout"); await wait("document.querySelector('.receipt-paper')?.textContent.includes('Awa') && document.querySelector('.receipt-owing')?.textContent.includes('300')", "credit receipt"); await snapshot("receipt-credit");
     await navigate("Customers"); await wait("(()=>{const v=s=>Array.from(document.querySelectorAll(s)).filter(e=>e.offsetParent!==null);return v('.facts')[0]?.textContent.includes('300');})()", "customer balance");
@@ -227,7 +234,7 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
         await clickVisible("input[name=appearance]", undefined, choice);
         await wait(`${canvas}===${JSON.stringify(expected)}`, `explicit ${choice} appearance`);
         assert.equal(await evaluate("localStorage.getItem('kolo.appearance')"), choice.toLowerCase());
-        await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        await evaluate("new Promise(resolve=>{const timer=setTimeout(resolve,100);requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));})");
         await snapshot(`settings-${choice.toLowerCase()}-over-${system}`);
       }
       await clickVisible("input[name=appearance]", undefined, "System");
@@ -281,6 +288,14 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     // application, the restored shop opens locked, and the restart phase must find it.
     await navigate("Backup & devices");
     await audit("Backup and devices");
+    // The standalone desktop now offers a real local QR even with no connected server.
+    process.stdout.write("Desktop workflow: showing local QR\n");
+    await click("#show-local-join"); await wait("document.querySelector('.join-qr')?.complete && document.querySelector('.join-qr')?.naturalWidth>0 && document.querySelector('.join-big-code')!==null", "standalone local QR displayed");
+    assert.ok(await evaluate("document.querySelector('.join-code .share-code')?.textContent.startsWith('kolo://local?')"));
+    assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>window.kolo.serverState({sessionId:result.value.sessionId})).then(result=>result.value.servers.length)"),0);
+    await audit("Local QR pairing without a server"); await snapshot("pairing-local-qr");
+    process.stdout.write("Desktop workflow: local QR and accessibility passed\n");
+    await click(".join-code .text-button"); await wait("document.querySelector('.join-qr')===null", "local invite cancelled");
     for (const [selector, value] of [["#backup-password", "correct horse battery"], ["#backup-confirm", "correct horse battery"]]) await fill(selector!, value!);
     await submit("#backup-password"); await wait(`${visible(".notice.success")}.some(element=>element.textContent==='File saved.')`, "backup saved");
     await fill("#restore-password", "correct horse battery"); await submit("#restore-password"); await wait(`${visible(".file-summary")}[0]?.textContent.includes('Desktop validation')`, "backup checked"); await snapshot("restore-form");
@@ -424,6 +439,36 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await wait("document.querySelector('#local-secret')!==null", "locked after explicit lock");
     assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.state)"), "locked");
     process.stdout.write("Explicit Lock is remembered across restart\n");
+  } else if (phase === "customer-credit") {
+    await wait("document.querySelector('#local-secret')!==null");
+    await fill("#local-secret", "654321"); await submit("#local-secret"); await wait("document.querySelector('#till-search')!==null");
+    await evaluate(`(async()=>{const expect=result=>{if(!result.ok)throw Error(result.error.code);return result.value;};
+      const {sessionId}=expect(await window.kolo.getWorkspace());
+      const customer=expect(await window.kolo.createCustomer({sessionId,requestId:crypto.randomUUID(),name:'Prepaid customer'}));
+      const account=expect(await window.kolo.listCashAccounts({sessionId})).items[0];
+      expect(await window.kolo.receiveCustomerPayment({sessionId,requestId:crypto.randomUUID(),customerId:customer.id,accountId:account.id,amountMinor:600}));})()`);
+    const choose = async ():Promise<void>=>{
+      await navigate("Till"); await wait("document.querySelector('.product-tile')!==null"); await click(".product-tile");
+      await fill("#customer-search", "Prepaid"); await wait("document.querySelector('.customer-results button')!==null"); await click(".customer-results button");
+      await wait("document.querySelector('.customer-choice')?.textContent.includes('Prepaid customer') && !document.querySelector('.checkout').disabled");
+    };
+    await choose();
+    await wait("document.querySelector('.payment-row input')?.value==='0' && document.querySelector('.cart-settlement')?.textContent.includes('Customer credit used')", "prepaid credit automatically covers the first purchase");
+    await audit("Till with customer credit"); await snapshot("till-customer-credit"); await click(".checkout");
+    await wait("document.querySelector('.receipt-paper')?.textContent.includes('Balance after sale') && !document.querySelector('.receipt-owing')", "credit receipt has no new debt");
+    const firstSale = await evaluate<string>("window.kolo.getWorkspace().then(async result=>(await window.kolo.listReceipts({sessionId:result.value.sessionId})).value.items[0].id)");
+    await choose();
+    await wait("document.querySelector('.payment-row input')?.value==='400'", "only the remainder after prepaid credit is collected");
+    await click("#sale-on-debt"); await wait("document.querySelector('#debt-received')?.value==='0' && !document.querySelector('.checkout').disabled", "explicit debt starts with no money received");
+    await wait("document.querySelector('.cart-settlement')?.textContent.includes('New debt')", "purchase crossing zero shows new debt");
+    await click(".checkout"); await wait("document.querySelector('.receipt-owing')?.textContent.includes('400')", "only the amount beyond prepaid credit is new debt");
+    await audit("Receipt with applied customer credit"); await snapshot("receipt-customer-credit");
+    const historical = await evaluate(`(async()=>{const {sessionId}=(await window.kolo.getWorkspace()).value;return (await window.kolo.getReceipt({sessionId,saleId:${JSON.stringify(firstSale)}})).value.customerAccount;})()`);
+    assert.deepEqual(historical,{balanceBeforeMinor:-600,balanceAfterMinor:-100,creditAppliedMinor:500,debtAddedMinor:0});
+    await navigate("Customers"); await wait(`${visible('.row-link')}.some(element=>element.textContent.includes('Prepaid customer'))`); await clickVisible(".row-link","Prepaid customer");
+    await wait(`${visible('.detail-layout tbody')}.some(element=>element.textContent.includes('Customer credit used') && element.textContent.includes('Received at sale'))`, "statement explains the purchases and prepaid credit");
+    await audit("Customer statement with prepaid credit"); await snapshot("statement-customer-credit");
+    process.stdout.write("Actual Electron customer credit covers a purchase, offsets the next debt and agrees with historical receipts and statements\n");
   } else if (phase === "restore-file") {
     // Fresh installation restores a supplied backup from the entry screen, as a new shop PC would.
     const password = process.env["KOLO_DESKTOP_SMOKE_OPEN_PASSWORD"], shop = process.env["KOLO_DESKTOP_SMOKE_OPEN_SHOP"];

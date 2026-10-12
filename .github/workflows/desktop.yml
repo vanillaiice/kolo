@@ -32,6 +32,13 @@ jobs:
           $env:KOLO_DESKTOP_INSTALLER = (Get-ChildItem release/desktop/*-setup.exe).FullName
           npm run smoke:desktop:packaged
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build the Microsoft Store package (validation)
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --config apps/desktop/electron-builder.json --win appx --x64 --publish never \
+            --prepackaged release/desktop/win-unpacked
       - run: npm run benchmark:desktop
       - uses: actions/upload-artifact@v7
         if: always()
@@ -39,5 +46,6 @@ jobs:
           name: kolo-windows-installers
           path: |
             release/desktop/*.exe
+            release/desktop/*.appx
             release/desktop/*.blockmap
           if-no-files-found: ignore

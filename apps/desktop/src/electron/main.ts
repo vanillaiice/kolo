@@ -102,7 +102,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
       };
       for (const [channel, handler] of Object.entries(desktopHandlers(() => application!, () => desktopStatus(database!), trusted))) ipcMain.handle(channel, handler);
       window = new BrowserWindow({ width: 1280, height: 850, minWidth: 880, minHeight: 620, backgroundColor: windowBackground(), show: false,
-        webPreferences: { preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: false } });
+        webPreferences: { preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: false, backgroundThrottling: !(workflowSmoke || benchmarkSmoke) } });
       // Shown after the first paint, so the entry screen appears whole instead of an empty frame.
       window.once("ready-to-show", () => { if (window !== undefined && !window.isDestroyed()) window.show(); });
       const updateWindowTheme = (): void => { if (window !== undefined && !window.isDestroyed()) window.setBackgroundColor(windowBackground()); };

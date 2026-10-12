@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { moneyEntry } from "@kolo/core/domain/entry";
 import { formatMoney } from "@kolo/core/domain/money";
+import { shortReceiptNumber } from "@kolo/core/domain/receipt-number";
+import { customerSettlement } from "@kolo/core/rules/customer-settlement";
+import { sumAmounts } from "@kolo/core/rules/amounts";
 import type { Cursor } from "@kolo/core/application/queries";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { CustomerDetails, CustomerView, Result, ShopService } from "../../shared/service.ts";
@@ -129,12 +132,16 @@ export function Statement({service,sessionId,revision,kind,id}:{service:ShopServ
   const after=cursor?.revision===revision?{after:cursor.after}:{};
   const list=useRead(()=>kind==="customer"?service.customerStatement({sessionId,customerId:id,...after}):service.supplierStatement({sessionId,supplierId:id,...after}),[service,sessionId,kind,id,cursor,revision]);
   const label=(type:string):string=>["CREDIT_SALE","PURCHASE","PAYMENT","RETURN","ADJUSTMENT","OPENING_BALANCE","WRITE_OFF"].includes(type)?t(`ledger${type}` as TextKey):type;
-  return <div className="panel"><h2>{t("statement")}</h2>
+  return <div className="panel"><h2>{t("statement")}</h2>{kind==="customer"&&<p className="hint">{t("statementHelp")}</p>}
     <ReadState loading={list.loading} error={list.error} empty={list.data?.items.length===0} emptyText={t("noStatement")} retry={list.retry}>
       <div className="table-wrap"><table><thead><tr><th>{t("date")}</th><th>{t("movementType")}</th><th>{t("amount")}</th><th>{t("balanceAfter")}</th><th>{t("notesLabel")}</th></tr></thead><tbody>
-        {list.data?.items.map(entry=><tr key={entry.id}><td>{new Date(entry.occurredAt).toLocaleString(language==="fr"?"fr-FR":"en-GB")}</td><td>{label(entry.type)}</td>
-          <td className={entry.amountMinor>0?"money negative":"money"}>{entry.amountMinor>0?"+":"−"}{formatMoney(Math.abs(entry.amountMinor),language)}</td>
-          <td className={entry.balanceMinor>0?"money negative":"money"}>{formatMoney(entry.balanceMinor,language)}</td><td>{entry.note??"—"}</td></tr>)}
+        {list.data?.items.map(entry=>{const impact=kind==="customer"&&entry.type==="CREDIT_SALE"?customerSettlement(sumAmounts([entry.balanceMinor,-entry.amountMinor]),entry.amountMinor):undefined;return <tr key={entry.id}><td>{new Date(entry.occurredAt).toLocaleString(language==="fr"?"fr-FR":"en-GB")}</td><td>{impact===undefined?label(entry.type):t("accountPurchase")}
+          {entry.saleId!==undefined&&<small>{shortReceiptNumber(`V-${entry.saleId}`)}</small>}
+          {entry.saleTotalMinor!==undefined&&<small>{t("total")}: {formatMoney(entry.saleTotalMinor,language)} · {t("paidAtSale")}: {formatMoney(entry.salePaidMinor??0,language)}</small>}
+          {impact!==undefined&&impact.creditAppliedMinor>0&&<small>{t("creditApplied")}: {formatMoney(impact.creditAppliedMinor,language)}</small>}
+          {impact!==undefined&&impact.debtAddedMinor>0&&<small>{t("newDebt")}: {formatMoney(impact.debtAddedMinor,language)}</small>}</td>
+          <td className={entry.amountMinor>0&&(impact===undefined||impact.debtAddedMinor>0)?"money negative":"money"}>{entry.amountMinor>0?"+":"−"}{formatMoney(Math.abs(entry.amountMinor),language)}</td>
+          <td><Balance value={entry.balanceMinor} owedLabel={kind==="customer"?"owes":"owedToSupplier"}/></td><td>{entry.note??"—"}</td></tr>;})}
       </tbody></table></div>
     </ReadState>
     <Pager hasFirst={cursor!==undefined} hasNext={list.data?.next!==undefined} onFirst={()=>setCursor(undefined)} onNext={()=>{if(list.data?.next)setCursor({after:list.data.next,revision});}}/>

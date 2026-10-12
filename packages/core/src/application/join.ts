@@ -1,5 +1,5 @@
 import { canonicalJson } from "@kolo/contracts/canonical";
-import { JOIN_CODE_ALPHABET, formatJoinCode, formatJoinLink, type JoinRequestBody } from "@kolo/contracts/sync";
+import { JOIN_CODE_ALPHABET, formatJoinCode, formatJoinLink, type JoinRequestBody, type JoinOffer, type JoinEnrollment } from "@kolo/contracts/sync";
 import type { SignedPairingInvite, SignedPairingRequest } from "@kolo/contracts/transfer";
 import type { OperationContext, WorkspacePorts, Installation } from "../identity/types.ts";
 import type { Database } from "../data/database/driver.ts";
@@ -47,6 +47,31 @@ function newCode(crypto: SealingCrypto): string {
 function hexBytes(hex: string): number[] { const bytes: number[] = []; for (let index = 0; index < hex.length; index += 2) bytes.push(parseInt(hex.slice(index, index + 2), 16)); return bytes; }
 const passwordAad = (joinId: string): string => `kolo.join-password.v1\u0000${joinId}`;
 
+/** Creates the authenticated join offer without choosing a transport; also used by a desktop's local mailbox. */
+export async function prepareJoinOffer(context: OperationContext, crypto: SealingCrypto,
+  input: { readonly url: string; readonly fingerprint: string; readonly authorityAllowed: boolean; readonly expiresAt: string }): Promise<{ start: JoinStart; offer: JoinOffer }> {
+  const document = await createPairingInvite(context, crypto, input.authorityAllowed), invite = JSON.parse(document.text) as SignedPairingInvite;
+  const code = newCode(crypto), joinId = await joinIdOf(code, crypto);
+  return { start: { code, display: formatJoinCode(code), link: formatJoinLink({ ...input, code }), joinId, expiresAt: input.expiresAt, token: "", inviteId: invite.invite.invite_id, authorityAllowed: input.authorityAllowed },
+    offer: { join_id: joinId, invite, mac: await mac(code, "invite", invite.digest, crypto) } };
+}
+
+/** Verifies that a candidate holds the QR's secret and requests this exact invite, regardless of mailbox transport. */
+export async function inspectJoinCandidate(body: JoinRequestBody, crypto: SealingCrypto, start: JoinStart): Promise<JoinCandidate> {
+  if (!equal(body.mac, await mac(start.code, "request", `${body.request.digest}\u0000${body.encryption_public_key}`, crypto))) throw new TransferError("authentication_failed");
+  const requestText = canonicalJson(body.request), preview = await previewPairingRequest(requestText, crypto);
+  if (body.request.request.invite.invite.invite_id !== start.inviteId) throw new TransferError("invalid_pairing");
+  return { label: preview.deviceLabel, platform: body.request.request.platform, requestText, encryptionPublicKey: body.encryption_public_key };
+}
+
+/** Builds the approved snapshot and seals its random password to the candidate; the mailbox never receives its plaintext. */
+export async function prepareJoinEnrollment(context: OperationContext, crypto: SealingCrypto, files: SnapshotPort, start: JoinStart, candidate: JoinCandidate): Promise<JoinEnrollment> {
+  const verification = (await previewPairingRequest(candidate.requestText, crypto)).verificationCode, password = crypto.randomHex(32);
+  const enrollment = await confirmPairing(context, candidate.requestText, verification, password, files, crypto);
+  const sealed = await sealToDevice(crypto, candidate.encryptionPublicKey, password, passwordAad(start.joinId));
+  return { enrollment: enrollment.text, sealed_password: sealed, mac: await mac(start.code, "enrollment", `${await crypto.sha256(enrollment.text)}\u0000${canonicalJson(sealed)}`, crypto) };
+}
+
 /**
  * Owner side: creates an invite for one till, opens its mailbox on the connected server and returns the code to show
  * (and the link for the QR code, which also carries the server's address and fingerprint).
@@ -67,10 +92,7 @@ export async function startJoin(context: OperationContext, transport: SyncTransp
 export async function pollJoin(transport: SyncTransport, crypto: SealingCrypto, start: JoinStart): Promise<JoinCandidate | undefined> {
   const body = await transport.joinPollRequest(start.token, start.joinId);
   if (body === null) return undefined;
-  if (!equal(body.mac, await mac(start.code, "request", `${body.request.digest}\u0000${body.encryption_public_key}`, crypto))) throw new TransferError("authentication_failed");
-  const requestText = canonicalJson(body.request), preview = await previewPairingRequest(requestText, crypto);
-  if (body.request.request.invite.invite.invite_id !== start.inviteId) throw new TransferError("invalid_pairing");
-  return { label: preview.deviceLabel, platform: body.request.request.platform, requestText, encryptionPublicKey: body.encryption_public_key };
+  return inspectJoinCandidate(body, crypto, start);
 }
 
 /**
@@ -78,11 +100,7 @@ export async function pollJoin(transport: SyncTransport, crypto: SealingCrypto, 
  * random password, seals that password to the till's own key and posts both.
  */
 export async function approveJoin(context: OperationContext, transport: SyncTransport, crypto: SealingCrypto, files: SnapshotPort, start: JoinStart, candidate: JoinCandidate): Promise<void> {
-  const verification = (await previewPairingRequest(candidate.requestText, crypto)).verificationCode, password = crypto.randomHex(32);
-  const enrollment = await confirmPairing(context, candidate.requestText, verification, password, files, crypto);
-  const sealed = await sealToDevice(crypto, candidate.encryptionPublicKey, password, passwordAad(start.joinId));
-  await transport.joinEnroll(start.token, start.joinId, { enrollment: enrollment.text, sealed_password: sealed,
-    mac: await mac(start.code, "enrollment", `${await crypto.sha256(enrollment.text)}\u0000${canonicalJson(sealed)}`, crypto) });
+  await transport.joinEnroll(start.token, start.joinId, await prepareJoinEnrollment(context, crypto, files, start, candidate));
 }
 
 /** Owner side: refuses or abandons a join; the invite can no longer be used. */

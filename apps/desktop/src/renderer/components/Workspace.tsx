@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ShopService, WorkspaceView } from "../../shared/service.ts";
 import { AuthPage, EntryChoice, LocalGuide } from "./AuthPage.tsx";
-import { ImportFile } from "./Transfer.tsx";
+import { ImportFile, JoinLocalComputer } from "./Transfer.tsx";
 import { ErrorText, Field, useAction, useText } from "./ui.tsx";
 import type { LegalKind } from "../legal.ts";
 
@@ -16,7 +16,7 @@ export function Workspace({ service, view, refresh, onRecoveryKey, onLegal }: {
   readonly onLegal?: (kind: LegalKind) => void;
 }): React.JSX.Element {
   const { t } = useText(), action = useAction();
-  const [mode, setMode] = useState<"home" | "create" | "recover" | "import" | "fresh">("home");
+  const [mode, setMode] = useState<"home" | "create" | "recover" | "import" | "fresh" | "join">("home");
   const [step, setStep] = useState<1 | 2>(1);
   const [shop, setShop] = useState(""), [owner, setOwner] = useState(""), [device, setDevice] = useState(() => t("defaultTill")), [cash, setCash] = useState(() => t("defaultCash"));
   const [secret, setSecret] = useState(""), [confirmation, setConfirmation] = useState(""), [key, setKey] = useState(""), [confirmedName, setConfirmedName] = useState("");
@@ -28,9 +28,11 @@ export function Workspace({ service, view, refresh, onRecoveryKey, onLegal }: {
   const importChoice = <EntryChoice title={t(empty ? "importFile" : "importBackup")} description={t(empty ? "importChoiceHelp" : "importReplaceChoiceHelp")} action="import" disabled={action.busy} onClick={() => go("import")}/>;
 
   if (mode === "import") return <ImportFile service={service} {...(empty ? {} : { replacing: view.shopName ?? "KOLO" })} onBack={() => go("home")} onDone={() => { go("home"); refresh(); }}/>;
+  if(mode==="join")return <JoinLocalComputer service={service} onBack={()=>go("home")} onDone={()=>{go("home");refresh();}}/>;
   if (empty && mode !== "create") return <AuthPage title={t("entryWelcome")} description={t("entryWelcomeHelp")} context={t("welcome")} aside={<LocalGuide/>}>
     <h2>{t("startHere")}</h2><div className="entry-choices">
       <EntryChoice title={t("startNewShop")} description={t("createChoiceHelp")} featured action="create" disabled={action.busy} onClick={() => { go("create"); setStep(1); }}/>
+      <EntryChoice title={t("joinLocalShop")} description={t("joinLocalEntryHelp")} action="join" disabled={action.busy} onClick={()=>go("join")}/>
       {importChoice}
     </div><ErrorText message={action.error}/>
   </AuthPage>;

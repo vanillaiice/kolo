@@ -4,9 +4,12 @@ import { quantityEntry, quantityInput } from "@kolo/core/domain/entry";
 import { formatMoney, formatQuantityWithUnit } from "@kolo/core/domain/money";
 import { lineTotal, subtotalOf } from "@kolo/core/rules/pricing";
 import { moneyEntry } from "@kolo/core/domain/entry";
+import { sumAmounts } from "@kolo/core/rules/amounts";
+import { customerSettlement } from "@kolo/core/rules/customer-settlement";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { CheckoutRequest, CustomerView, ProductView, ShopService } from "../../shared/service.ts";
 import { ProductThumb } from "./Photo.tsx";
+import { Balance } from "./Customers.tsx";
 import { call, ErrorText, Field, Pager, ReadState, Select, useAction, useRead, useText } from "./ui.tsx";
 
 type DraftLine={readonly product:ProductView;readonly quantityText:string};
@@ -16,8 +19,11 @@ type DraftPayment={readonly key:string;readonly accountId:string;readonly amount
 export function Till({service,sessionId,revision,permissions,onReceipt}:{readonly service:ShopService;readonly sessionId:string;readonly revision:number;readonly permissions:readonly Permission[];readonly onReceipt:(id:string)=>void}):React.JSX.Element{
   const {t,language}=useText(),action=useAction();
   const [term,setTerm]=useState(""),[barcode,setBarcode]=useState(""),[cursor,setCursor]=useState<{after:Cursor;revision:number}>();
-  const [cart,setCart]=useState<readonly DraftLine[]>([]),[rows,setRows]=useState<readonly DraftPayment[]>([{key:"first",accountId:"",amountText:null}]),[customer,setCustomer]=useState<CustomerView>(),[received,setReceived]=useState(""),[discount,setDiscount]=useState(""),[uncertain,setUncertain]=useState(false);
+  const [cart,setCart]=useState<readonly DraftLine[]>([]),[rows,setRows]=useState<readonly DraftPayment[]>([{key:"first",accountId:"",amountText:null}]),[selectedCustomer,setCustomer]=useState<CustomerView>(),[received,setReceived]=useState(""),[discount,setDiscount]=useState(""),[uncertain,setUncertain]=useState(false);
+  const customerRead=useRead(()=>selectedCustomer===undefined?Promise.resolve({ok:true as const,value:null}):service.getCustomer({sessionId,customerId:selectedCustomer.id}),[service,sessionId,selectedCustomer?.id,revision]);
+  const customer=customerRead.data?.id===selectedCustomer?.id?customerRead.data??undefined:selectedCustomer;
   const pending=useRef<CheckoutRequest | undefined>(undefined), scanner=useRef<HTMLInputElement>(null), focusScanner=useRef(true);
+  const [onDebt,setOnDebt]=useState(false),[applyCredit,setApplyCredit]=useState(true);
   const [categoryId,setCategoryId]=useState("");
   const groups=useRead(()=>service.listCategories({sessionId,limit:100}),[service,sessionId,revision]);
   // No search and no category lists the whole catalogue; a category keeps products whose main or other category it is.
@@ -33,14 +39,20 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
   total=subtotal-discountMinor;
   // Settlement uses the shared exact arithmetic for the total; the host recomputes everything.
   const accountOf=(id:string)=>accounts.data?.items.find(account=>account.id===id)??(id===""?accounts.data?.items[0]:undefined);
+  const availableCredit=canCredit&&canCustomers&&customer!==undefined?Math.max(0,-customer.outstandingMinor):0;
+  const automaticPayment=Math.max(0,total-(applyCredit?availableCredit:0));
   let amounts:number[]=[];
-  try{const manual=rows.map(row=>row.amountText===null?0:moneyEntry(row.amountText)),typed=manual.reduce((sum,value)=>sum+value,0);amounts=rows.map((row,index)=>row.amountText===null?Math.max(0,total-typed):manual[index]!);}
+  try{const manual=rows.map(row=>row.amountText===null?0:moneyEntry(row.amountText)),typed=sumAmounts(manual);amounts=rows.map((row,index)=>row.amountText===null?Math.max(0,automaticPayment-typed):manual[index]!);}
   catch{valid=false;}
-  const paid=amounts.reduce((sum,value)=>sum+value,0),remaining=total-paid,cashPaid=rows.reduce((sum,row,index)=>accountOf(row.accountId)?.kind==="CASH"?sum+(amounts[index]??0):sum,0);
+  let paid=0,cashPaid=0;try{paid=sumAmounts(amounts);cashPaid=sumAmounts(rows.map((row,index)=>accountOf(row.accountId)?.kind==="CASH"?amounts[index]??0:0));}catch{valid=false;}
+  const remaining=total-paid;
+  let accountImpact:ReturnType<typeof customerSettlement>|undefined;
+  try{if(customer!==undefined&&remaining>=0)accountImpact=customerSettlement(customer.outstandingMinor,remaining);}catch{valid=false;}
   let tendered:number|undefined;try{tendered=received.trim()===""?undefined:moneyEntry(received);}catch{valid=false;}
-  const blocker=!valid?undefined:remaining<0?"overpaid":remaining>0&&!canCredit?"noCredit":remaining>0&&customer===undefined?"needsCustomer":tendered!==undefined&&tendered<cashPaid?"receivedShort":undefined;
+  const blocker=!valid?undefined:remaining<0?"overpaid":remaining>0&&!canCredit?"noCredit":remaining>0&&customer===undefined?"needsCustomer":remaining>availableCredit&&!onDebt?"chooseDebt":tendered!==undefined&&tendered<cashPaid?"receivedShort":undefined;
   const edit=(next:readonly DraftLine[]):void=>{pending.current=undefined;setCart(next);action.setError(undefined);};
   const editRows=(next:readonly DraftPayment[]):void=>{pending.current=undefined;setRows(next);action.setError(undefined);};
+  const changeSettlement=(debt:boolean):void=>{setOnDebt(debt);setReceived("");editRows([{key:"first",accountId:rows[0]?.accountId??"",amountText:debt?"0":null}]);};
   const add=(product:ProductView):void=>{
     if(frozen)return;
     const existing=cart.find(line=>line.product.id===product.id);
@@ -64,13 +76,14 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
   };
   const checkout=async():Promise<void>=>{
     await action.run(async()=>{
-      try{pending.current??={sessionId,requestId:crypto.randomUUID(),...(customer===undefined?{}:{customerId:customer.id}),
+      try{pending.current??={sessionId,requestId:crypto.randomUUID(),...(customer===undefined?{}:{customerId:customer.id,expectedCustomerBalanceMinor:customer.outstandingMinor}),
         ...(discountMinor>0?{discountMinor}:{}),payments:rows.map((row,index)=>({accountId:accountOf(row.accountId)!.id,amountMinor:amounts[index]!})).filter(payment=>payment.amountMinor>0),
         lines:cart.map(line=>({productId:line.product.id,quantity:quantityEntry(line.quantityText,line.product.divisible),unitPriceMinor:line.product.sellingPriceMinor}))};}
       catch{return {ok:false,error:{code:"invalid_input"}};}
       const result=await call(()=>service.checkout(pending.current!));
       setUncertain(!result.ok&&result.error.code==="unavailable");
-      if(result.ok){pending.current=undefined;setCart([]);setBarcode("");setRows([{key:"first",accountId:"",amountText:null}]);setCustomer(undefined);setReceived("");setDiscount("");onReceipt(result.value.saleId);}return result;
+      if(!result.ok&&result.error.code==="request_conflict"){pending.current=undefined;customerRead.retry();}
+      if(result.ok){pending.current=undefined;setCart([]);setBarcode("");setRows([{key:"first",accountId:"",amountText:null}]);setOnDebt(false);setApplyCredit(true);setCustomer(undefined);setReceived("");setDiscount("");onReceipt(result.value.saleId);}return result;
     });
   };
   return <section className="workspace-content till-content">
@@ -96,22 +109,29 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
       })}</div>}
       <div className="cart-settlement">{canDiscount&&cart.length>0&&<><div className="settlement-line"><span>{t("subtotal")}</span><strong>{formatMoney(subtotal,language)}</strong></div>
         <Field id="sale-discount" label={t("discount")} value={discount} numeric required={false} disabled={frozen} onChange={value=>{pending.current=undefined;setDiscount(value);action.setError(undefined);}}/></>}<div className="total-line"><span>{t("total")}</span><strong>{valid?formatMoney(total,language):"—"}</strong></div>
-        {canCustomers&&<CustomerChoice service={service} sessionId={sessionId} revision={revision} value={customer} disabled={frozen} onChange={value=>{pending.current=undefined;setCustomer(value);action.setError(undefined);}}/>}
+        {canCustomers&&<CustomerChoice service={service} sessionId={sessionId} revision={revision} value={customer} disabled={frozen} onChange={value=>{pending.current=undefined;setCustomer(value);setApplyCredit(true);action.setError(undefined);}}/>}
+        {canCredit&&canCustomers&&<div className="actions"><button type="button" className={onDebt?"secondary":"primary"} aria-pressed={!onDebt} disabled={frozen} onClick={()=>changeSettlement(false)}>{t("payNow")}</button><button type="button" id="sale-on-debt" className={onDebt?"primary":"secondary"} aria-pressed={onDebt} disabled={frozen} onClick={()=>changeSettlement(true)}>{t("setAsDebt")}</button></div>}
+        {availableCredit>0&&!onDebt&&<label className="check"><input type="checkbox" checked={applyCredit} disabled={frozen} onChange={event=>{pending.current=undefined;setApplyCredit(event.target.checked);action.setError(undefined);}}/>{t("useCustomerCredit")} · {formatMoney(availableCredit,language)}</label>}
         <ReadState loading={accounts.loading} error={accounts.error} empty={accounts.data?.items.length===0} emptyText={t("noAccounts")} retry={accounts.retry}>
-          <fieldset className="payment-rows" disabled={frozen}><legend>{t("payments")}</legend>{rows.map((row,index)=><div className="payment-row" key={row.key}>
+          {onDebt?<fieldset disabled={frozen}><Field id="debt-received" label={t("moneyReceived")} value={rows[0]?.amountText??"0"} numeric onChange={value=>editRows([{...rows[0]!,amountText:value}])}/><Select id="debt-account" label={t("account")} value={accountOf(rows[0]?.accountId??"")?.id??""} onChange={value=>editRows([{...rows[0]!,accountId:value}])} options={(accounts.data?.items??[]).map(account=>({value:account.id,label:account.name}))}/><p className="hint">{t("debtReceivedHelp")}</p></fieldset>:<fieldset className="payment-rows" disabled={frozen}><legend>{t("payments")}</legend>{rows.map((row,index)=><div className="payment-row" key={row.key}>
             <label className="field"><span className="sr-only">{t("account")}</span><select aria-label={t("account")} value={accountOf(row.accountId)?.id??""} onChange={event=>editRows(rows.map(item=>item.key===row.key?{...item,accountId:event.target.value}:item))}>
               {accounts.data?.items.map(account=><option key={account.id} value={account.id} disabled={rows.some(item=>item.key!==row.key&&accountOf(item.accountId)?.id===account.id)}>{account.name}</option>)}</select></label>
             <label className="field"><span className="sr-only">{t("amount")}</span><input aria-label={`${t("amount")} · ${accountOf(row.accountId)?.name??""}`} inputMode="decimal" autoComplete="off" value={row.amountText??(valid?String(amounts[index]??0):"")} onChange={event=>editRows(rows.map(item=>item.key===row.key?{...item,amountText:event.target.value}:item))}/></label>
             {index>0&&<button type="button" className="icon-button" aria-label={t("remove")} onClick={()=>editRows(rows.filter(item=>item.key!==row.key))}>×</button>}
           </div>)}
             {rows.length<(accounts.data?.items.length??0)&&<button type="button" className="text-button" onClick={()=>editRows([...rows,{key:crypto.randomUUID(),accountId:accounts.data!.items.find(account=>!rows.some(row=>accountOf(row.accountId)?.id===account.id))!.id,amountText:"0"}])}>+ {t("addPayment")}</button>}
-          </fieldset>
+          </fieldset>}
         </ReadState>
-        {valid&&remaining!==0&&<div className={`settlement-line ${remaining<0?"negative":""}`}><span>{t(remaining>0&&customer!==undefined&&canCredit?"onAccount":"remaining")}</span><strong>{formatMoney(remaining,language)}</strong></div>}
+        {valid&&accountImpact!==undefined&&remaining>0?<>
+          {accountImpact.creditAppliedMinor>0&&<div className="settlement-line"><span>{t("creditApplied")}</span><strong>{formatMoney(accountImpact.creditAppliedMinor,language)}</strong></div>}
+          {accountImpact.debtAddedMinor>0&&<div className="settlement-line negative"><span>{t("newDebt")}</span><strong>{formatMoney(accountImpact.debtAddedMinor,language)}</strong></div>}
+          <div className="settlement-line"><span>{t("balanceAfterSale")}</span><Balance value={accountImpact.balanceAfterMinor}/></div>
+        </>:valid&&remaining!==0&&<div className="settlement-line"><span>{t("remaining")}</span><strong>{formatMoney(remaining,language)}</strong></div>}
         {cashPaid>0&&<Field id="cash-received" label={t("received")} value={received} numeric required={false} disabled={frozen} onChange={setReceived}/>}
         {valid&&tendered!==undefined&&tendered>=cashPaid&&<div className="settlement-line change-line"><span>{t("change")}</span><strong>{formatMoney(tendered-cashPaid,language)}</strong></div>}
         {blocker!==undefined&&cart.length>0&&<p className="hint negative">{t(blocker)}</p>}<ErrorText message={action.error}/>
-        <button className="primary full checkout" disabled={action.busy||!valid||cart.length===0||!uncertain&&(blocker!==undefined||accounts.loading||accounts.error!==undefined||accounts.data?.items.length===0)} onClick={()=>{void checkout();}}>{action.busy?t("recording"):uncertain?t("retry"):t("completeSale")}<span aria-hidden="true">→</span></button>
+        {selectedCustomer!==undefined&&<ReadState loading={customerRead.loading} error={customerRead.error} empty={false} emptyText="" retry={customerRead.retry}>{null}</ReadState>}
+        <button className="primary full checkout" disabled={action.busy||!valid||cart.length===0||!uncertain&&(blocker!==undefined||accounts.loading||accounts.error!==undefined||accounts.data?.items.length===0||selectedCustomer!==undefined&&(customerRead.loading||customerRead.error!==undefined))} onClick={()=>{void checkout();}}>{action.busy?t("recording"):uncertain?t("retry"):t("completeSale")}<span aria-hidden="true">→</span></button>
       </div>
     </aside></div>
   </section>;
@@ -122,7 +142,7 @@ function CustomerChoice({service,sessionId,revision,value,disabled,onChange}:{se
   const {t,language}=useText(),[term,setTerm]=useState("");
   const found=useRead(()=>term.trim()===""?Promise.resolve({ok:true as const,value:{items:[]}}):service.listCustomers({sessionId,term,limit:5}),[service,sessionId,term,revision]);
   if(value!==undefined)return <div className="customer-choice"><div><span className="eyebrow">{t("customer")}</span><strong>{value.name}</strong>
-    <small>{t("balance")}: {formatMoney(value.outstandingMinor,language)} · {t("creditLimitLabel")}: {value.creditLimitMinor===undefined?t("noLimit"):formatMoney(value.creditLimitMinor,language)}</small></div>
+    <small>{t("balance")}: <Balance value={value.outstandingMinor}/> · {t("creditLimitLabel")}: {value.creditLimitMinor===undefined?t("noLimit"):formatMoney(value.creditLimitMinor,language)}</small></div>
     <button className="icon-button" disabled={disabled} aria-label={t("clearCustomer")} onClick={()=>onChange(undefined)}>×</button></div>;
   return <div className="customer-search"><Field id="customer-search" label={t("findCustomer")} value={term} required={false} disabled={disabled} onChange={setTerm}/>
     {(found.data?.items.length??0)>0&&<ul className="customer-results">{found.data!.items.map(item=><li key={item.id}><button type="button" disabled={disabled} onClick={()=>{onChange(item);setTerm("");}}><strong>{item.name}</strong><small>{item.phone??""} {formatMoney(item.outstandingMinor,language)}</small></button></li>)}</ul>}</div>;

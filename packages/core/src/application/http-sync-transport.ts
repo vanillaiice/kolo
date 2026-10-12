@@ -9,7 +9,7 @@ import { normalizeServerUrl, SyncTransportError, type SyncTransport } from "./se
 interface Schema<T> { safeParse(value: unknown): { success: true; data: T } | { success: false } }
 
 /** Minimal `fetch` shape, so mobile, desktop and tests can each supply their platform implementation. */
-export type FetchPort = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal: AbortSignal }) =>
+export type FetchPort = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal: AbortSignal; redirect?: "error" }) =>
   Promise<{ readonly status: number; text(): Promise<string> }>;
 
 /**

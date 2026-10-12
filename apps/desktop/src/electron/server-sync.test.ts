@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createCipheriv, createDecipheriv, generateKeyPairSync, randomBytes, randomUUIDv7 } from "node:crypto";
 import { createWorkspace, unlockWorkspace } from "@kolo/core/identity/workspace";
 import { registerExchangeDestination } from "@kolo/core/application/exchange";
-import { SyncTransportError, type SyncTransport } from "@kolo/core/application/server-sync";
+import { keyFingerprint, SyncTransportError, type SyncTransport } from "@kolo/core/application/server-sync";
 import type { WorkspacePorts } from "@kolo/core/identity/types";
 import { openDesktopDatabase } from "./database.ts";
 import { DesktopApplication } from "./application.ts";
@@ -36,7 +36,7 @@ async function fixture(transport: SyncTransport) {
   await application.initialize();
   const setup = value(await application.createShop({ businessName: "Shop", ownerName: "Owner", deviceLabel: "PC", cashAccountName: "Cash", secret: "654321" }));
   const sessionId = value(await application.unlock({ userId: setup.members[0]!.id, secret: "654321" })).sessionId!;
-  return { application, sessionId, async dispose() { await application.dispose(); closeConsistent([database]); rmSync(directory, { recursive: true, force: true }); } };
+  return { application, sessionId, database, async dispose() { await application.dispose(); closeConsistent([database]); rmSync(directory, { recursive: true, force: true }); } };
 }
 function value<T>(result: Result<T>): T { assert.equal(result.ok, true, JSON.stringify(result)); if (!result.ok) throw new Error("unexpected failure"); return result.value; }
 
@@ -59,6 +59,28 @@ it("server commands validate connection codes and map network and refusal failur
     try { assert.deepEqual(await refused.application.checkServer({ sessionId: refused.sessionId, code: valid("https://sync.example.com") }), { ok: false, error: { code } }); }
     finally { await refused.dispose(); }
   }
+});
+
+it("connecting and disconnecting notify the pairing panel after the endpoint changes, including reconnects", async () => {
+  const key = generateKeyPairSync("ed25519", { publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } }).publicKey;
+  const fingerprint = await keyFingerprint(key,desktopSealingCrypto), server = randomUUIDv7();
+  const transport = { ...failing(new SyncTransportError("network_unavailable",0,true),[]),
+    identity:async()=>({api_version:2 as const,server_device_id:server,public_key:key,fingerprint,enrollment_open:true}),
+    challenge:async()=>({challenge_id:randomUUIDv7(),nonce:"a".repeat(64),expires_at:"2026-10-11T12:05:00.000Z"}),enroll:async()=>{} };
+  const f = await fixture(transport), counts:number[]=[];
+  const stop = f.application.onChanged(()=>counts.push(Number(f.database.get("SELECT count(*) AS n FROM server_endpoints")!["n"])));
+  try {
+    const input = {sessionId:f.sessionId,code:formatConnectionCode({url:"https://sync.example.com",fingerprint,token:"b".repeat(32)})};
+    const connection = value(await f.application.connectServer(input));
+    assert.equal(counts.at(-1),1,"the panel must reread after the endpoint exists");
+    assert.equal(value(await f.application.serverState({sessionId:f.sessionId})).servers.length,1);
+    counts.length=0;
+    value(await f.application.disconnectServer({sessionId:f.sessionId,destinationId:connection.destinationId}));
+    assert.equal(counts.at(-1),0,"the panel must reread after the endpoint is removed");
+    counts.length=0;
+    value(await f.application.connectServer(input));
+    assert.equal(counts.at(-1),1,"reconnecting a trusted server still notifies the panel");
+  } finally {stop();await f.dispose();}
 });
 
 it("background sync backs off after failures and never runs without a signed-in context", async () => {

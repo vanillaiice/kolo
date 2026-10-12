@@ -14,6 +14,7 @@ import type { Permission } from "../identity/permissions.ts";
 import { saleTotals, subtotalOf } from "../rules/pricing.ts";
 import { saleTaxGroups, type TaxGroup } from "../rules/tax.ts";
 import { taxSettings } from "../data/products/tax.ts";
+import { customerSettlement, type CustomerSettlement } from "../rules/customer-settlement.ts";
 
 /** Stable keyset continuation for catalogue queries; reset after a domain invalidation. */
 export interface Cursor { readonly name: string; readonly id: string; }
@@ -123,6 +124,8 @@ export interface Receipt {
   readonly lines: readonly { id: string; productId: string; name: string; quantity: number; unitPriceMinor: number; discountMinor: number }[];
   readonly payments: readonly { id: string; accountId: string; name: string; amountMinor: number }[];
   readonly returnedMinor: number; readonly discountMinor: number; readonly totalMinor: number; readonly paidMinor: number; readonly outstandingMinor: number;
+  /** Account impact at this sale's ledger entry, reconstructed in statement order under customers.view. */
+  readonly customerAccount?: CustomerSettlement | undefined;
   /**
    * Tax included in the total, one group per non-zero rate frozen on the lines (ADR-033), with the shop's current tax
    * label and registration number. Absent when no line carried tax.
@@ -136,9 +139,9 @@ function salesAuthority(tx: Queryable, context: OperationContext): boolean {
   throw new WorkspaceError("permission_denied");
 }
 /** One row of the receipt history: enough to recognize a sale without opening it. */
-export interface ReceiptSummary { readonly id: string; readonly number: string; readonly occurredAt: string; readonly totalMinor: number; readonly customerName?: string }
+export interface ReceiptSummary { readonly id: string; readonly number: string; readonly occurredAt: string; readonly totalMinor: number; readonly paidMinor: number; readonly outstandingMinor: number; readonly customerName?: string }
 /** Builds a receipt from its persisted sale row (joined with the customer name) using the shared sale rules. */
-function receiptOf(tx: Queryable, businessId: string, row: Row): Receipt {
+function receiptOf(tx: Queryable, businessId: string, row: Row, withCustomerAccount = false): Receipt {
   const saleId = String(row["id"]);
   const rows = tx.all(`SELECT * FROM sale_items WHERE business_id=? AND sale_id=? ORDER BY id`, [businessId, saleId]);
   const lines = rows.map(item => ({
@@ -151,6 +154,14 @@ function receiptOf(tx: Queryable, businessId: string, row: Row): Receipt {
     id: String(item["id"]), accountId: String(item["account_id"]), name: String(item["account_name"] ?? item["account_id"]), amountMinor: sqlInteger(item["amount_minor"]!),
   }));
   const discountMinor = sqlInteger(row["discount_minor"]!);
+  let customerAccount: CustomerSettlement | undefined;
+  if (withCustomerAccount && typeof row["customer_id"] === "string") {
+    const entry = tx.get(`SELECT id,occurred_at,amount_minor FROM customer_transactions WHERE business_id=? AND customer_id=? AND type='CREDIT_SALE' AND reference_kind='SALE' AND reference_id=?`, [businessId, row["customer_id"], saleId]);
+    if (entry !== undefined) {
+      const before = tx.get(`SELECT coalesce(sum(amount_minor),0) AS balance FROM customer_transactions WHERE business_id=? AND customer_id=? AND (occurred_at,id)<(?,?)`, [businessId, row["customer_id"], String(entry["occurred_at"]), String(entry["id"])]);
+      customerAccount = customerSettlement(sqlInteger(before!["balance"]!), sqlInteger(entry["amount_minor"]!));
+    }
+  }
   let tax: Receipt["tax"];
   if (rates.some(rate => rate > 0)) {
     const settings = taxSettings(tx, businessId), groups = saleTaxGroups(lines.map((line, index) => ({ ...line, taxRateBasisPoints: rates[index]! })), discountMinor).filter(group => group.rateBasisPoints > 0);
@@ -158,7 +169,7 @@ function receiptOf(tx: Queryable, businessId: string, row: Row): Receipt {
   }
   return { ...(tax === undefined ? {} : { tax }), id: saleId, number: String(row["number"]), occurredAt: String(row["occurred_at"]), customerName: typeof row["customer_name"] === "string" ? row["customer_name"] : undefined,
     returnedMinor: sqlInteger(tx.get(`SELECT coalesce(sum(total_minor),0) AS total FROM business_returns WHERE business_id=? AND kind='SALE' AND original_id=?`,[businessId,saleId])!["total"]!),
-    lines, payments, discountMinor, ...saleTotals({ lines, payments, discountMinor, customerId: typeof row["customer_id"] === "string" ? row["customer_id"] : undefined }) };
+    lines, payments, discountMinor, ...(customerAccount === undefined ? {} : { customerAccount }), ...saleTotals({ lines, payments, discountMinor, customerId: typeof row["customer_id"] === "string" ? row["customer_id"] : undefined }) };
 }
 /** Reads one persisted receipt. sales.view_own enforces the creating actor inside the query. */
 export function receipt(context: OperationContext, saleId: string): Receipt {
@@ -167,7 +178,7 @@ export function receipt(context: OperationContext, saleId: string): Receipt {
       LEFT JOIN customers c ON c.business_id=s.business_id AND c.id=s.customer_id WHERE s.business_id=? AND s.id=?${own ? " AND s.user_id=?" : ""}`,
       [context.businessId, saleId, ...(own ? [context.userId] : [])]);
     if (row === undefined) throw new WorkspaceError("scope_mismatch");
-    return receiptOf(tx, context.businessId, row);
+    return receiptOf(tx, context.businessId, row, memberPermissions(activeMember(tx, context, context.userId)).includes("customers.view"));
   });
 }
 /** Keyset receipt history, newest first, bounded 1–100 and scoped to current sales authority. */
@@ -182,11 +193,11 @@ export function receipts(context: OperationContext, query: PageQuery = {}): Page
       WHERE ${where} ORDER BY s.occurred_at DESC,s.id DESC LIMIT ?`, values), shown = rows.slice(0, limit), last = shown.at(-1);
     // Totals use the same rules as the receipt itself; a page holds at most 100 sales.
     return { items: shown.map(row => { const item = receiptOf(tx, context.businessId, row);
-        return { id: item.id, number: item.number, occurredAt: item.occurredAt, totalMinor: item.totalMinor, ...(item.customerName === undefined ? {} : { customerName: item.customerName }) }; }),
+        return { id: item.id, number: item.number, occurredAt: item.occurredAt, totalMinor: item.totalMinor, paidMinor: item.paidMinor, outstandingMinor: item.outstandingMinor, ...(item.customerName === undefined ? {} : { customerName: item.customerName }) }; }),
       next: rows.length > limit && last !== undefined ? { name: String(last["occurred_at"]), id: String(last["id"]) } : undefined };
   });
 }
-/** Bounded customer/supplier ledger page, newest first; preserves signs and references, and adds `balance_minor`, the running balance after each entry. */
+/** Bounded customer/supplier ledger page, newest first; includes running `balance_minor` and customer sale `sale_total_minor`/`sale_paid_minor` facts. */
 export function statement(context: OperationContext, kind: "customer" | "supplier", id: string, query: PageQuery = {}): Page<Row> {
   if (kind !== "customer" && kind !== "supplier") throw new WorkspaceError("invalid_input");
   return authorizedOperation(context, [kind === "customer" ? "customers.view" : "suppliers.view"], (_db, tx) => {
@@ -198,7 +209,13 @@ export function statement(context: OperationContext, kind: "customer" | "supplie
     // balance_minor is the running balance after each entry, summed oldest first over the whole ledger.
     const rows = tx.all(`SELECT * FROM (SELECT t.*, sum(t.amount_minor) OVER (ORDER BY t.occurred_at, t.id) AS balance_minor FROM ${kind}_transactions t
       WHERE t.business_id=? AND t.${kind}_id=?) WHERE ${where} ORDER BY occurred_at DESC,id DESC LIMIT ?`, values), shown = rows.slice(0, limit), last = shown.at(-1);
-    return { items: shown, next: rows.length > limit && last !== undefined ? { name: String(last["occurred_at"]), id: String(last["id"]) } : undefined };
+    return { items: shown.map(row => {
+      if (kind !== "customer" || row["type"] !== "CREDIT_SALE" || row["reference_kind"] !== "SALE" || typeof row["reference_id"] !== "string") return row;
+      const sale = tx.get(`SELECT * FROM sales WHERE business_id=? AND customer_id=? AND id=?`, [context.businessId, id, row["reference_id"]]);
+      if (sale === undefined) return row;
+      const totals = receiptOf(tx, context.businessId, sale);
+      return { ...row, sale_total_minor: totals.totalMinor, sale_paid_minor: totals.paidMinor };
+    }), next: rows.length > limit && last !== undefined ? { name: String(last["occurred_at"]), id: String(last["id"]) } : undefined };
   });
 }
 

@@ -15,3 +15,5 @@ the only Node-specific subpath.
 
 See [business core](../../docs/implementation/business-core.md) and the
 [API reference](../../docs/reference/typescript-api.md).
+
+Licensed under [GPL-3.0-only](LICENSE).

@@ -122,8 +122,8 @@ export function protectedCredentials(store: SecretStore, crypto: CredentialCrypt
       return record === undefined || record.installationId !== installationId ? undefined : material(reference, record);
     },
     async sign(reference, message) {
-      if (crypto.sign === undefined || typeof message !== "string" || message.length > 8 * 1024 * 1024 + 100 ||
-        !/^kolo\.(event\.v2|receipt\.v1|batch\.v2|snapshot\.v1|pairing-invite\.v1|pairing-request\.v1|server-enrollment\.v1|server-session\.v1|sync-batch\.v1)\u0000/.test(message)) throw new WorkspaceError("credential_unavailable");
+      if (crypto.sign === undefined || typeof message !== "string" || message.length > (message.startsWith("kolo.local-sync.v1\u0000") ? 12 : 8) * 1024 * 1024 + 100 ||
+        !/^kolo\.(event\.v2|receipt\.v1|batch\.v2|snapshot\.v1|pairing-invite\.v1|pairing-request\.v1|server-enrollment\.v1|server-session\.v1|sync-batch\.v1|local-sync\.v1)\u0000/.test(message)) throw new WorkspaceError("credential_unavailable");
       const record = await read(reference);
       if (record === undefined) throw new WorkspaceError("credential_unavailable");
       const signature = await crypto.sign(record.privateKey, message);

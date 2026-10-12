@@ -1,0 +1,25 @@
+service: kolo-landing
+image: kolo-landing
+
+servers:
+  - 62.169.20.136
+
+registry:
+  server: localhost:5555
+
+ssh:
+  user: vanillaiice
+
+proxy:
+  host: kolo.hblabs.xyz
+  ssl: true
+  app_port: 80
+  healthcheck:
+    path: /up
+
+builder:
+  arch: amd64
+  context: .
+
+aliases:
+  logs: app logs -f

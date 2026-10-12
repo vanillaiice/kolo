@@ -57,7 +57,7 @@ function crossCheckBackup() {
 }
 try {
   if (installer) install(process.env.KOLO_DESKTOP_BASELINE_INSTALLER ?? installer);
-  for (const name of ["create", "reopen", "entry-recovery", "resilience", "crash-commit", "crash-reopen", "import-replace", "import-reopen", "remember-on", "remember-reopen", "remember-locked"]) {
+  for (const name of ["create", "reopen", "entry-recovery", "resilience", "crash-commit", "crash-reopen", "import-replace", "import-reopen", "remember-on", "remember-reopen", "remember-locked", "customer-credit"]) {
     if (installer && name === "reopen") install(installer);
     const code = await phase(name); if (code !== 0) { process.exitCode = code; break; }
   }

@@ -46,6 +46,36 @@ from the tagged checkout. The publication gate is covered by
 `npm run build:mobile:android` (with `ANDROID_HOME`) write to `release/`. Local Windows
 builds skip the packaged acceptance that CI runs.
 
+## Microsoft Store (Windows)
+
+The Store package avoids the SmartScreen warning at no cost: Microsoft signs it at submission,
+and individual developer accounts have no registration fee. The NSIS installer and portable
+file stay the offline route and keep their unsigned warning.
+
+`appx` in `apps/desktop/electron-builder.json` holds the package settings; the tile images are in
+`apps/desktop/build/appx` (generated from `icon.png` on the brand green `#0C3426`). The tagged
+release workflow builds an unsigned `KOLO-x.y.z-win-x64-store.appx` from the same unpacked app as
+the installers and uploads it as the `kolo-desktop-msstore` Actions artifact, not to the GitHub
+release. The manual Windows acceptance workflow builds it too, to check the packaging. AppX needs
+Windows' `makeappx`, so it cannot be built on Linux or through wine;
+`npm run dist:desktop:store` builds it on Windows.
+
+One-time setup:
+
+1. In Partner Center, reserve the name KOLO and open Product identity.
+2. Set the repository variables `KOLO_STORE_IDENTITY_NAME` (Package/Identity/Name) and
+   `KOLO_STORE_PUBLISHER` (Package/Identity/Publisher, `CN=…`). Without them the package uses
+   the placeholders `hblabs.KOLO` and `CN=ms`, which the Store refuses.
+
+Each release: download the artifact from the tag's workflow run and upload it to a new
+submission. The Store requires the fourth version part to be 0; electron-builder writes
+`x.y.z.0`.
+
+Store installs keep the shop's data in the package's private copy of `%APPDATA%`
+(MSIX file-system virtualization). An installer install and a Store install on the same PC
+therefore see different shops, and uninstalling the Store app deletes its data: move a shop
+between them, or off a PC, with a backup.
+
 ## Android files per phone type
 
 Android builds write one APK per CPU architecture plus a universal fallback
@@ -67,7 +97,8 @@ pick per device.
 ## Signing and updates
 
 Desktop builds sign when `CSC_LINK` and `CSC_KEY_PASSWORD` secrets exist and are unsigned
-otherwise, so Windows SmartScreen warns. The Windows signing options are those described in
+otherwise, so Windows SmartScreen warns; the Microsoft Store package (above) is the free way
+around that warning. The Windows signing options are those described in
 Rebar Studio's releasing guide (SignPath Foundation, Azure Trusted Signing, an OV certificate).
 The APK uses generated test signing; a Play Store identity is not configured.
 

@@ -3,6 +3,7 @@ import { Share, Text } from "react-native";
 import Constants from "expo-constants";
 import { useCameraPermissions } from "expo-camera";
 import { QrScanner } from "../../components/qr-scanner.tsx";
+import { localPeerConnections, connectLocalPeer, synchronizeLocalPeer, type LocalPeerConnection } from "@kolo/core/application/local-sync";
 import { canEnrollServer, connectServer, disconnectServer, knowsServer, normalizeServerUrl, previewServer, serverConnections, synchronizeServer, type ServerConnection } from "@kolo/core/application/server-sync";
 import { formatConnectionCode, parseConnectionCode } from "@kolo/contracts/sync";
 import { sealingCryptoOnDevice as crypto } from "../../data/auth/local-credentials-on-device.ts";
@@ -63,7 +64,8 @@ export function ServerSyncScreen(): React.JSX.Element {
   const stop = (): void => { const id = stopping; setStopping(undefined); if (id !== undefined) action.run(() => disconnectServer(context, id), () => setRefresh(value => value + 1)); };
 
   const servers = state?.servers ?? [];
-  return <Screen title={t("serverSyncTitle")} onBack={nav.back} footer={servers.length === 0 && state !== undefined ? <>{action.notice}
+  return <Screen title={t("serverSyncTitle")} onBack={nav.back} footer={servers.length === 0 && state !== undefined ? <>
+    <LocalSyncPanel />{action.notice}
     {preview === undefined ? <Button label={t("checkCode")} busy={action.busy} disabled={code.trim() === ""} onPress={check} />
       : <Button label={t("connectServer")} busy={action.busy} disabled={state.owner && !preview.hasToken && !preview.attached} onPress={connect} />}</> : undefined}>
     <Text style={s.muted}>{t("serverSyncHelp")}</Text>
@@ -104,4 +106,24 @@ export function ServerSyncScreen(): React.JSX.Element {
     </Section>}
     <Confirm visible={stopping !== undefined} title={t("stopSyncing")} text={t("stopSyncingHelp")} confirmLabel={t("stopSyncing")} onConfirm={stop} onCancel={() => setStopping(undefined)} />
   </Screen>;
+}
+
+/** Direct paired hosts; addresses can be corrected after a router assigns the desktop a new IP. */
+function LocalSyncPanel():React.JSX.Element {
+  const {context}=useSession(),{t}=useText(),s=useStyles();
+  const [peers,setPeers]=useState<readonly LocalPeerConnection[]>([]);
+  useEffect(()=>{const read=():void=>{try{setPeers(localPeerConnections(context));}catch{setPeers([]);}};read();const timer=setInterval(read,5000);return()=>clearInterval(timer);},[context]);
+  return <Section title={t("localSyncTitle")}><Text style={s.body}>{t("localSyncHelp")}</Text>{peers.filter(peer=>peer.url!==null).map(peer=><LocalHost key={peer.deviceId} peer={peer} />)}</Section>;
+}
+function LocalHost({peer}:{peer:LocalPeerConnection}):React.JSX.Element {
+  const {context}=useSession(),{t,language}=useText(),action=useAction(),s=useStyles();
+  const [address,setAddress]=useState(peer.url??"");
+  return <Section title={peer.label}>
+    <Field label={t("localAddressLabel")} value={address} onChange={setAddress} kind="code" />
+    <Button label={t("save")} variant="secondary" disabled={action.busy} onPress={()=>action.run(()=>connectLocalPeer(context,peer.deviceId,address),undefined,"localAddressSaved")} />
+    {peer.lastSuccessAt!==null&&<Text style={s.muted}>{formatDate(peer.lastSuccessAt,language)}</Text>}
+    {peer.lastError!==null&&<Notice tone="error" text={t("localSyncFailed")} />}
+    <Button label={t("localSyncNow")} busy={action.busy} onPress={()=>{void action.runAsync(async()=>{try{return await synchronizeLocalPeer(context,peer.deviceId,crypto);}catch{throw new FormProblem("localSyncFailed");}},summary=>action.show({tone:"success",key:"syncDoneSummary",values:{sent:summary.sent,received:summary.received,extra:""}}));}} />
+    {action.notice}
+  </Section>;
 }

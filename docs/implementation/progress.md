@@ -1504,3 +1504,84 @@ real-server runs never load them. `kysely-pglite` was rejected: unmaintained sin
 
 Verification: `npm test -w @kolo/server` 28 passed, 0 skipped (about 26 s); `npm run test:server:pg` 28/28 on
 PostgreSQL 18; `npm run smoke:server` passed in the built image. No test needed a PGlite-specific skip.
+
+## 2026-10-12: Microsoft Store package for Windows
+
+The user chose the Store (free, Microsoft signs) over SignPath or a certificate to avoid the SmartScreen warning.
+`appx` settings in `apps/desktop/electron-builder.json` (identity placeholder `hblabs.KOLO`, French/English, brand
+background), Store tile/logo images in `apps/desktop/build/appx` generated from the icon, `npm run dist:desktop:store`,
+an unsigned `KOLO-x.y.z-win-x64-store.appx` built from the tagged release's unpacked app and uploaded as the
+`kolo-desktop-msstore` Actions artifact (not to the GitHub release, so the publish gate is unchanged), and a validation
+build in the manual Windows acceptance workflow. The Partner Center identity comes from the `KOLO_STORE_IDENTITY_NAME`
+and `KOLO_STORE_PUBLISHER` repository variables. See [releasing](../releasing.md#microsoft-store-windows).
+
+Verification: the builder configuration passes electron-builder's schema in a Linux unpacked build; workflow YAML parses.
+Not verified: AppX needs Windows' `makeappx`, so the package has not been built yet (first run is the Windows workflow);
+Partner Center certification, Store install, and the shop's data in the virtualized `%APPDATA%` (separate from an NSIS
+install and deleted on uninstall) are unchecked.
+
+## 2026-10-12: Desktop QR pairing refresh and customer debt clarity
+
+The reported Windows 0.4.0 pairing screenshot shows the no-server file fallback. Connecting or disconnecting a
+server now explicitly notifies the shell after the endpoint is persisted, including reconnects to an already
+trusted server. This prevents the pairing panel from staying on the file workflow. The panel offers a direct
+connection-form button when no server is configured, exposes server-state errors with retry, and handles QR
+generation failures while retaining the short code and address.
+
+Checkout offers **Set as debt** with an explicit money-received field and zero-payment default. **Pay now** uses
+the selected customer's existing prepaid balance to reduce the automatic payment. Shared settlement arithmetic
+distinguishes credit consumed from new debt and shows the resulting balance. An optional expected-balance hint
+refuses stale new checkouts without writing anything; saved retries remain idempotent. The selected customer is
+reread after changes/conflicts. Cash movements still represent actual money received; consuming prepaid credit
+does not create another cash payment.
+
+Receipt history shows full total, money received at checkout and the amount posted to the account. Customer
+statements show the originating receipt and those totals alongside the signed movement, credit used, new debt
+and labelled balance. Receipt account impact is reconstructed in the statement's historical order and requires
+`customers.view`; later payments/purchases do not replace an earlier receipt's balance with the current balance.
+Existing immutable records, signed sale events and schemas are preserved.
+
+Verification: `npm run check` passed (including core 748, desktop 62 and server 28 tests), Android Metro export
+passed, and the actual Linux Electron workflow passed with light/dark accessibility audits. The added UI drill
+records a 600 FCFA advance, a 500 FCFA purchase fully covered by it, then another 500 FCFA purchase with no new
+payment: the remaining 100 FCFA credit is used and only 400 FCFA becomes debt. Historical receipt/statement
+checks and the CLI backup integrity/report cross-check passed. Full server tests and Electron required execution
+outside the filesystem/network sandbox for local ports and Chromium. Installed Windows verification remains open.
+
+## 2026-10-12: Direct local QR pairing and synchronization without a server
+
+The user clarified that the Windows 0.4.0 till was standalone, with no server configured, and requested QR
+pairing/sync in that mode. [ADR-034](../adr/ADR-034-local-network-pairing-and-sync.md) accepts a desktop-hosted
+local-network transport over the same Wi-Fi/hotspot, without internet, a separately installed service or
+PostgreSQL. Desktop now shows a local QR by default; a phone scans it and a new PC can paste its link on the
+entry screen. Existing connected-server joining and encrypted file exchange remain available.
+
+The app-local listener opens only after local pairing is enabled, persists its chosen port, closes on lock,
+shutdown and shop switch, and resumes on that port while the enabled shop is unlocked. Owner approval,
+signed requests, sealed random snapshot passwords and verified atomic activation reuse the existing pairing
+protocol. A verified staging database receives its host address before activation. QR mailboxes expire in ten
+minutes, reject replacement requests and can be cancelled; the owner sees the requesting device's name.
+
+Direct exchange encrypts existing signed journal batches/receipts with native X25519, HKDF and AES-GCM, signs
+the complete packet with the installation's Ed25519 identity, and binds replies to their request IDs. The
+existing tenant/origin/actor/trust/digest/dependency checks remain authoritative. Lost replies, duplicate
+requests and offline sales preserve exact stock, debt and cash. The new bounded signing domain is explicitly
+allowed in the protected vault. Literal private IPv4 addresses, refused redirects/browser origins, bounded
+requests and concurrency limit exposure. Migration 29 adds only installation-local network settings/status;
+they are removed from backups/enrollment snapshots and incoming snapshots must not carry them.
+
+Foreground clients synchronize each minute and soon after local changes, with manual sync/status and host
+address editing on mobile. The host and clients require a signed-in member with shop-settings access. The
+main desktop must remain open and unlocked. Mobile hosting, Bluetooth and discovery are not implemented.
+
+Verification: full `npm run check` passed (contracts 12, core 748, desktop 65, mobile 24, server 28, CLI 9;
+release and landing checks also passed), final Android Metro export passed, and the desktop/CLI builds passed.
+Real SQLite/OpenSSL/HTTP tests paired two installations, exchanged independent sales both ways, dropped a
+reply after commit, retried without duplication, checked listener lock/unlock and stable port, and rejected
+wrong fingerprints/codes, cancelled/unapproved joins, browser origins, tampered packets and mismatched replies.
+Snapshots sanitize local addresses/listener state. The actual Linux Electron workflow displayed a local QR
+with zero connected servers, passed light/dark accessibility audits, existing shop workflows and the CLI backup
+integrity/report cross-check. The compositor sometimes withheld animation frames: smoke-only foreground/
+background-throttling settings and a bounded frame wait prevent hanging while retaining CSS/accessibility
+assertions. Physical Windows firewall/installed-package and Android camera/Wi-Fi acceptance remain open;
+both installed apps need updated builds to use the new local QR protocol.

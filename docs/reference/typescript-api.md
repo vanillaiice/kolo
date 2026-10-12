@@ -183,6 +183,26 @@ class DesktopApplication implements ShopService {
   saveImportReceipt(input?: unknown): Promise<Result<SavedFile>>;
   openImportReceipt(input?: unknown): Promise<Result<{ readonly recorded: number; }>>;
   retryExchange(input?: unknown): Promise<Result<{ readonly applied: number; }>>;
+  /** Reads/resumes this installation’s enabled LAN listener and paired local delivery status. */
+  localNetworkState(input: unknown): Promise<Result<LocalNetworkView>>;
+  /** Stops inbound LAN access; local records and peer trust remain. */
+  stopLocalNetwork(input: unknown): Promise<Result<null>>;
+  /** Shows a ten-minute QR for a new device on the same Wi-Fi or hotspot. */
+  startLocalJoin(input: unknown): Promise<Result<JoinCodeView>>;
+  /** Reads the candidate name for the owner’s still-live local invitation. */
+  pollLocalJoin(input: unknown): Promise<Result<JoinStatusView>>;
+  /** Approves the local candidate and makes its encrypted snapshot available. */
+  approveLocalJoin(input: unknown): Promise<Result<null>>;
+  /** Revokes the selected local invitation. */
+  cancelLocalJoin(input: unknown): Promise<Result<null>>;
+  /** Immediately exchanges queued signed changes with this installation’s configured local hosts. */
+  syncLocalNetwork(input: unknown): Promise<Result<{ readonly sent: number; readonly received: number; }>>;
+  /** Empty computer: verifies a copied LAN pairing link before displaying the shop. */
+  lookupLocalJoin(input: unknown): Promise<Result<JoinInvitation>>;
+  /** Empty computer: provisions a native identity and requests owner approval through the LAN mailbox. */
+  requestLocalJoin(input: unknown): Promise<Result<null>>;
+  /** Empty computer: activates the exact owner-approved local snapshot when ready. */
+  finishLocalJoin(input: unknown): Promise<Result<{ readonly activated: boolean; }>>;
   /** Optional sync server; see server-sync.ts. Network work runs in the main process only. */
   serverState(input: unknown): Promise<Result<{ readonly servers: readonly ServerView[]; readonly canEnroll: boolean; }>>;
   checkServer(input: unknown): Promise<Result<ServerPreview>>;
@@ -196,7 +216,7 @@ class DesktopApplication implements ShopService {
   /** Rereads immutable saved receipt facts under current actor/own-receipt authority. */
   getReceipt(input: unknown): Promise<Result<Receipt>>;
   /** Bounded saved receipt history scoped to the current actor and sales-view capability. */
-  listReceipts(input: unknown): Promise<Result<Page<{ readonly id: string; readonly number: string; readonly occurredAt: string; readonly totalMinor: number; readonly customerName?: string; }>>>;
+  listReceipts(input: unknown): Promise<Result<Page<ReceiptSummary>>>;
 }
 ```
 
@@ -436,6 +456,32 @@ Native X25519 and HKDF-SHA256 on top of the file-transfer AES-GCM, for end-to-en
 
 ```ts
 const desktopSealingCrypto: SealingCrypto;
+```
+
+## [apps/desktop/src/electron/local-network.ts](../../apps/desktop/src/electron/local-network.ts)
+
+Owns one app-local HTTP listener. It transports authenticated pairing/encrypted facts; it has no separate database or account system.
+
+```ts
+class LocalNetwork {
+  constructor(ports: WorkspacePorts, crypto: SealingCrypto, files: SnapshotPort, actor: () => OperationContext | undefined, changed: () => void);
+  /** Current literal LAN addresses of this listener, preferring the common Wi-Fi range over container/VPN ranges. */
+  urls(): string[];
+  /** Whether this installation currently accepts direct local connections. */
+  running(): boolean;
+  /** Restarts the saved listener only while unlocked; first use chooses and persists an available port. */
+  start(enable = true): Promise<void>;
+  /** Stops accepting peers and forgets QR secrets immediately. Owned in-flight work is drained before database disposal. */
+  close(disable = false): Promise<void>;
+  /** Starts a single-use ten-minute local QR invitation. Only an address of this actual listener can be advertised. */
+  invite(authorityAllowed: boolean, url?: string): Promise<JoinCodeView>;
+  /** Reads a live invite's candidate name without granting device access. */
+  status(id: string): JoinStatusView;
+  /** Owner approval builds the encrypted baseline once and leaves it available until the QR expires. */
+  approve(id: string): Promise<void>;
+  /** Removes the mailbox and revokes an unapproved invite; already approved device trust is retained. */
+  cancel(id: string): void;
+}
 ```
 
 ## [apps/desktop/src/electron/preferences.ts](../../apps/desktop/src/electron/preferences.ts)
@@ -971,7 +1017,7 @@ runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void>;
 Stable application failures; native exception text, credentials and paths never cross the bridge.
 
 ```ts
-export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "invalid_photo" | "photo_storage_full" | "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" | "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" | "no_server" | "join_not_found" | "join_conflict";
+export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" | "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "invalid_photo" | "photo_storage_full" | "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" | "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" | "no_server" | "join_not_found" | "join_conflict";
 ```
 
 Serializable results make transport and operation failures explicit.
@@ -1153,6 +1199,7 @@ export interface CheckoutRequest extends SessionRequest {
         readonly amountMinor: number;
     }[];
     readonly customerId?: string;
+    readonly expectedCustomerBalanceMinor?: number;
     readonly discountMinor?: number;
     readonly lines: readonly {
         readonly productId: string;
@@ -1211,6 +1258,8 @@ export interface StatementEntryView {
     readonly saleId?: string;
     readonly purchaseId?: string;
     readonly note?: string;
+    readonly saleTotalMinor?: number;
+    readonly salePaidMinor?: number;
     readonly balanceMinor: number;
 }
 ```
@@ -1513,6 +1562,16 @@ export interface JoinCodeView {
 }
 ```
 
+App-local listener addresses and this computer's paired local hosts. Internet and a separately installed server are unnecessary.
+
+```ts
+export interface LocalNetworkView {
+    readonly running: boolean;
+    readonly urls: readonly string[];
+    readonly connections: readonly LocalPeerConnection[];
+}
+```
+
 Whether the new till has asked to join; its name is shown before the owner allows it.
 
 ```ts
@@ -1658,6 +1717,38 @@ export interface PhotoUsage {
 
 ```ts
 export interface ShopService {
+    localNetworkState(input: SessionRequest): Promise<Result<LocalNetworkView>>;
+    stopLocalNetwork(input: SessionRequest): Promise<Result<null>>;
+    startLocalJoin(input: SessionRequest & {
+        readonly authorityAllowed: boolean;
+        readonly url?: string;
+    }): Promise<Result<JoinCodeView>>;
+    pollLocalJoin(input: SessionRequest & {
+        readonly joinId: string;
+    }): Promise<Result<JoinStatusView>>;
+    approveLocalJoin(input: SessionRequest & {
+        readonly joinId: string;
+    }): Promise<Result<null>>;
+    cancelLocalJoin(input: SessionRequest & {
+        readonly joinId: string;
+    }): Promise<Result<null>>;
+    syncLocalNetwork(input: SessionRequest): Promise<Result<{
+        readonly sent: number;
+        readonly received: number;
+    }>>;
+    lookupLocalJoin(input: {
+        readonly link: string;
+    }): Promise<Result<JoinInvitation>>;
+    requestLocalJoin(input: {
+        readonly link: string;
+        readonly deviceLabel: string;
+        readonly secret: string;
+    }): Promise<Result<null>>;
+    finishLocalJoin(input: {
+        readonly link: string;
+    }): Promise<Result<{
+        readonly activated: boolean;
+    } | null>>;
     getWorkspace(): Promise<Result<WorkspaceView>>;
     startNewShop(input: {
         readonly confirmedName: string;
@@ -2013,13 +2104,7 @@ export interface ShopService {
     getReceipt(input: SessionRequest & {
         readonly saleId: string;
     }): Promise<Result<Receipt>>;
-    listReceipts(input: SessionRequest & PageQuery): Promise<Result<Page<{
-        readonly id: string;
-        readonly number: string;
-        readonly occurredAt: string;
-        readonly totalMinor: number;
-        readonly customerName?: string;
-    }>>>;
+    listReceipts(input: SessionRequest & PageQuery): Promise<Result<Page<ReceiptSummary>>>;
     taxSettings(input: SessionRequest): Promise<Result<TaxSettingsView>>;
     updateTaxSettings(input: SessionRequest & {
         readonly version?: string;
@@ -3295,6 +3380,60 @@ Encode a structurally validated bundle. This does not sign it or acknowledge del
 encodeExchangeBundle(bundle: ExchangeBundle): string;
 ```
 
+## [packages/contracts/src/local-sync.ts](../../packages/contracts/src/local-sync.ts)
+
+Maximum sealed direct-peer packet, including base64 overhead for a signed journal batch.
+
+```ts
+const MAX_LOCAL_PACKET_BYTES: number;
+```
+
+Authenticated encrypted direct-peer envelope; the header binds both devices, shop, purpose and request identity.
+
+```ts
+const localPacketSchema: ZodObject<{ header: ZodObject<{ format: ZodLiteral<"kolo.local-sync">; version: ZodLiteral<1>; id: ZodUUID; business_id: ZodUUID; sender_device_id: ZodUUID; receiver_device_id: ZodUUID; reply_to: ZodNullable<ZodUUID>; encryption_public_key: ZodString; ephemeral_public_key: ZodString; nonce: ZodString; }, $strict>; ciphertext: ZodString; tag: ZodString; signature: ZodString; }, $strict>;
+```
+
+Wire representation of an encrypted peer request or response.
+
+```ts
+export type LocalPacket = z.infer<typeof localPacketSchema>;
+```
+
+Same signed facts and durable acknowledgements as file exchange, inside a device-encrypted packet.
+
+```ts
+const localExchangePayloadSchema: ZodObject<{ batch: ZodNullable<ZodObject<{ batch: ZodObject<{ format: ZodLiteral<"kolo.events">; format_version: ZodLiteral<2>; batch_id: ZodUUID; business_id: ZodUUID; sender_device_id: ZodUUID; receiver_device_id: ZodUUID; created_at: ZodISODateTime; events: ZodArray<ZodObject<{ envelope: ZodObject<{ event_id: ZodUUID; business_id: ZodUUID; origin_device_id: ZodUUID; actor_id: ZodUUID; origin_sequence: ZodNumber; event_type: ZodString; event_version: ZodNumber; occurred_at: ZodISODateTime; branch_id: ZodNullable<ZodUUID>; authority_revision: ZodNumber; required_permissions: ZodArray<ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>>; payload: ZodRecord<ZodString, ZodJSONSchema>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>>; receipt: ZodNullable<ZodObject<{ receipt: ZodObject<{ format: ZodLiteral<"kolo.receipt">; format_version: ZodLiteral<1>; receipt_id: ZodUUID; business_id: ZodUUID; sender_device_id: ZodUUID; receiver_device_id: ZodUUID; batch_id: ZodUUID; created_at: ZodISODateTime; entries: ZodArray<ZodObject<{ event_id: ZodUUID; digest: ZodString; state: ZodEnum<{ stored: "stored"; applied: "applied"; deferred: "deferred"; unsupported: "unsupported"; }>; }, $strict>>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>>; }, $strict>;
+```
+
+Plaintext visible only inside the two approved apps.
+
+```ts
+export type LocalExchangePayload = z.infer<typeof localExchangePayloadSchema>;
+```
+
+Literal private/loopback IPv4 addresses only: no DNS, redirects, credentials or public endpoints.
+
+```ts
+localNetworkUrl(value: string): string;
+```
+
+QR invitation to a desktop on this Wi-Fi/hotspot; contains no shop data or reusable unlock credential.
+
+```ts
+formatLocalJoinLink(input: {
+    url: string;
+    fingerprint: string;
+    code: string;
+}): string;
+```
+
+Reads an exact local QR/pasted link, refusing public addresses and ambiguous duplicate parameters.
+
+```ts
+parseLocalJoinLink(value: string): { url: string; fingerprint: string; code: string; };
+```
+
 ## [packages/contracts/src/permissions.ts](../../packages/contracts/src/permissions.ts)
 
 Granular local permissions, retaining the archived server's role defaults.
@@ -4063,6 +4202,7 @@ export type FetchPort = (url: string, init: {
     headers: Record<string, string>;
     body?: string;
     signal: AbortSignal;
+    redirect?: "error";
 }) => Promise<{
     readonly status: number;
     text(): Promise<string>;
@@ -4130,6 +4270,29 @@ The server's handle for a code: a hash, so the mailbox never names the code itse
 joinIdOf(code: string, crypto: SealingCrypto): Promise<string>;
 ```
 
+Creates the authenticated join offer without choosing a transport; also used by a desktop's local mailbox.
+
+```ts
+prepareJoinOffer(context: OperationContext, crypto: SealingCrypto, input: {
+    readonly url: string;
+    readonly fingerprint: string;
+    readonly authorityAllowed: boolean;
+    readonly expiresAt: string;
+}): Promise<{ start: JoinStart; offer: { join_id: string; invite: { invite: { format: "kolo.pairing-invite"; format_version: 1; invite_id: string; business_id: string; business_name: string; owner_id: string; ... 6 more ...; authority_allowed: boolean; }; digest: string; signature: string; }; mac: string; }; }>;
+```
+
+Verifies that a candidate holds the QR's secret and requests this exact invite, regardless of mailbox transport.
+
+```ts
+inspectJoinCandidate(body: JoinRequestBody, crypto: SealingCrypto, start: JoinStart): Promise<JoinCandidate>;
+```
+
+Builds the approved snapshot and seals its random password to the candidate; the mailbox never receives its plaintext.
+
+```ts
+prepareJoinEnrollment(context: OperationContext, crypto: SealingCrypto, files: SnapshotPort, start: JoinStart, candidate: JoinCandidate): Promise<{ enrollment: string; sealed_password: { ephemeral_public_key: string; nonce: string; ciphertext: string; tag: string; }; mac: string; }>;
+```
+
 Owner side: creates an invite for one till, opens its mailbox on the connected server and returns the code to show
 (and the link for the QR code, which also carries the server's address and fingerprint).
 
@@ -4189,6 +4352,98 @@ True while this empty device has a join request waiting for the owner, so the ap
 
 ```ts
 joinPending(database: Database): boolean;
+```
+
+## [packages/core/src/application/local-join.ts](../../packages/core/src/application/local-join.ts)
+
+LAN-only mailbox HTTP transport. Redirects are refused so a private QR cannot send a request to a public endpoint.
+
+```ts
+localJoinTransport(url: string): SyncTransport;
+```
+
+A verified invitation from a local desktop; the owner identity is pinned by the QR and code authentication.
+
+```ts
+lookupLocalJoin(link: string, transport: SyncTransport, crypto: SealingCrypto): Promise<JoinInvitation>;
+```
+
+Posts this installation's signed local join request using the existing recipient-bound pairing protocol.
+
+```ts
+requestLocalJoin(link: string, invitation: JoinInvitation, input: {
+    label: string;
+    platform: "DESKTOP" | "ANDROID" | "IOS";
+    secret: string;
+}, ports: WorkspacePorts, transport: SyncTransport, crypto: SealingCrypto): Promise<void>;
+```
+
+Finishes owner-approved local enrollment and stores only this device's host address, after validating the signed snapshot.
+
+```ts
+finishLocalJoin(link: string, ports: WorkspacePorts, files: SnapshotPort, transport: SyncTransport, crypto: SealingCrypto): Promise<{ readonly database: Database; readonly installation: Installation; }>;
+```
+
+## [packages/core/src/application/local-sync.ts](../../packages/core/src/application/local-sync.ts)
+
+Encrypts to an approved device's X25519 key and signs the complete header/ciphertext with the native identity.
+
+```ts
+sealLocalPacket(context: OperationContext, peerId: string, recipientKey: string, payload: LocalExchangePayload, crypto: SealingCrypto, replyTo: string | null = null): Promise<{ header: { format: "kolo.local-sync"; version: 1; id: string; business_id: string; sender_device_id: string; receiver_device_id: string; encryption_public_key: string; ephemeral_public_key: string; nonce: string; reply_to?: string; }; ciphertext: string; tag: string; signature: string; }>;
+```
+
+Verifies current shop/device trust before decryption; private keys never leave the vault.
+
+```ts
+openLocalPacket(context: OperationContext, input: unknown, crypto: SealingCrypto, replyTo: string | null = null): Promise<{ packet: { header: { format: "kolo.local-sync"; version: 1; id: string; business_id: string; sender_device_id: string; receiver_device_id: string; encryption_public_key: string; ephemeral_public_key: string; nonce: string; reply_to?: string; }; ciphertext: string; tag: string; signature: string; }; payload:...;
+```
+
+Desktop-side direct exchange: apply authenticated facts/receipts and return an encrypted signed response.
+
+```ts
+answerLocalExchange(context: OperationContext, input: unknown, crypto: SealingCrypto): Promise<{ header: { format: "kolo.local-sync"; version: 1; id: string; business_id: string; sender_device_id: string; receiver_device_id: string; encryption_public_key: string; ephemeral_public_key: string; nonce: string; reply_to?: string; }; ciphertext: string; tag: string; signature: string; }>;
+```
+
+Connects a paired device to a literal LAN address. This device-local setting never becomes a signed business fact.
+
+```ts
+connectLocalPeer(context: OperationContext, peerId: string, url: string): void;
+```
+
+A known local host and the last delivery outcome, scoped to the unlocked shop.
+
+```ts
+export interface LocalPeerConnection {
+    readonly deviceId: string;
+    readonly label: string;
+    readonly url: string | null;
+    readonly lastSuccessAt: string | null;
+    readonly lastError: string | null;
+}
+```
+
+Paired local hosts configured on this device only.
+
+```ts
+localPeerConnections(context: OperationContext): readonly LocalPeerConnection[];
+```
+
+Client-side bidirectional sync with retry-safe journal facts and durable receiver receipts, over a local HTTP connection.
+
+```ts
+synchronizeLocalPeer(context: OperationContext, peerId: string, crypto: SealingCrypto, fetcher: FetchPort = (url, init) => fetch(url, init)): Promise<{ sent: number; received: number; }>;
+```
+
+Foreground schedule shared by desktop and mobile; individual host failures never prevent another host or local sales.
+
+```ts
+class LocalSyncScheduler {
+  constructor(crypto: SealingCrypto, fetcher?: FetchPort, now = () => Date.now());
+  /** Brings the next exchange forward after a local change or return to the foreground. */
+  soon(): void;
+  /** Runs at most one pass at a time, only while a valid signed-in context is available. */
+  tick(context: OperationContext | undefined): Promise<void>;
+}
 ```
 
 ## [packages/core/src/application/notifications.ts](../../packages/core/src/application/notifications.ts)
@@ -4665,6 +4920,7 @@ export interface Receipt {
     readonly totalMinor: number;
     readonly paidMinor: number;
     readonly outstandingMinor: number;
+    readonly customerAccount?: CustomerSettlement | undefined;
     readonly tax?: {
         readonly label: string;
         readonly registration?: string | undefined;
@@ -4681,6 +4937,8 @@ export interface ReceiptSummary {
     readonly number: string;
     readonly occurredAt: string;
     readonly totalMinor: number;
+    readonly paidMinor: number;
+    readonly outstandingMinor: number;
     readonly customerName?: string;
 }
 ```
@@ -4697,7 +4955,7 @@ Keyset receipt history, newest first, bounded 1–100 and scoped to current sale
 receipts(context: OperationContext, query: PageQuery = {}): Page<ReceiptSummary>;
 ```
 
-Bounded customer/supplier ledger page, newest first; preserves signs and references, and adds `balance_minor`, the running balance after each entry.
+Bounded customer/supplier ledger page, newest first; includes running `balance_minor` and customer sale `sale_total_minor`/`sale_paid_minor` facts.
 
 ```ts
 statement(context: OperationContext, kind: "customer" | "supplier", id: string, query: PageQuery = {}): Page<Row>;
@@ -6521,6 +6779,14 @@ Forward-only F1 schema. Pending setup stores intent, never credentials.
 
 ```ts
 const LOCAL_AUTHORITY_MIGRATION: Migration;
+```
+
+## [packages/core/src/data/database/local-network-migration.ts](../../packages/core/src/data/database/local-network-migration.ts)
+
+Per-installation local network settings and direct-peer delivery status; never copied into backups/pairing snapshots.
+
+```ts
+const LOCAL_NETWORK_MIGRATION: Migration;
 ```
 
 ## [packages/core/src/data/database/migrations.ts](../../packages/core/src/data/database/migrations.ts)
@@ -10127,6 +10393,25 @@ Credit policy compares exact prospective debt, including an existing credit bala
 
 ```ts
 exceedsCreditLimit(outstandingMinor: number, furtherMinor: number, limitMinor: number | undefined): boolean;
+```
+
+## [packages/core/src/rules/customer-settlement.ts](../../packages/core/src/rules/customer-settlement.ts)
+
+How an amount posted to a customer's account uses prepaid credit and adds debt.
+
+```ts
+export interface CustomerSettlement {
+    readonly balanceBeforeMinor: number;
+    readonly balanceAfterMinor: number;
+    readonly creditAppliedMinor: number;
+    readonly debtAddedMinor: number;
+}
+```
+
+Positive balances are owed by the customer; negative balances are credit held by the shop.
+
+```ts
+customerSettlement(balanceBeforeMinor: number, onAccountMinor: number): CustomerSettlement;
 ```
 
 ## [packages/core/src/rules/pricing.ts](../../packages/core/src/rules/pricing.ts)

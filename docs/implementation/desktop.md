@@ -121,6 +121,33 @@ version, as products are. Archived customers cannot buy or pay. A payment's requ
 its ledger entry ID; paying more than is owed leaves the customer in advance. Statements
 are newest-first, bounded and signed (sales positive, payments negative).
 
+The till offers **Set as debt** with a labelled money-received field (zero means no
+payment), and **Pay now** with split payments. A selected customer's prepaid balance
+reduces the automatic amount to collect. Posting a sale to the account consumes an
+advance before adding debt; no cash movement is invented for the credit used. The
+preview, receipt and statement distinguish credit used, new debt and the resulting
+signed balance. Customer statements also show the originating receipt, full sale total
+and money received at checkout; receipt history shows total, received and posted to the
+account. Receipt account balances use the same chronological ledger order as statements
+and require `customers.view`. They describe that sale, independently of later payments.
+The optional `expectedCustomerBalanceMinor` checkout hint rejects a new command with
+`request_conflict` if the displayed balance changed, but matching saved retries still
+return the original sale. The till refreshes the selected balance after a conflict.
+
+The pairing panel defaults to local QR joins over the same Wi-Fi/hotspot, without
+internet or a separate server (ADR-034). The owner shows a code, the phone scans it (a
+new PC pastes the copied link), and the owner allows the named till. The desktop app
+hosts only an authenticated join mailbox and encrypted direct exchange. Local access
+stops on lock, shutdown or shop switch and resumes on the saved port while unlocked
+if enabled. Both devices must stay on the same network; Windows may ask to allow KOLO
+on the private network. The panel shows paired-device delivery status and can stop
+local access. A new desktop can choose **Join a nearby shop** on its entry screen.
+
+Connected-server joining remains under its own disclosure, and file pairing remains
+available. Server connection/disconnection explicitly notifies the shell after
+persistence. The join component survives read refreshes while its QR is active.
+QR generation failures show a message and retain the short code/address as a fallback.
+
 Committed domain invalidations send no business data. DOM views reread current bounded
 pages and drop obsolete async responses. Failed commands retain forms/cart. After an
 ambiguous transport failure, the submitted draft freezes and retry uses the same ID
@@ -311,7 +338,9 @@ The planned desktop software packages are implemented. F5 stays open for accepta
 cannot be proven from Linux Node/Electron runs:
 
 - Windows: run the supplied NSIS/portable build and installed upgrade/native-vault
-  acceptance jobs; verify signing and the manual installer update procedure.
+  acceptance jobs; verify signing and the manual installer update procedure. Install the
+  Microsoft Store package from a Partner Center submission and run a shop day; its data lives
+  in the package's virtualized `%APPDATA%` (see [releasing](../releasing.md#microsoft-store-windows)).
 - Hardware: physical barcode scanners and receipt printers on shop PCs; optional ESC/POS
   adapter and cash drawer if the user wants them.
 - Measured startup/search/report/memory budgets on target hardware, crash/close recovery

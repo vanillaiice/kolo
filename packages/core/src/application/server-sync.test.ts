@@ -147,7 +147,7 @@ it("schema 24 with devices referenced from sales upgrades to the latest schema k
     old.run(`INSERT INTO ${table}(${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`, columns.map(column => row[column]!));
   }
   assert.throws(() => old.run(`UPDATE devices SET platform='SERVER'`));
-  assert.deepEqual(migrate(old).applied.map(m => m.version), [25, 26, 27, 28]);
+  assert.deepEqual(migrate(old).applied.map(m => m.version), MIGRATIONS.filter(m => m.version > 24).map(m => m.version));
   assert.deepEqual(old.all(`PRAGMA foreign_key_check`), []);
   assert.equal(old.get(`SELECT count(*) AS n FROM devices`)!["n"], a.db.get(`SELECT count(*) AS n FROM devices`)!["n"]);
   assert.ok(old.all(`PRAGMA foreign_key_list(sales)`).some(fk => fk["table"] === "devices"));

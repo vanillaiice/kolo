@@ -94,7 +94,7 @@ export function Devices({service,sessionId,revision}:{readonly service:ShopServi
       <div className="panel"><h2>{t("backupTitle")}</h2><SaveBackup service={service} sessionId={sessionId}/></div>
       <div className="panel"><h2>{t("pairTitle")}</h2><AddTill service={service} sessionId={sessionId} revision={revision}/></div>
       <div className="panel wide"><h2>{t("exchangeTitle")}</h2><Exchange service={service} sessionId={sessionId} revision={revision}/></div>
-      <div className="panel wide"><h2>{t("syncTitle")}</h2><SyncServer service={service} sessionId={sessionId} revision={revision}/></div>
+      <div className="panel wide" id="sync-server-panel"><h2>{t("syncTitle")}</h2><SyncServer service={service} sessionId={sessionId} revision={revision}/></div>
       <div className="panel wide"><h2>{t("restoreTitle")}</h2><Restore service={service} sessionId={sessionId} onDone={()=>undefined}/></div>
     </div>
   </section>;
@@ -113,31 +113,56 @@ function SaveBackup({service,sessionId}:{service:ShopService;sessionId:string}):
 /** Adding a till: by code through the connected server, or by files when there is no server. */
 function AddTill({service,sessionId,revision}:{service:ShopService;sessionId:string;revision:number}):React.JSX.Element{
   const {t}=useText(),state=useRead(()=>service.serverState({sessionId}),[service,sessionId,revision]);
-  if(state.data===undefined)return <p className="muted">{t("loadingServer")}</p>;
-  if(state.data.servers.length===0)return <><p className="hint">{t("joinNeedsServer")}</p><Pair service={service} sessionId={sessionId}/></>;
-  return <><JoinByCode service={service} sessionId={sessionId}/><details className="support"><summary>{t("pairByFiles")}</summary><Pair service={service} sessionId={sessionId}/></details></>;
+  const [remoteAvailable,setRemoteAvailable]=useState(false);
+  useEffect(()=>{if(state.data!==undefined)setRemoteAvailable(state.data.servers.length>0);},[state.data]);
+  return <><JoinByCode service={service} sessionId={sessionId} local/>
+    {remoteAvailable&&<details className="support"><summary>{t("joinThroughServer")}</summary><JoinByCode service={service} sessionId={sessionId}/></details>}
+    <details className="support"><summary>{t("pairByFiles")}</summary><Pair service={service} sessionId={sessionId}/></details>
+    <LocalNetworkStatus service={service} sessionId={sessionId} revision={revision}/></>;
+}
+/** Empty computer joins by a copied QR link; the peer must still be allowed on the main till. */
+export function JoinLocalComputer({service,onDone,onBack}:{service:ShopService;onDone:()=>void;onBack:()=>void}):React.JSX.Element{
+  const {t}=useText(),action=useAction(),[link,setLink]=useState(""),[shop,setShop]=useState<string>(),[label,setLabel]=useState(t("defaultTill")),[secret,setSecret]=useState(""),[confirm,setConfirm]=useState(""),[waiting,setWaiting]=useState(false);
+  useEffect(()=>{if(!waiting)return;let live=true,running=false;const timer=setInterval(()=>{if(running)return;running=true;void service.finishLocalJoin({link}).then(result=>{if(!live)return;if(!result.ok){action.setError(result.error);return;}if(result.value?.activated){live=false;onDone();}}).catch(()=>{if(live)action.setError({code:"local_network_unavailable"});}).finally(()=>{running=false;});},2000);return()=>{live=false;clearInterval(timer);};},[service,link,waiting,onDone]);
+  return <AuthPage title={t("joinLocalShop")} description={t("joinLocalEntryHelp")} context="KOLO" onBack={onBack} busy={action.busy} aside={<p>{t("localJoinHelp")}</p>}>
+    {waiting?<><p className="notice">{t("joinWaiting")}</p><button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.cancelPairing()).then(()=>{setWaiting(false);setShop(undefined);});}}>{t("cancelPairing")}</button></>:<form onSubmit={event=>{event.preventDefault();void (async()=>{if(shop===undefined){const result=await action.run(()=>service.lookupLocalJoin({link}));if(result!==undefined)setShop(result.businessName);return;}if(secret!==confirm){action.setError({code:"codesMismatch"});return;}const result=await action.run(()=>service.requestLocalJoin({link,deviceLabel:label,secret}));if(result!==undefined){setSecret("");setConfirm("");setWaiting(true);}})();}}><fieldset disabled={action.busy}>
+      <Field id="local-pairing-link" label={t("pairingLink")} value={link} onChange={value=>{setLink(value);setShop(undefined);}} maxLength={4096}/>
+      {shop!==undefined&&<><h2>{shop}</h2><Field id="local-join-label" label={t("deviceName")} value={label} onChange={setLabel}/><Field id="local-join-secret" label={t("newSecret")} value={secret} onChange={setSecret} secret/><Field id="local-join-confirm" label={t("confirmSecret")} value={confirm} onChange={setConfirm} secret/></>}
+      <button className="primary" type="submit" disabled={link.trim()===""}>{t(shop===undefined?"continueSetup":"askLocalJoin")}</button>
+    </fieldset></form>}<ErrorText message={action.error}/>
+  </AuthPage>;
+}
+function LocalNetworkStatus({service,sessionId,revision}:{service:ShopService;sessionId:string;revision:number}):React.JSX.Element{
+  const {t,language}=useText(),action=useAction(),[refresh,setRefresh]=useState(0),[notice,setNotice]=useState<string>();
+  const state=useRead(()=>service.localNetworkState({sessionId}),[service,sessionId,revision,refresh]);
+  return <div className="transfer-step"><ReadState loading={state.loading} error={state.error} empty={false} emptyText="" retry={state.retry}>
+    {state.data?.running&&<><p className="hint">{t("localSyncRunning")}</p>{state.data.urls.map(url=><code key={url}>{url}</code>)}<button className="text-button" disabled={action.busy} onClick={()=>{void action.run(()=>service.stopLocalNetwork({sessionId})).then(()=>setRefresh(x=>x+1));}}>{t("stopLocalSync")}</button></>}
+    {state.data?.connections.map(peer=><div className="file-summary" key={peer.deviceId}><strong>{peer.label}</strong><span>{peer.url}</span><span>{peer.lastError===null?t("lastSync"):t("local_network_unavailable")} {peer.lastSuccessAt===null?t("neverSynced"):new Date(peer.lastSuccessAt).toLocaleString(language==="fr"?"fr-FR":"en-GB")}</span></div>)}
+    {(state.data?.connections.length??0)>0&&<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.syncLocalNetwork({sessionId})).then(result=>{setRefresh(x=>x+1);if(result!==undefined)setNotice(`${t("syncDone")} · ${result.sent} ${t("sentCount")} · ${result.received} ${t("receivedCount")}`);});}}>{t("syncNow")}</button>}
+  </ReadState>{notice!==undefined&&<p role="status" className="notice success">{notice}</p>}<ErrorText message={action.error}/></div>;
 }
 /**
  * The owner's side of joining by code (ADR-032): a short code and its QR code, then the new till's name to allow.
  * Nothing to compare or type on this computer.
  */
-function JoinByCode({service,sessionId}:{service:ShopService;sessionId:string}):React.JSX.Element{
+function JoinByCode({service,sessionId,local=false}:{service:ShopService;sessionId:string;local?:boolean}):React.JSX.Element{
   const {t}=useText(),action=useAction();
   const [authority,setAuthority]=useState(false),[join,setJoin]=useState<JoinCodeView>(),[status,setStatus]=useState<JoinStatusView>(),[qr,setQr]=useState<string>(),[done,setDone]=useState<string>();
-  useEffect(()=>{if(join===undefined){setQr(undefined);return;}let live=true;void QRCode.toString(join.link,{type:"svg",margin:1,errorCorrectionLevel:"M"}).then(svg=>{if(live)setQr(`data:image/svg+xml;base64,${btoa(svg)}`);});return()=>{live=false;};},[join]);
+  const [qrFailed,setQrFailed]=useState(false);
+  useEffect(()=>{setQr(undefined);setQrFailed(false);if(join===undefined)return;let live=true;void QRCode.toString(join.link,{type:"svg",margin:1,errorCorrectionLevel:"M"}).then(svg=>{if(live)setQr(`data:image/svg+xml;base64,${btoa(svg)}`);}).catch(()=>{if(live)setQrFailed(true);});return()=>{live=false;};},[join]);
   // Ask the server every two seconds until the new till asks, the code expires or the owner answers.
   useEffect(()=>{
     if(join===undefined||status?.state==="requested"||status?.state==="expired")return;
-    const timer=setInterval(()=>{void service.pollJoinCode({sessionId,joinId:join.joinId}).then(result=>{if(result.ok)setStatus(result.value);else{setStatus({state:"expired"});}});},2000);
+    const timer=setInterval(()=>{void (local?service.pollLocalJoin({sessionId,joinId:join.joinId}):service.pollJoinCode({sessionId,joinId:join.joinId})).then(result=>{if(result.ok)setStatus(result.value);else{setStatus({state:"expired"});}}).catch(()=>setStatus({state:"expired"}));},2000);
     return()=>clearInterval(timer);
-  },[service,sessionId,join,status]);
-  const start=():void=>{setDone(undefined);setStatus(undefined);void action.run(()=>service.startJoinCode({sessionId,authorityAllowed:authority})).then(value=>{if(value!==undefined)setJoin(value);});};
-  const stop=(refused:boolean):void=>{const current=join;setJoin(undefined);setStatus(undefined);if(current!==undefined)void service.cancelJoinCode({sessionId,joinId:current.joinId});if(refused)setDone(undefined);};
-  const allow=():void=>{if(join===undefined||status?.state!=="requested")return;const label=status.label;void action.run(()=>service.approveJoinCode({sessionId,joinId:join.joinId})).then(value=>{if(value!==undefined){setJoin(undefined);setStatus(undefined);setDone(label);}});};
+  },[service,sessionId,join,status,local]);
+  const start=():void=>{setDone(undefined);setStatus(undefined);void action.run(()=>local?service.startLocalJoin({sessionId,authorityAllowed:authority}):service.startJoinCode({sessionId,authorityAllowed:authority})).then(value=>{if(value!==undefined)setJoin(value);});};
+  const stop=(refused:boolean):void=>{const current=join;setJoin(undefined);setStatus(undefined);if(current!==undefined)void (local?service.cancelLocalJoin({sessionId,joinId:current.joinId}):service.cancelJoinCode({sessionId,joinId:current.joinId}));if(refused)setDone(undefined);};
+  const allow=():void=>{if(join===undefined||status?.state!=="requested")return;const label=status.label;void action.run(()=>local?service.approveLocalJoin({sessionId,joinId:join.joinId}):service.approveJoinCode({sessionId,joinId:join.joinId})).then(value=>{if(value!==undefined){setJoin(undefined);setStatus(undefined);setDone(label);}});};
   if(join===undefined)return <div className="transfer-step">
-    <p className="hint">{t("joinCodeHelp")}</p>
+    <p className="hint">{t(local?"localJoinHelp":"joinCodeHelp")}</p>
     <label className="check"><input type="checkbox" checked={authority} onChange={event=>setAuthority(event.target.checked)}/>{t("allowStaff")}</label>
-    <button className="primary" disabled={action.busy} onClick={start}>{t(action.busy?"preparing":"showJoinCode")}</button>
+    <button className="primary" id={local?"show-local-join":undefined} disabled={action.busy} onClick={start}>{t(action.busy?"preparing":"showJoinCode")}</button>
     {done!==undefined&&<p role="status" className="notice success">{t("tillJoined")} {done}</p>}
     <ErrorText message={action.error}/></div>;
   return <div className="transfer-step join-code">
@@ -149,8 +174,10 @@ function JoinByCode({service,sessionId}:{service:ShopService;sessionId:string}):
     </>:status?.state==="expired"?<><p className="notice error">{t("joinExpired")}</p><button className="secondary" onClick={()=>{stop(false);}}>{t("close")}</button></>:<>
       <p className="hint">{t("joinScanHelp")}</p>
       {qr!==undefined&&<img className="join-qr" src={qr} alt={t("joinQrAlt")}/>}
+      {qrFailed&&<p role="alert" className="notice error">{t("joinQrFailed")}</p>}
       <code className="join-big-code">{join.code}</code>
       <p className="hint">{t("joinAddress")} <code>{join.url}</code></p>
+      {local&&<><p className="hint">{t("localJoinHelp")}</p><button className="secondary" onClick={()=>{void navigator.clipboard.writeText(join.link);}}>{t("copyPairingLink")}</button><code className="share-code">{join.link}</code></>}
       <p className="hint">{t("joinWaiting")}</p>
       <button className="text-button" onClick={()=>stop(true)}>{t("cancel")}</button>
     </>}

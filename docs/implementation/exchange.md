@@ -156,6 +156,21 @@ during a pass. File exchange is unchanged and stays readable by peers without ke
 `pendingShopServer` carry the owner's server address (`SERVER_ENDPOINT_SET`/`CLEARED`) to other tills; `disconnectServer`
 records a per-till opt-out.
 
+## Direct local-network exchange (ADR-034)
+
+The standalone desktop now offers QR pairing over the same Wi-Fi/hotspot without a separate sync server.
+See [ADR-034](../adr/ADR-034-local-network-pairing-and-sync.md). Desktop owns the short-lived local join
+mailbox and encrypted direct-exchange listener; mobile and a new desktop use the existing pairing proof,
+owner approval and snapshot activation. Local QR links use `kolo://local`, literal private IPv4 addresses,
+the pinned host fingerprint and the same ten-minute join code authentication as server mailbox joins.
+
+`application/local-sync` encrypts signed journal batches/receipts to approved native device keys, validates
+current trust and response binding, and exchanges changes in bounded retry-safe rounds. The shared foreground
+schedule runs each minute and soon after a local change. The listener is closed on lock/shutdown/shop switch.
+Migration 29's listener and peer-address/status tables are installation-local and removed from portable
+snapshots. A client's host address is installed in staging only after snapshot verification, before activation.
+The existing immutable business/events/receipt contracts and server/file destinations are preserved.
+
 ## F8 Bluetooth framing
 
 Bluetooth carries the same authenticated batch/receipt format. Framing needs transfer

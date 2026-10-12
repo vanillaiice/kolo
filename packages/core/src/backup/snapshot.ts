@@ -19,7 +19,7 @@ export function sanitizeSnapshot(database:Database,sourceDeviceId:string):void{
  database.run("PRAGMA secure_delete=ON");
  database.transaction(tx=>{
   // Server connections and opt-outs belong to the source till; a receiving till connects on its own (ADR-030).
-  for(const table of ["device_session","local_credential_recovery","local_member_setup","workspace_setup","workspace_enrollment","pairing_invites","server_endpoints","server_endpoint_declined","notification_state"])if(tx.get(`SELECT name FROM sqlite_schema WHERE type='table' AND name=?`,[table])!==undefined)tx.run(`DELETE FROM ${table}`);
+  for(const table of ["device_session","local_credential_recovery","local_member_setup","workspace_setup","workspace_enrollment","pairing_invites","server_endpoints","server_endpoint_declined","notification_state","local_network_listener","local_peer_connections"])if(tx.get(`SELECT name FROM sqlite_schema WHERE type='table' AND name=?`,[table])!==undefined)tx.run(`DELETE FROM ${table}`);
   tx.run(`DELETE FROM local_installation`);
   tx.run(`UPDATE local_memberships SET credential_reference='remote.'||?||'.'||user_id,failures=0,next_attempt_at=NULL`,[sourceDeviceId]);
  });
@@ -50,6 +50,7 @@ export async function validateSnapshot(database:Database,manifest:SnapshotManife
   if(database.all(`PRAGMA table_info(${table})`).some(row=>row["name"]==="business_id")&&database.get(`SELECT 1 AS mismatch FROM ${table} WHERE business_id<>? OR business_id IS NULL LIMIT 1`,[manifest.business.id])!==undefined)throw new TransferError("scope_mismatch");
  }
  for(const table of ["local_installation","device_session","workspace_setup","local_credential_recovery","local_member_setup",...(manifest.schema_version>=18?["workspace_enrollment","pairing_invites"]:[])])if(database.get(`SELECT count(*) AS n FROM ${table}`)?.["n"]!==0)throw new TransferError("invalid_snapshot");
+ if(manifest.schema_version>=29)for(const table of ["local_network_listener","local_peer_connections"])if(database.get(`SELECT count(*) AS n FROM ${table}`)?.["n"]!==0)throw new TransferError("invalid_snapshot");
  if(database.get(`SELECT user_id FROM local_memberships WHERE credential_reference NOT LIKE 'remote.%' LIMIT 1`)!==undefined)throw new TransferError("invalid_snapshot");
  if(canonicalJson(snapshotBoundary(database,manifest.business.id))!==canonicalJson(manifest.boundary))throw new TransferError("invalid_snapshot");
  const origin=database.get(`SELECT t.public_key,d.active FROM trusted_exchange_devices t JOIN devices d ON d.id=t.device_id AND d.business_id=t.business_id WHERE t.business_id=? AND t.device_id=?`,[manifest.business.id,manifest.source_device_id]);

@@ -1,11 +1,13 @@
 import type { Permission } from "@kolo/core/identity/permissions";
-import type { Receipt, Page, PageQuery } from "@kolo/core/application/queries";
+import type { Receipt, ReceiptSummary, Page, PageQuery } from "@kolo/core/application/queries";
+import type { LocalPeerConnection } from "@kolo/core/application/local-sync";
+import type { JoinInvitation } from "@kolo/core/application/join";
 
 /** Stable application failures; native exception text, credentials and paths never cross the bridge. */
 export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" |
   "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" |
   "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" |
-  "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" |
+  "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" |
   /** File transfer failures; file contents and paths never cross the bridge. */
   "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" |
   "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" |
@@ -95,6 +97,8 @@ export interface CheckoutRequest extends SessionRequest {
   readonly requestId: string; readonly accountId?: string;
   readonly payments?: readonly { readonly accountId: string; readonly amountMinor: number }[];
   readonly customerId?: string;
+  /** Refuses a new sale if the displayed customer balance changed; matching retries remain idempotent. */
+  readonly expectedCustomerBalanceMinor?: number;
   /** Whole-sale discount in francs, taken after the lines; needs sales.discount. */
   readonly discountMinor?: number;
   readonly lines: readonly { readonly productId: string; readonly quantity: number; readonly unitPriceMinor: number }[];
@@ -115,6 +119,8 @@ export interface CustomerDetails {
 /** One immutable customer ledger entry, newest first; payments are negative. */
 export interface StatementEntryView {
   readonly id: string; readonly occurredAt: string; readonly type: string; readonly amountMinor: number; readonly saleId?: string; readonly purchaseId?: string; readonly note?: string;
+  /** Sale total and money received at checkout, when this entry came from a customer sale. */
+  readonly saleTotalMinor?: number; readonly salePaidMinor?: number;
   /** Running balance after this entry (positive: owed), summed oldest first over the whole ledger. */
   readonly balanceMinor: number;
 }
@@ -216,6 +222,8 @@ export interface ServerPreview { readonly url: string; readonly fingerprint: str
   readonly attached: boolean; }
 /** A code shown to add one till (ADR-032); `link` is what the QR code carries. */
 export interface JoinCodeView { readonly joinId: string; readonly code: string; readonly link: string; readonly url: string; readonly expiresAt: string; readonly authorityAllowed: boolean; }
+/** App-local listener addresses and this computer's paired local hosts. Internet and a separately installed server are unnecessary. */
+export interface LocalNetworkView { readonly running:boolean;readonly urls:readonly string[];readonly connections:readonly LocalPeerConnection[]; }
 /** Whether the new till has asked to join; its name is shown before the owner allows it. */
 export type JoinStatusView = { readonly state: "waiting" | "expired" } | { readonly state: "requested"; readonly label: string; readonly platform: string };
 /** One synchronization pass; `untrusted` facts wait for the owner's approval of their device, `locked` facts for a shop key. */
@@ -259,6 +267,26 @@ export interface PhotoView { readonly digest: string; readonly dataUrl: string }
 export interface PhotoUsage { readonly photos: number; readonly bytes: number; readonly limitBytes: number }
 
 export interface ShopService {
+  /** Starts/resumes the local listener if enabled, and reads its LAN addresses and direct-peer connections. */
+  localNetworkState(input:SessionRequest):Promise<Result<LocalNetworkView>>;
+  /** Disables the local listener on this computer; stored peer trust and business data remain. */
+  stopLocalNetwork(input:SessionRequest):Promise<Result<null>>;
+  /** Shows a local QR invitation for one new phone or computer on the same Wi-Fi/hotspot. */
+  startLocalJoin(input:SessionRequest & {readonly authorityAllowed:boolean;readonly url?:string}):Promise<Result<JoinCodeView>>;
+  /** The local candidate's name, for owner approval. */
+  pollLocalJoin(input:SessionRequest & {readonly joinId:string}):Promise<Result<JoinStatusView>>;
+  /** Approves and delivers the encrypted snapshot directly to the candidate. */
+  approveLocalJoin(input:SessionRequest & {readonly joinId:string}):Promise<Result<null>>;
+  /** Revokes a pending local QR invitation. */
+  cancelLocalJoin(input:SessionRequest & {readonly joinId:string}):Promise<Result<null>>;
+  /** Immediately exchanges queued signed/encrypted changes with configured local hosts. */
+  syncLocalNetwork(input:SessionRequest):Promise<Result<{readonly sent:number;readonly received:number}>>;
+  /** Empty computer: verifies a pasted local QR link and reads whose shop it opens. */
+  lookupLocalJoin(input:{readonly link:string}):Promise<Result<JoinInvitation>>;
+  /** Empty computer: asks to join with a native identity and its own unlock code. */
+  requestLocalJoin(input:{readonly link:string;readonly deviceLabel:string;readonly secret:string}):Promise<Result<null>>;
+  /** Empty computer: activates the owner-approved shop when ready; null while waiting. */
+  finishLocalJoin(input:{readonly link:string}):Promise<Result<{readonly activated:boolean}|null>>;
   /** Public boot status; no credentials or key references are returned. */
   getWorkspace(): Promise<Result<WorkspaceView>>;
   /**
@@ -483,7 +511,7 @@ export interface ShopService {
   getReceipt(input: SessionRequest & { readonly saleId: string }): Promise<Result<Receipt>>;
   /** Bounded actor-scoped saved receipt history. */
   /** Newest-first receipt history with each sale's exact total and customer, if any. */
-  listReceipts(input: SessionRequest & PageQuery): Promise<Result<Page<{ readonly id: string; readonly number: string; readonly occurredAt: string; readonly totalMinor: number; readonly customerName?: string }>>>;
+  listReceipts(input: SessionRequest & PageQuery): Promise<Result<Page<ReceiptSummary>>>;
   /** The shop's tax settings; any signed-in member may read them. */
   taxSettings(input: SessionRequest): Promise<Result<TaxSettingsView>>;
   /** Saves tax settings under business.settings from the displayed version (absent before the first save). */

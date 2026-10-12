@@ -2,9 +2,7 @@
 
 Each ADR records one decision, its context, and its consequences.
 
-An ADR is immutable once accepted. To change a decision, write a new ADR that
-supersedes it; do not edit history. This mirrors the system's own rule that
-corrections are new records rather than destructive edits.
+Accepted ADRs preserve decision history. Changes belong in a superseding ADR.
 
 | ADR | Decision | Status |
 |---|---|---|
@@ -24,33 +22,21 @@ corrections are new records rather than destructive edits.
 | [014](ADR-014-client-writes-and-the-sync-outbox.md) | Client writes and the sync outbox | Accepted |
 | [015](ADR-015-last-write-wins-for-products.md) | Last-write-wins for products, customers, accounts and suppliers | Accepted |
 | [016](ADR-016-expo-and-the-device-sqlite-driver.md) | Expo, and the device's SQLite driver | Accepted |
-
 | [017](ADR-017-typescript-workspaces-and-optional-server.md) | TypeScript workspaces, Electron desktop, optional NestJS server | Server framework superseded by ADR-025 |
 | [018](ADR-018-standalone-editions-and-local-authority.md) | Standalone editions and local authority | Accepted |
 | [019](ADR-019-event-exchange-and-destination-delivery.md) | Event exchange and per-destination delivery | Accepted |
-
 | [020](ADR-020-local-credential-policy.md) | Native local credentials and recovery | Implemented candidate; platform gate pending |
-
 | [021](ADR-021-signed-journal-and-late-event-policy.md) | Signed journal, destination receipts and late-event policy | Implemented core; native verification pending |
-
-ADR-001 through ADR-009 record the baseline established by `SPECIFICATION.md`
-(§63). They are written down so that later work has something concrete to
-consult and supersede, per §55.
-
-- [ADR-022: Encrypted files and approved snapshots](ADR-022-encrypted-files-and-approved-snapshots.md)
-
-- [ADR-023: Partial returns and source ordering](ADR-023-partial-returns-and-source-ordering.md): exact compensating returns and competing offline source chains.
-
-- [ADR-024: Licensing and paid cosmetic unlocks](ADR-024-licensing-and-paid-unlocks.md): clients GPL-3.0, server AGPL-3.0 (amended 2026-10-11); draft trademark, offline-signed one-time branding unlock.
-
-- [ADR-025: Fastify for the optional server](ADR-025-fastify-server.md): replaces NestJS/Express; TypeScript, pg and shared contracts stay.
-
-- [ADR-026: Compressed transfer files and larger snapshots](ADR-026-compressed-transfer-files.md): deflate before encryption (format v2), bounded inflation, 128 MiB snapshots; supersedes ADR-022 limits.
-
-- [ADR-027: Opt-in large transfer files and optional product photos](ADR-027-large-files-and-product-photos.md): standard/large size profiles, per-computer switch; photo thumbnails in migration 22.
-- [ADR-028](ADR-028-additional-product-categories.md): one main category for reports plus up to 20 others for browsing (migration 23).
-- [ADR-029: Sync server relay, enrollment, sessions and propagated device trust](ADR-029-sync-server-relay.md): owner-signed device trust, migration 25, server-as-destination relay without business application (F6a).
-- [ADR-030: End-to-end encrypted sync and single-use connection codes](ADR-030-end-to-end-encryption-and-connection-codes.md): tills hold the shop key, the server routes sealed facts; per-shop single-use codes replace the enrollment code; operator dashboard (implemented, F6b/F6c).
-- [ADR-031: Hosted subscriptions with manual billing](ADR-031-hosted-subscriptions-manual-billing.md): selfhost/hosted editions, one plan per shop, operator-recorded payments, grace then a transfer-only pause, provider-neutral webhook (F7).
-- [ADR-032: Adding a till with a short code](ADR-032-join-by-code.md): owner shows a 10-character code or QR, the new phone scans it, the owner taps Allow; code-tagged pairing through a server mailbox, file pairing kept offline.
-- [ADR-033: Tax included in prices, payment terms and local notifications](ADR-033-tax-payment-terms-notifications.md): tax-inclusive rates frozen per sale line, terms in days with oldest-first aging, derived per-user alerts (migration 28).
+| [022](ADR-022-encrypted-files-and-approved-snapshots.md) | Encrypted files and approved snapshots | Size limits superseded by ADR-026/027 |
+| [023](ADR-023-partial-returns-and-source-ordering.md) | Partial returns and source ordering | Accepted |
+| [024](ADR-024-licensing-and-paid-unlocks.md) | Licensing and paid cosmetic unlocks | Server license amended to AGPL-3.0-only |
+| [025](ADR-025-fastify-server.md) | Fastify for the optional server | Accepted |
+| [026](ADR-026-compressed-transfer-files.md) | Compressed transfer files and larger snapshots | Accepted |
+| [027](ADR-027-large-files-and-product-photos.md) | Large transfer files and optional product photos | Accepted |
+| [028](ADR-028-additional-product-categories.md) | Main and additional product categories | Accepted |
+| [029](ADR-029-sync-server-relay.md) | Sync relay, enrollment, sessions and device trust | Accepted |
+| [030](ADR-030-end-to-end-encryption-and-connection-codes.md) | Encrypted sync and single-use connection codes | Accepted |
+| [031](ADR-031-hosted-subscriptions-manual-billing.md) | Hosted subscriptions with manual billing | Accepted |
+| [032](ADR-032-join-by-code.md) | Adding a till with a short code | Accepted |
+| [033](ADR-033-tax-payment-terms-notifications.md) | Tax, payment terms and local notifications | Accepted |
+| [034](ADR-034-local-network-pairing-and-sync.md) | Direct local-network pairing and synchronization | Accepted |

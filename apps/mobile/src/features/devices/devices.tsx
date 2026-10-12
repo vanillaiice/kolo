@@ -61,6 +61,7 @@ export function DevicesScreen(): React.JSX.Element {
   }, [context, revision, language, t]);
   return <Screen title={t("devicesTitle")} onBack={nav.back}>
     <Text style={s.muted}>{t("transferHelp")}</Text>
+    <RowGroup title={t("localSyncTitle")}><ListRow title={t("localSyncTitle")} subtitle={t("localSyncHelp")} onPress={() => nav.push("serverSync")} /></RowGroup>
     <RowGroup title={t("serverSyncTitle")}>
       <ListRow title={t("serverSyncTitle")} subtitle={server} onPress={() => nav.push("serverSync")} />
     </RowGroup>

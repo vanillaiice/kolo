@@ -20,7 +20,8 @@ The desktop reference is the current code (`apps/desktop/src/shared/service.ts` 
 | Session | "Stay signed in" (on by default) | Same option, on by default (keystore-held remembered user, resumed only if still valid). Off: boots locked and locks when the user leaves the app; pickers/share/print opened by KOLO keep the session (no time limit). |
 | Transfer limits | Owner may opt into the large profile (ADR-027) | Standard profile only; an oversized desktop backup reports `too_large` with an explanation |
 | Photo limits | 16 MiB, 256 MiB with large files | 16 MiB shop total, 64 KiB / 512 px per photo |
-| Bluetooth / server sync | Roadmap | Roadmap; encrypted file exchange stays |
+| Local-network QR / direct sync | Hosts local pairing and encrypted sync; a new PC joins by pasted link | Scans the local QR and syncs as a foreground client; host IP can be edited |
+| Bluetooth / server sync | Bluetooth remains roadmap; optional encrypted server sync is available | Same; encrypted file exchange stays |
 | Photos across devices | Device-local, in backups | Same; pairing does not carry photos |
 | Receipt output | OS print dialog (72 mm stylesheet) | OS share (text) and system print/PDF (`expo-print`); thermal printer adapters remain hardware work |
 | Legal/About | Electron licence listing, uninstall notes | Android-relevant About and licence text only |

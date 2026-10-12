@@ -1,0 +1,20 @@
+{
+	admin off
+}
+
+# The shared kamal-proxy handles public ports and HTTPS.
+:80 {
+	root * /usr/share/caddy
+	encode zstd gzip
+	respond /up "OK" 200
+	header /up X-Robots-Tag "noindex"
+	header {
+		Cache-Control "no-cache"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'none'"
+	}
+	file_server
+}
