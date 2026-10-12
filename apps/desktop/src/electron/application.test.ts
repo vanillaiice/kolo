@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "@kolo/core/data/database/integrity";
 import { it } from "node:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,7 +34,7 @@ function fixture() {
   const credentials=localCredentialsOnDesktop(join(directory,"vault"),os);
   const ports:WorkspacePorts={database,credentials,newId:randomUUIDv7,now:()=>"2026-10-06T12:00:00.000Z"};
   const application=new DesktopApplication(ports,desktopExchangeCrypto);
-  return {directory,database,ports,os,application,async dispose(){await application.dispose();database.close();rmSync(directory,{recursive:true,force:true});}};
+  return {directory,database,ports,os,application,async dispose(){await application.dispose();closeConsistent([database]);rmSync(directory,{recursive:true,force:true});}};
 }
 async function owner(f:ReturnType<typeof fixture>):Promise<WorkspaceView>{
   await f.application.initialize();

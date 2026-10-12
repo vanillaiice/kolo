@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, it } from "node:test";
 import { generateKeyPairSync, randomUUIDv7 } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -15,7 +16,7 @@ import * as queries from "./queries.ts";
 
 const at = "2026-10-06T09:00:00.000Z", secret = "fixture-secret";
 const databases: Database[] = [], paths: string[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); for (const path of paths.splice(0)) rmSync(path, { recursive: true, force: true }); });
+afterEach(() => { closeConsistent(databases.splice(0)); for (const path of paths.splice(0)) rmSync(path, { recursive: true, force: true }); });
 async function fixture(location?: string) {
   const db = openDatabase(location === undefined ? {} : { location }); databases.push(db); migrate(db);
   const material = { publicKey: generateKeyPairSync("ed25519", { publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } }).publicKey, keyReference: randomUUIDv7(), credentialReference: randomUUIDv7() };

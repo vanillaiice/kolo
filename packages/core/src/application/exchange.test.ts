@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "../data/database/integrity.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +24,7 @@ import { balanceOfAccount } from "../data/finance/cash.ts";
 const at="2026-10-06T06:00:00.000Z", secret="fixture-owner-secret";
 const crypto:ExchangeCrypto={sha256:async message=>createHash("sha256").update(message).digest("hex"),verify:async(key,message,signature)=>verify(null,Buffer.from(message),key,Buffer.from(signature,"hex"))};
 const databases:Database[]=[], temporaryDirectories:string[]=[];
-afterEach(()=>{for(const db of databases.splice(0))db.close();for(const path of temporaryDirectories.splice(0))rmSync(path,{recursive:true,force:true});});
+afterEach(()=>{closeConsistent(databases.splice(0));for(const path of temporaryDirectories.splice(0))rmSync(path,{recursive:true,force:true});});
 interface Replica { db:Database; ports:WorkspacePorts; context:OperationContext; install:Installation; key:string; publicKey:string; }
 function nativeFixture(db:Database){
  const pair=generateKeyPairSync("ed25519",{publicKeyEncoding:{type:"spki",format:"pem"},privateKeyEncoding:{type:"pkcs8",format:"pem"}});

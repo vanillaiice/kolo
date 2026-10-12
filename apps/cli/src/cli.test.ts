@@ -70,6 +70,9 @@ test("signed fixtures verify, decrypt, report and export without touching the so
       assert.ok(check(db).issues.some(issue => issue.code === "quarantined_events"));
       db.run("UPDATE applied_events SET status='deferred',updated_at='2026-01-01T00:00:00.000Z' WHERE event_id=?", [eventId]);
       assert.ok(check(db, new Date("2026-02-01T00:00:00.000Z")).issues.some(issue => issue.code === "stuck_application"));
+      // Only the database's own till allocates; a sanitized backup has none until one is installed.
+      db.run(`INSERT INTO local_installation(id,installation_id,business_id,owner_id,device_id,public_key,key_reference,configured_at)
+        SELECT 1,'00000000-0000-7000-8000-000000000009',o.business_id,(SELECT id FROM users WHERE role='OWNER' LIMIT 1),o.device_id,'key','reference','2026-01-01T00:00:00.000Z' FROM journal_origins o LIMIT 1`);
       db.run("UPDATE journal_origins SET next_sequence=1");
       assert.ok(check(db).issues.some(issue => issue.code === "journal_origin_sequence"));
       db.run("DROP TRIGGER inventory_movements_no_update");

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, it } from "node:test";
 import { generateKeyPairSync, randomUUIDv7 } from "node:crypto";
 import type { Database } from "../data/database/driver.ts";
@@ -17,7 +18,7 @@ import { previewReturn, returnSale } from "./returns.ts";
 const at = "2026-10-06T09:00:00.000Z", secret = "fixture-secret", period = { from: "2026-01-01T00:00:00.000Z", until: "2026-12-31T00:00:00.000Z" };
 const days = (n: number): string => new Date(Date.parse(at) - n * 86_400_000).toISOString();
 const databases: Database[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+afterEach(() => { closeConsistent(databases.splice(0)); });
 const denied = (code: string) => (error: unknown): boolean => error instanceof WorkspaceError && error.code === code;
 
 async function fixture() {

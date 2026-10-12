@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, describe, it } from "node:test";
 import { createHash, generateKeyPairSync, randomUUIDv7 } from "node:crypto";
 import type { Database } from "../data/database/driver.ts";
@@ -14,7 +15,7 @@ import { photoUsage, productPhoto, productPhotoDigest, removeProductPhoto, setPr
 const at = "2026-10-06T09:00:00.000Z", secret = "fixture-secret";
 const crypto = { sha256Bytes: async (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex") };
 const databases: Database[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+afterEach(() => { closeConsistent(databases.splice(0)); });
 const code = (value: string) => (error: unknown): boolean => (error instanceof WorkspaceError || error instanceof PhotoError) && error.code === value;
 
 /** A lossless WebP whose header declares the given size, padded to `length` bytes; only the header is read. */

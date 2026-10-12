@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, it } from "node:test";
 import { generateKeyPairSync, sign, verify, createHash, randomUUIDv7 } from "node:crypto";
 import { openDatabase } from "../data/database/node-sqlite.ts";
@@ -19,7 +20,7 @@ import * as commands from "./operations.ts";
 const at = "2026-10-11T06:00:00.000Z", secret = "fixture-owner-secret";
 const crypto: ExchangeCrypto = { sha256: async message => createHash("sha256").update(message).digest("hex"), verify: async (key, message, signature) => verify(null, Buffer.from(message), key, Buffer.from(signature, "hex")) };
 const databases: Database[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+afterEach(() => { closeConsistent(databases.splice(0)); });
 
 interface Device { db: Database; context: OperationContext; install: Installation; publicKey: string; privateKey: string }
 function native(db: Database) {

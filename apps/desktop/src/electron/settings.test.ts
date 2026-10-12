@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "@kolo/core/data/database/integrity";
 import { it } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,7 +30,7 @@ async function fixture(clock = { now: "2026-10-06T12:00:00.000Z" }) {
   const setup = value(await application.createShop({ businessName: "Shop", ownerName: "Owner", deviceLabel: "PC", cashAccountName: "Cash", secret: "654321" }));
   const workspace: WorkspaceView = value(await application.unlock({ userId: setup.members[0]!.id, secret: "654321" }));
   return { directory, database, ports, application, clock, workspace, sessionId: workspace.sessionId!,
-    async dispose() { await application.dispose(); database.close(); rmSync(directory, { recursive: true, force: true }); } };
+    async dispose() { await application.dispose(); closeConsistent([database]); rmSync(directory, { recursive: true, force: true }); } };
 }
 
 it("tax settings and product rules are versioned edits; checkout stamps the rate and the receipt shows it", async () => {

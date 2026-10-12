@@ -6444,6 +6444,67 @@ before sync pauses and explain why it did. Local trading never reads it.
 const HOSTED_SERVICE_MIGRATION: Migration;
 ```
 
+## [packages/core/src/data/database/integrity.ts](../../packages/core/src/data/database/integrity.ts)
+
+Read-only consistency checks over one local database: the invariants every write path must keep, plus sync states
+that need a person's attention. Used by `kolo check` and asserted after replay, sync and property tests.
+
+`corruption` findings must never occur: SQLite damage, broken references, fan-out that disagrees with its source
+(stock movements vs sale/purchase lines, credit-sale debt vs the sale's own arithmetic, returns beyond the original),
+cross-shop references and journal bookkeeping. `attention` findings are legitimate operational states (quarantined
+or unsupported facts, work stuck for longer than `stuckHours`) that tests may create on purpose. Negative stock is
+valid offline history and never reported.
+
+```ts
+export interface IntegrityFinding {
+    readonly code: string;
+    readonly count: number;
+    readonly severity: "corruption" | "attention";
+}
+```
+
+```ts
+export interface IntegrityReport {
+    readonly ok: boolean;
+    readonly consistent: boolean;
+    readonly schemaVersion: number;
+    readonly issues: readonly IntegrityFinding[];
+    readonly sync: {
+        readonly application: readonly Row[];
+        readonly delivery: readonly Row[];
+        readonly outbox: readonly Row[];
+        readonly stuckHours: number;
+    } | Record<string, never>;
+}
+```
+
+Runs every check; refuses nothing and changes nothing. Databases at another schema version report only that.
+
+```ts
+checkIntegrity(db: Queryable, options: {
+    readonly now?: Date;
+    readonly stuckHours?: number;
+} = {}): IntegrityReport;
+```
+
+Throws with the findings when a database holds any corruption; attention findings are allowed. For tests and tools.
+
+```ts
+assertConsistent(db: Queryable, label = "database"): void;
+```
+
+Test teardown: asserts every database is consistent, then closes them all (also when one fails). A database left at
+another schema version on purpose (upgrade tests) is only closed. Reports every inconsistent database at once.
+
+```ts
+closeConsistent(databases: readonly {
+    close(): void;
+    get: Queryable["get"];
+    all: Queryable["all"];
+    run: Queryable["run"];
+}[]): void;
+```
+
 ## [packages/core/src/data/database/local-authority-migration.ts](../../packages/core/src/data/database/local-authority-migration.ts)
 
 Forward-only F1 schema. Pending setup stores intent, never credentials.

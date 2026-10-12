@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, it } from "node:test";
 import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, pbkdf2Sync, randomBytes, randomUUIDv7, sign, verify } from "node:crypto";
 import { openDatabase } from "../data/database/node-sqlite.ts";
@@ -35,7 +36,7 @@ const crypto: SealingCrypto = {
   hmac: async (key, message) => createHmac("sha256", Buffer.from(key, "hex")).update(message, "utf8").digest("hex"),
 };
 const databases: Database[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+afterEach(() => { closeConsistent(databases.splice(0)); });
 
 interface Device { db: Database; context: OperationContext; install: Installation; privateKey: string }
 function native(db: Database) {

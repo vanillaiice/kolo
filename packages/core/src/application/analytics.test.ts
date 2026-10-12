@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, describe, it } from "node:test";
 import { generateKeyPairSync, randomUUIDv7 } from "node:crypto";
 import type { Database } from "../data/database/driver.ts";
@@ -16,7 +17,7 @@ import { previewReturn, returnSale } from "./returns.ts";
 const at = "2026-09-01T09:00:00.000Z", later = "2026-12-01T00:00:00.000Z", secret = "fixture-secret";
 const FROM = "2026-10-01T00:00:00.000Z", TO = "2026-11-01T00:00:00.000Z";
 const databases: Database[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+afterEach(() => { closeConsistent(databases.splice(0)); });
 const code = (value: string) => (error: unknown): boolean => error instanceof WorkspaceError && error.code === value;
 
 async function fixture() {

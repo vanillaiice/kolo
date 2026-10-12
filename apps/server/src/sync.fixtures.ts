@@ -3,6 +3,7 @@ import { Client } from "pg";
 import type { FastifyInstance } from "fastify";
 import { openDatabase as openSqlite } from "@kolo/core/data/database/node-sqlite";
 import { migrate } from "@kolo/core/data/database/migrations";
+import { closeConsistent } from "@kolo/core/data/database/integrity";
 import type { Database } from "@kolo/core/data/database/driver";
 import { createWorkspace, unlockWorkspace } from "@kolo/core/identity/workspace";
 import type { Installation, OperationContext, WorkspacePorts } from "@kolo/core/identity/types";
@@ -132,7 +133,8 @@ export async function query(target: { databaseUrl: string }, text: string, value
 /** Closes every server and SQLite database and drops the PostgreSQL databases this run created. */
 export async function cleanup(): Promise<void> {
   for (const value of servers.splice(0)) await value.app.close();
-  for (const db of sqlite.splice(0)) db.close();
+  // Every till must still satisfy core's invariants after whatever the test sent through the server.
+  closeConsistent(sqlite.splice(0));
   if (adminUrl !== undefined && databases.length > 0) { const admin = new Client({ connectionString: adminUrl }); await admin.connect(); try { for (const name of databases.splice(0)) await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); } finally { await admin.end(); } }
 }
 

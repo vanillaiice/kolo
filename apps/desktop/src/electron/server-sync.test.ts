@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "@kolo/core/data/database/integrity";
 import { it } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,7 +36,7 @@ async function fixture(transport: SyncTransport) {
   await application.initialize();
   const setup = value(await application.createShop({ businessName: "Shop", ownerName: "Owner", deviceLabel: "PC", cashAccountName: "Cash", secret: "654321" }));
   const sessionId = value(await application.unlock({ userId: setup.members[0]!.id, secret: "654321" })).sessionId!;
-  return { application, sessionId, async dispose() { await application.dispose(); database.close(); rmSync(directory, { recursive: true, force: true }); } };
+  return { application, sessionId, async dispose() { await application.dispose(); closeConsistent([database]); rmSync(directory, { recursive: true, force: true }); } };
 }
 function value<T>(result: Result<T>): T { assert.equal(result.ok, true, JSON.stringify(result)); if (!result.ok) throw new Error("unexpected failure"); return result.value; }
 

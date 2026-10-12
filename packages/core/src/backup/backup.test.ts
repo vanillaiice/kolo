@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, it } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -28,7 +29,7 @@ export const crypto=nativeTransferCrypto({
  cipher:(k,n)=>createCipheriv("aes-256-gcm",Buffer.from(k,"hex"),Buffer.from(n,"hex"),{authTagLength:16}),decipher:(k,n)=>createDecipheriv("aes-256-gcm",Buffer.from(k,"hex"),Buffer.from(n,"hex"),{authTagLength:16}),
 });
 const directories:string[]=[],databases:Database[]=[],controls:ReturnType<typeof nodeWorkspaceFiles>[]=[];
-afterEach(()=>{for(const db of databases.splice(0))db.close();for(const control of controls.splice(0))control.close();for(const path of directories.splice(0))rmSync(path,{recursive:true,force:true});});
+afterEach(()=>{closeConsistent(databases.splice(0));for(const control of controls.splice(0))control.close();for(const path of directories.splice(0))rmSync(path,{recursive:true,force:true});});
 function fixture(){
  const directory=mkdtempSync(join(tmpdir(),"kolo-f3-"));directories.push(directory);const files=nodeWorkspaceFiles(directory);controls.push(files);const db=files.openActive();databases.push(db);migrate(db);
  const records=new Map<string,{material:ProvisionedIdentity;key:string;secret:string}>();

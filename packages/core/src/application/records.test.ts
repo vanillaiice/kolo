@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, it } from "node:test";
 import { createHash, generateKeyPairSync, randomUUIDv7 } from "node:crypto";
 import type { Database } from "../data/database/driver.ts";
@@ -15,7 +16,7 @@ import { analyticsView, reportView, REPORT_KINDS, REPORT_PERMISSION, UNDATED_REP
 
 const at = "2026-10-06T09:00:00.000Z", secret = "fixture-secret", day = { from: "2026-10-06T00:00:00.000Z", until: "2026-10-07T00:00:00.000Z" };
 const databases: Database[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+afterEach(() => { closeConsistent(databases.splice(0)); });
 async function fixture() {
   const db = openDatabase(); databases.push(db); migrate(db);
   const material = { publicKey: generateKeyPairSync("ed25519", { publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } }).publicKey, keyReference: randomUUIDv7(), credentialReference: randomUUIDv7() };

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, describe, it } from "node:test";
 import { generateKeyPairSync, randomUUIDv7 } from "node:crypto";
 import type { Database } from "../data/database/driver.ts";
@@ -21,7 +22,7 @@ import { previewReturn, returnPurchase, returnSale } from "./returns.ts";
 
 const later = "2027-01-01T00:00:00.000Z", secret = "fixture-secret", at = "2026-09-01T09:00:00.000Z";
 const databases: Database[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+afterEach(() => { closeConsistent(databases.splice(0)); });
 
 async function fixture() {
   const db = openDatabase(); databases.push(db); migrate(db);
