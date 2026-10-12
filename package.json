@@ -47,7 +47,8 @@
     "build:landing": "node apps/landing/build.mjs",
     "dev:landing": "npm run build:landing && node apps/landing/preview.mjs",
     "check:landing": "npm run build:landing && node apps/landing/check.mjs && node --test apps/landing/releases.test.mjs",
-    "refresh:landing-releases": "node apps/landing/refresh-releases.mjs"
+    "refresh:landing-releases": "node apps/landing/refresh-releases.mjs",
+    "test:server:pg": "node scripts/test-server-postgres.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

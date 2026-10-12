@@ -1,4 +1,7 @@
 # Replaces the GitHub "Active workspaces" check: the same gate runs before every push.
 # Skip once with `git push --no-verify` (or HUSKY=0) only when you know why.
+# `npm run check` includes the landing build/validation (`check:landing`).
 npm run check
 npm run bundle:mobile
+# Server tests against a disposable PostgreSQL when Docker is reachable; otherwise they skip in `check`.
+if docker info >/dev/null 2>&1; then npm run test:server:pg; else echo "pre-push: Docker unavailable, PostgreSQL server tests skipped"; fi

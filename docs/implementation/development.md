@@ -74,6 +74,8 @@ npm run dev -w @kolo/admin   # dashboard with hot reload on http://localhost:517
 
 # Server tests against a disposable PostgreSQL (each test creates and drops its own database)
 KOLO_TEST_DATABASE_URL=postgres://kolo:…@127.0.0.1:5434/kolo_test npm test -w @kolo/server
+# Or let a throwaway postgres:18 container provide it (also run by the pre-push hook when Docker is up)
+npm run test:server:pg
 
 # Container build from repository root
 docker build -f apps/server/Dockerfile -t kolo-server:foundation .

@@ -1402,3 +1402,9 @@ links. All four policy pages passed real-browser layout and axe WCAG A/AA scans
 at 1440, 390 and 320 px. Preference removal, subsequent navigation, language
 switching on a policy page and loading without JavaScript passed. The running
 Python preview serves the rebuilt site; nothing has been deployed.
+
+## 2026-10-12: PostgreSQL server tests in the push gate
+
+`npm run test:server:pg` (`scripts/test-server-postgres.mjs`) starts a throwaway `postgres:18` container on a random
+loopback port, runs the server suite with `KOLO_TEST_DATABASE_URL` and removes the container. The pre-push hook runs it
+when Docker is reachable. First run: 28 passed, 0 skipped (previously 23 skipped without a database).
