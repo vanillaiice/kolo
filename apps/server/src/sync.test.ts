@@ -279,8 +279,10 @@ it("unknown devices cannot open sessions, and request limits answer with stable 
   await connect(a, target);
   await assert.rejects(session(stranger, target), refusal("invalid_session"));
   const token = await session(a, target);
-  const big = await fetch(`${target.url}/api/v2/sync/push`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: `"${"x".repeat(9 * 1024 * 1024)}"` });
-  assert.equal(big.status, 413); assert.deepEqual(await big.json(), { error: { code: "batch_too_large" } });
+  // Exercise Fastify's body limit without a TCP reset racing the response on Windows when the
+  // server rejects Content-Length before the client has finished sending the oversized body.
+  const big = await target.app.inject({ method: "POST", url: "/api/v2/sync/push", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, payload: `"${"x".repeat(9 * 1024 * 1024)}"` });
+  assert.equal(big.statusCode, 413); assert.deepEqual(big.json(), { error: { code: "batch_too_large" } });
   const malformed = await fetch(`${target.url}/api/v2/sync/push`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: `{"batch":1}` });
   assert.equal(malformed.status, 400); assert.deepEqual(await malformed.json(), { error: { code: "invalid_request", retry: false } });
   const unauthenticated = await fetch(`${target.url}/api/v2/sync/pull`);
