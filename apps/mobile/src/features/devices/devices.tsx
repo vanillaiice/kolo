@@ -128,9 +128,9 @@ export function BackupRestoreScreen(): React.JSX.Element {
     <Notice tone="warning" text={t("replaceWarning", { current: businessName })} />
     {working !== undefined && <Working text={t(working)} />}
     <Section title={t("stepFile")}>
-      <Button label={text === undefined ? t("pickFile") : t("pickAnotherFile")} variant="secondary" busy={action.busy} onPress={() => { void action.runAsync(async () => { await showing("workingReadFile"); const picked = await io.pick("backup"); if (picked !== undefined) { setText(picked); setPreview(undefined); } }); }} />
+      <Button label={text === undefined ? t("pickFile") : t("pickAnotherFile")} variant="secondary" disabled={action.busy} onPress={() => { void action.runAsync(async () => { await showing("workingReadFile"); const picked = await io.pick("backup"); if (picked !== undefined) { setText(picked); setPreview(undefined); } }); }} />
       {text !== undefined && <><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
-        <Button label={t("checkBackup")} busy={action.busy} disabled={password === ""} onPress={() => { void action.runAsync(async () => {
+        <Button label={t("checkBackup")} disabled={action.busy || password === ""} onPress={() => { void action.runAsync(async () => {
           if (staged.current !== undefined) { await cancelBackupPreview(staged.current); staged.current = undefined; }
           await showing("workingCheckBackup"); const checked = await previewBackup(text, password, files, crypto); staged.current = checked; setPreview(checked); setPassword("");
         }); }} /></>}
@@ -141,7 +141,7 @@ export function BackupRestoreScreen(): React.JSX.Element {
       <Field label={t("confirmShopName")} value={typed} onChange={setTyped} hint={t("typeShopNameHelp", { name: preview.businessName })} />
       <Field label={t("deviceName")} value={label} onChange={setLabel} />
       <Field label={t("newLocalSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("codeRule")} /><Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" />
-      <Button label={t("replaceShop")} variant="danger" disabled={typed.trim() !== preview.businessName || secret === ""} busy={action.busy} onPress={() => setConfirming(true)} />
+      <Button label={t("replaceShop")} variant="danger" disabled={action.busy || typed.trim() !== preview.businessName || secret === ""} onPress={() => setConfirming(true)} />
     </Section>}
     <Confirm visible={confirming} destructive title={t("replaceTitle")} text={t("replaceText", { current: businessName, next: preview?.businessName ?? "" })} confirmLabel={t("replaceShop")}
       typed={{ label: t("typeCurrentShop", { name: businessName }), expected: businessName }} onCancel={() => setConfirming(false)} onConfirm={() => { setConfirming(false); restore(); }} />

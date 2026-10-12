@@ -222,7 +222,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
     case "import": return frame(configured ? t("importBackup") : t("importFile"), <Section>
       <Text style={s.body}>{configured || state.state === "legacy" ? t("importBackupHelp") : t("importFileHelp")}</Text>
       <Text style={s.muted}>{t("importLimitsHelp")}</Text>
-      <Button label={t("pickFile")} busy={busy} onPress={() => { void run(async () => {
+      <Button label={t("pickFile")} disabled={busy} onPress={() => { void run(async () => {
         await showing("workingReadFile"); const text = await pick(); if (text === undefined) return;
         const kind = transferFileKind(text);
         if (kind === "backup") go({ name: "backup", text });
@@ -233,7 +233,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
 
     case "backup": return frame(t("importBackup"), <Section>
       <Text style={s.body}>{t("backupPasswordHelp")}</Text><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
-      <Button label={t("checkBackup")} busy={busy} disabled={password === ""} onPress={() => { void run(async () => {
+      <Button label={t("checkBackup")} disabled={busy || password === ""} onPress={() => { void run(async () => {
         await showing("workingCheckBackup"); await discardPreview(); const preview = await previewBackup(step.text, password, files, crypto); setPassword("");
         if (!mounted.current) { await cancelBackupPreview(preview); return; }
         staged.current = preview; go({ name: "restore", preview });
@@ -259,8 +259,8 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
           <Field label={t("confirmShopName")} value={typedName} onChange={setTypedName} hint={t("typeShopNameHelp", { name: preview.businessName })} />
           <Field label={t("deviceName")} value={till} onChange={setTill} />{secrets(true)}
           {configured || state.state === "legacy" ? <Notice tone="warning" text={t("replaceWarning", { current: shopName ?? "KOLO" })} /> : null}
-          <Button label={configured || state.state === "legacy" ? t("replaceShop") : t("confirmRestore")} variant={configured || state.state === "legacy" ? "danger" : "primary"} busy={busy}
-            disabled={typedName.trim() !== preview.businessName || secret === ""}
+          <Button label={configured || state.state === "legacy" ? t("replaceShop") : t("confirmRestore")} variant={configured || state.state === "legacy" ? "danger" : "primary"}
+            disabled={busy || typedName.trim() !== preview.businessName || secret === ""}
             onPress={() => { if (configured || state.state === "legacy") setReplacing(true); else void run(restore); }} />
         </Section>
         <Confirm visible={replacing} destructive title={t("replaceTitle")} text={t("replaceText", { current: shopName ?? "KOLO", next: preview.businessName })} confirmLabel={t("replaceShop")}
