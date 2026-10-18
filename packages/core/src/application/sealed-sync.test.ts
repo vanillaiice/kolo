@@ -114,7 +114,7 @@ it("a sealed fact opens only with its key, only for its shop and only under its 
   assert.deepEqual(await openSealedEvent(crypto, a.install.businessId, keys, sealed), fact);
   assert.notEqual((await sealEvent(crypto, a.install.businessId, key, fact)).nonce, sealed.nonce, "every sealing uses a fresh nonce");
   for (const change of [{ event_id: randomUUIDv7() }, { origin_sequence: sealed.origin_sequence + 1 }, { digest: "0".repeat(64) }, { origin_device_id: randomUUIDv7() },
-    { tag: "0".repeat(32) }, { nonce: "0".repeat(24) }, { ciphertext: `A${sealed.ciphertext.slice(1)}` }, { key_id: randomUUIDv7() }, { epoch: 2 }])
+    { tag: "0".repeat(32) }, { nonce: "0".repeat(24) }, { ciphertext: `${sealed.ciphertext.startsWith("A") ? "B" : "A"}${sealed.ciphertext.slice(1)}` }, { key_id: randomUUIDv7() }, { epoch: 2 }])
     assert.equal(await openSealedEvent(crypto, a.install.businessId, keys, { ...sealed, ...change }), undefined, JSON.stringify(change).slice(0, 40));
   assert.equal(await openSealedEvent(crypto, randomUUIDv7(), keys, sealed), undefined, "another shop's ID");
   assert.equal(await openSealedEvent(crypto, a.install.businessId, [], sealed), undefined, "no key");

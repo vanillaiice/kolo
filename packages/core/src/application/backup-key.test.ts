@@ -17,7 +17,7 @@ import { inspectContainer } from "../backup/encryption.ts";
 import { deriveRecoveryKey, formatRecoveryKey, generateRecoverySecret, parseRecoveryKey } from "../backup/recovery-key.ts";
 import { TransferError } from "../backup/types.ts";
 import { backupRecoveryKeys, confirmBackupRecoveryKey, currentBackupRecipient, prepareBackupRecoveryKey, type PendingBackupKey } from "./backup-key.ts";
-import { createBackup, previewBackup, restoreWorkspace } from "./backup.ts";
+import { cancelBackupPreview, createBackup, previewBackup, restoreWorkspace } from "./backup.ts";
 import { eventSigningMessage, registerExchangeDestination, sealPendingEvents, verifyEvent } from "./exchange.ts";
 import { applyEvent } from "./event-application.ts";
 import { createJournalBatch, importJournalBatch } from "./event-delivery.ts";
@@ -228,6 +228,8 @@ it("a till that knows the shop refuses a backup signed by a till it does not tru
   // Till D was paired with A only and has never heard of B: in recovery mode it refuses B's backup.
   const d = await paired(a, true), preview = await previewBackup(fromB.bytes, password, d.files, crypto);
   await assert.rejects(restoreWorkspace(preview, { confirmedBusinessId: a.install.businessId, deviceLabel: "D again", platform: "DESKTOP", secret: pin, recoveryContext: d.context }, d.ports), code("untrusted_backup"));
+  // A preview that is not restored is cancelled, or Windows cannot remove its staged file.
+  await cancelBackupPreview(preview);
   // Till A trusts B, so its recovery mode accepts the same file.
   const accepted = await restoreWorkspace(await previewBackup(fromB.bytes, password, a.files, crypto), { confirmedBusinessId: a.install.businessId, deviceLabel: "A again", platform: "DESKTOP", secret: pin, recoveryContext: a.context }, a.ports);
   databases.push(accepted.database);
@@ -258,7 +260,7 @@ it("a backup whose records disagree is refused at preview, before anything is ac
   const a = await owner(), p = product(a), account = String(a.db.get(`SELECT id FROM financial_accounts LIMIT 1`)!["id"]), sale = randomUUIDv7();
   operations.completeSale(a.context, { id: sale, number: `V-${sale}`, eventId: randomUUIDv7(), occurredAt: at, lines: [{ id: randomUUIDv7(), movementId: randomUUIDv7(), productId: p, name: "Rice", unitPriceMinor: 500, quantity: 1000 }], payments: [{ id: randomUUIDv7(), accountId: account, amountMinor: 500 }] });
   const sound = await createBackup(a.context, password, a.files, crypto), c = slot();
-  const ok = await previewBackup(sound.bytes, password, c.files, crypto); assert.equal(ok.businessId, a.install.businessId);
+  const ok = await previewBackup(sound.bytes, password, c.files, crypto); assert.equal(ok.businessId, a.install.businessId); await cancelBackupPreview(ok);
   // A second stock movement for the same sale line: structurally valid SQLite, wrong books.
   const movement = a.db.get(`SELECT * FROM inventory_movements WHERE reference_id=?`, [sale])!, columns = Object.keys(movement);
   a.db.run(`INSERT INTO inventory_movements(${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`, columns.map(column => column === "id" ? randomUUIDv7() : movement[column]!));
