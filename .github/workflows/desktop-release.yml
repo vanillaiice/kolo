@@ -61,7 +61,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          sudo apt-get install -y xvfb gnome-keyring dbus-x11
+          sudo apt-get install -y xvfb openbox gnome-keyring dbus-x11
       # Every artifact passes in its own packaged runtime: self-check, then the real-UI workflow (scripts/verify-desktop-build.mjs).
       - if: matrix.platform == 'windows'
         run: npm run verify:desktop:win

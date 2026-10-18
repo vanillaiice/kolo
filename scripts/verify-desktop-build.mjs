@@ -42,12 +42,17 @@ function selfCheck(env) {
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
-/** A display for the UI workflow: the session's own, or a private Xvfb server stopped afterwards. */
+/**
+ * A display for the UI workflow: the session's own, or a private Xvfb server stopped afterwards. Bare Xvfb has no window
+ * manager, so a minimized window is never iconified and the minimize lock cannot be checked; openbox is started on it.
+ */
 async function withDisplay(work) {
   if (process.platform !== "linux" || process.env.DISPLAY || process.env.WAYLAND_DISPLAY) return work(process.env);
   const display = `:${90 + Math.floor(Math.random() * 400)}`, server = spawn("Xvfb", [display, "-screen", "0", "1440x960x24", "-nolisten", "tcp"], { stdio: "ignore" });
   await new Promise((done, fail) => { server.once("error", () => fail(new Error("no display and Xvfb could not start; install xvfb"))); setTimeout(done, 1500); });
-  try { return await work({ ...process.env, DISPLAY: display }); } finally { server.kill(); }
+  const env = { ...process.env, DISPLAY: display }, manager = spawn("openbox", [], { env, stdio: "ignore" });
+  await new Promise((done, fail) => { manager.once("error", () => fail(new Error("no window manager for Xvfb; install openbox"))); setTimeout(done, 1000); });
+  try { return await work(env); } finally { manager.kill(); server.kill(); }
 }
 
 function step(command, args, env) {
