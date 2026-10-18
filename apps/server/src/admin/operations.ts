@@ -31,7 +31,7 @@ export async function issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publ
   if (!Number.isInteger(input.days) || input.days < 1 || input.days > 90) throw new AdminError(400, "invalid_expiry");
   const token = randomBytes(16).toString("hex"), codeId = randomUUIDv7(), expiresAt = new Date(input.now.getTime() + input.days * 86_400_000);
   await db.transaction().execute(async tx => {
-    await tx.insertInto("connection_codes").values({ code_id: codeId, token_hash: sha256(token), label, created_by: actor.username, expires_at: expiresAt, used_at: null, used_by: null, cancelled_at: null, included_months: includedMonths }).execute();
+    await tx.insertInto("connection_codes").values({ code_id: codeId, token_hash: sha256(token), label, created_by: actor.username, created_at: input.now, expires_at: expiresAt, used_at: null, used_by: null, cancelled_at: null, included_months: includedMonths }).execute();
     await audit(tx, actor, "code.issue", codeId, actor.address, { label, days: input.days, included_months: includedMonths });
   });
   return { codeId, label, expiresAt: expiresAt.toISOString(), code: formatConnectionCode({ url: publicUrl, fingerprint: key.fingerprint, token }) };
