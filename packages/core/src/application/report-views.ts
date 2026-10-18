@@ -4,6 +4,7 @@ import { shopTaxSettings } from "./settings.ts";
 import { defaultBucket } from "../data/reports/analytics.ts";
 import { multiplyRatio } from "../rules/amounts.ts";
 import { WorkspaceError, type OperationContext } from "../identity/types.ts";
+import type { Language } from "../domain/money.ts";
 
 /** Report kinds, each read under its own core report permission. */
 export type ReportKind = "dashboard" | "sales" | "salesByProduct" | "salesByCategory" | "salesByAccount" | "salesByUser" | "cashFlow" | "valuation" |
@@ -63,8 +64,8 @@ export interface AnalyticsResult {
   readonly accounts: readonly ReportLine[];
   readonly customers?: readonly AnalyticsCustomer[];
 }
-/** Row cap for client views. Desktop shows up to 500 rows; phones pass a smaller cap. */
-export interface ViewOptions { readonly rows?: number }
+/** Row cap for client views (desktop shows up to 500 rows; phones pass a smaller cap) and the language of category labels (default French). */
+export interface ViewOptions { readonly rows?: number; readonly language?: Language | undefined }
 
 const DEFAULT_ROWS = 500;
 const BUCKETS: readonly AnalyticsBucket[] = ["hour", "day", "week", "month"];
@@ -72,6 +73,10 @@ const BUCKETS: readonly AnalyticsBucket[] = ["hour", "day", "week", "month"];
 function period(from: string, until: string): void {
   const start = Date.parse(from), end = Date.parse(until);
   if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || end - start > 3700 * 86_400_000) throw new WorkspaceError("invalid_input");
+}
+function languageOf(options: ViewOptions): Language {
+  if (options.language !== undefined && options.language !== "fr" && options.language !== "en") throw new WorkspaceError("invalid_input");
+  return options.language ?? "fr";
 }
 function cap(options: ViewOptions): number {
   const rows = options.rows ?? DEFAULT_ROWS;
@@ -100,7 +105,7 @@ export function reportView(context: OperationContext, kind: ReportKind, from: st
     }
     case "sales": { const value = reports.salesBetween(context, from, until); return { kind, totalMinor: value.totalMinor, transactions: value.transactions, itemsSoldThousandths: value.itemsSoldThousandths }; }
     case "salesByProduct": return { kind, ...capped(reports.salesByProduct(context, from, until), rows) };
-    case "salesByCategory": return { kind, ...capped(reports.salesByCategory(context, from, until), rows) };
+    case "salesByCategory": return { kind, ...capped(reports.salesByCategory(context, from, until, languageOf(options)), rows) };
     case "salesByAccount": return { kind, ...capped(reports.salesByAccount(context, from, until), rows) };
     case "salesByUser": return { kind, ...capped(reports.salesByUser(context, from, until), rows) };
     case "customerDebt": return { kind, ...capped(reports.outstandingDebt(context), rows) };
@@ -176,7 +181,7 @@ export function analyticsView(context: OperationContext, input: { readonly from:
     activity: reports.salesActivity(context, from, until, offset).map(({ weekday, hour, transactions, revenueMinor }) => ({ weekday, hour, transactions, revenueMinor })),
     products: products.slice(0, rows).map(row => ({ productId: row.productId, name: row.name, soldThousandths: row.soldThousandths, revenueMinor: row.revenueMinor, ...profitOf(row) })),
     productsTruncated: products.length > rows,
-    categories: lines(reports.salesByCategory(context, from, until)),
+    categories: lines(reports.salesByCategory(context, from, until, languageOf(options))),
     accounts: lines(reports.salesByAccount(context, from, until)),
     ...(customers === undefined ? {} : { customers: customers.map(({ customerId, name, transactions, revenueMinor, lastPurchaseAt }) => ({ customerId, name, transactions, revenueMinor, lastPurchaseAt })) }),
   };

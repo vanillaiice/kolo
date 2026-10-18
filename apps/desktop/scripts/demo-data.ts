@@ -52,6 +52,11 @@ function memoryVault(): NativeSafeStorage {
 
 /** Name, unit, divisible, price, cost, barcode suffix, opening stock (units), sales weight. */
 type Item = readonly [name: string, unit: string, divisible: boolean, price: number, cost: number, stock: number, weight: number];
+/** English names for the demo's French categories (ADR-037); the French name is the main one. */
+const CATEGORY_EN: Readonly<Record<string, string>> = {
+  "Céréales et féculents": "Grains and starches", "Huiles et condiments": "Oils and condiments", "Petit-déjeuner": "Breakfast",
+  "Conserves": "Canned goods", "Boissons": "Drinks", "Hygiène et entretien": "Hygiene and cleaning", "Divers": "Miscellaneous",
+};
 const CATALOGUE: Readonly<Record<string, readonly Item[]>> = {
   "Céréales et féculents": [
     ["Riz parfumé 25kg", "sac", false, 18_500, 16_000, 12, 3], ["Riz parfumé (vrac)", "kg", true, 800, 640, 80, 9],
@@ -161,7 +166,7 @@ async function main(): Promise<void> {
     const products: Product[] = [];
     let barcode = 6_181_000_000_000;
     for (const [categoryName, items] of Object.entries(CATALOGUE)) {
-      const category = value(await app.createCategory({ sessionId: session, requestId: randomUUID(), name: categoryName }), categoryName);
+      const category = value(await app.createCategory({ sessionId: session, requestId: randomUUID(), name: categoryName, names: { en: CATEGORY_EN[categoryName] ?? "" } }), categoryName);
       for (const [name, unit, divisible, price, cost, stock, weight] of items) {
         barcode += between(1, 97);
         const created = value(await app.createProduct({ sessionId: session, requestId: randomUUID(), name, unit, divisible, sellingPriceMinor: price,

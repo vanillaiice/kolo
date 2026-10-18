@@ -26,7 +26,7 @@ const TYPES: Readonly<Record<Exclude<AuditGroup, "other">, readonly string[]>> =
   purchases: ["PURCHASE_RECORDED", "PURCHASE_RETURNED", "SUPPLIER_PAYMENT"],
   stock: ["STOCK_MOVED", "STOCK_COUNTED"],
   money: ["CASH_MOVED", "EXPENSE_RECORDED", "ACCOUNT_SAVED", "CASH_COUNTED", "CASH_RECONCILED"],
-  catalogue: ["PRODUCT_SAVED", "CATEGORY_SAVED", "PRODUCT_CATEGORIES_SET", "PRODUCT_TAX_SET"],
+  catalogue: ["PRODUCT_SAVED", "CATEGORY_SAVED", "CATEGORY_NAMES_SET", "PRODUCT_CATEGORIES_SET", "PRODUCT_TAX_SET"],
   people: ["CUSTOMER_SAVED", "SUPPLIER_SAVED", "PAYMENT_TERMS_SET"],
   staff: ["WORKSPACE_CREATED", "LEGACY_WORKSPACE_ADOPTED", "MEMBER_CREATED", "PERMISSION_GRANTED", "PERMISSION_REVOKED", "MEMBER_SUSPENDED", "MEMBER_REINSTATED", "MEMBER_ACCESS_RESET", "OWNER_ACCESS_RECOVERED"],
   devices: ["DEVICE_TRUSTED", "DEVICE_REVOKED", "DEVICE_ENCRYPTION_KEY", "SHOP_KEY_GRANTED", "SERVER_ENDPOINT_SET", "SERVER_ENDPOINT_CLEARED", "SHOP_BACKUP_KEY"],
@@ -312,6 +312,8 @@ function describe(tx: Queryable, shop: string, type: string, payload: Json, even
       return { subject: subject(kind, record["id"], record["name"]),
         facts: facts({ created: str(record["created_at"]) !== undefined && record["created_at"] === record["updated_at"], active: bool(record["active"]), code: str(record["kind"]) }) };
     }
+    case "CATEGORY_NAMES_SET":
+      return { subject: subject("category", payload["category_id"]), facts: {} };
     case "PRODUCT_CATEGORIES_SET":
       return { subject: subject("product", payload["product_id"]), facts: facts({ lines: list(payload["category_ids"]).length }) };
     case "PRODUCT_TAX_SET":

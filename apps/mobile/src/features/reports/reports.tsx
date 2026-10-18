@@ -63,13 +63,13 @@ function lines(rows: readonly ReportLine[], countKey: TextKey, t: (key: TextKey,
 
 /** One report: its period (when it has one), headline figures and bounded rows. */
 export function ReportScreen(): React.JSX.Element {
-  const { t } = useText(), s = useStyles(), nav = useNav(), { kind } = useParams("report"), { context } = useSession();
+  const { t, language } = useText(), s = useStyles(), nav = useNav(), { kind } = useParams("report"), { context } = useSession();
   const revision = useRevision(["sales", "inventory", "customers", "suppliers", "purchases", "accounts", "expenses"]);
   const { period, control } = usePeriod("report-period", "today");
   const result = useDeferredRecord((): ReportResult | undefined => {
     const range = UNDATED_REPORT_KINDS.has(kind) ? { from: new Date(0).toISOString(), until: new Date().toISOString() } : period;
-    return range === undefined ? undefined : reportView(context, kind, range.from, range.until, { rows: PHONE_ROWS });
-  }, [context, kind, period?.from, period?.until, revision]);
+    return range === undefined ? undefined : reportView(context, kind, range.from, range.until, { rows: PHONE_ROWS, language });
+  }, [context, kind, period?.from, period?.until, language, revision]);
   const value = result.value;
   return <Screen title={t(`report.${kind}` as TextKey)} onBack={nav.back}>
     {!UNDATED_REPORT_KINDS.has(kind) && control}
@@ -138,8 +138,8 @@ export function AnalyticsScreen(): React.JSX.Element {
   const revision = useRevision(["sales", "inventory", "customers", "accounts", "expenses"]), { period, control } = usePeriod("analytics-period", "last30");
   const [bucket, setBucket] = useState<AnalyticsBucket | "auto">("auto"), [open, setOpen] = useDraft<string>("analytics-section", () => "trend"), [rank, setRank] = useState<"revenue" | "quantity" | "profit">("revenue");
   const result = useDeferredRecord((): AnalyticsResult | undefined => period === undefined ? undefined
-    : analyticsView(context, { from: period.from, until: period.until, offsetMinutes: -new Date(period.from).getTimezoneOffset(), bucket: bucket === "auto" ? undefined : bucket }, { rows: 50 }),
-  [context, period?.from, period?.until, bucket, revision]);
+    : analyticsView(context, { from: period.from, until: period.until, offsetMinutes: -new Date(period.from).getTimezoneOffset(), bucket: bucket === "auto" ? undefined : bucket }, { rows: 50, language }),
+  [context, period?.from, period?.until, bucket, language, revision]);
   const value = result.value;
   const sections = value === undefined ? [] : [["trend", t("trend")], ["activity", t("busyHours")], ["products", t("productRanking")], ["categories", t("categoryShares")],
     ["accounts", t("paymentShares")], ...(value.customers === undefined ? [] : [["customers", t("topCustomers")]])] as const;

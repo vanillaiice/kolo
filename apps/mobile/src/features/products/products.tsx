@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Text, View } from "react-native";
-import { categories, category as categoryRead, products, productStock, stockHistory, stockLevels } from "@kolo/core/application/queries";
+import { categories, category as categoryRead, products, productStock, stockHistory, stockLevels, type Page } from "@kolo/core/application/queries";
 import { productPhotoDigests } from "@kolo/core/application/photos";
 import { product as productRead, productCategories } from "@kolo/core/application/records";
 import { adjustStock, countStock, saveCategory, saveProduct, setProductCategories } from "@kolo/core/application/operations";
@@ -8,7 +8,8 @@ import type { Product } from "@kolo/core/data/products/products";
 import type { Category } from "@kolo/core/data/products/categories";
 import type { Row } from "@kolo/core/data/database/driver";
 import { moneyEntry, quantityEntry, quantityInput } from "@kolo/core/domain/entry";
-import { formatMoney, formatQuantity, formatQuantityWithUnit } from "@kolo/core/domain/money";
+import { formatMoney, formatQuantity, formatQuantityWithUnit, type Language } from "@kolo/core/domain/money";
+import { categoryLabel } from "@kolo/core/domain/category-names";
 import { newIdOnDevice } from "../../data/auth/local-credentials-on-device.ts";
 import { useText, type TextKey } from "../../app/i18n.tsx";
 import { useLeaveGuard, useNav, useParams } from "../../app/navigation.tsx";
@@ -61,7 +62,7 @@ export function ProductScreen(): React.JSX.Element {
     <Section>
       <Facts items={[[t("price"), formatMoney(item.sellingPriceMinor), "strong"], [t("cost"), item.purchasePriceMinor === undefined ? t("unknown") : formatMoney(item.purchasePriceMinor)],
         [t("stock"), stock === undefined ? undefined : formatQuantityWithUnit(stock.onHandThousandths, item.unit, language), stock !== undefined && stock.onHandThousandths < 0 ? "danger" : undefined],
-        [t("minimum"), formatQuantity(item.minimumStock)], [t("barcode"), item.barcode], [t("unit"), item.unit], [t("mainCategory"), group?.name], [t("otherCategories"), others.map(other => other.name).join(", ")],
+        [t("minimum"), formatQuantity(item.minimumStock)], [t("barcode"), item.barcode], [t("unit"), item.unit], [t("mainCategory"), group === undefined ? undefined : categoryLabel(group, language)], [t("otherCategories"), others.map(other => categoryLabel(other, language)).join(", ")],
         [t("divisible"), item.divisible ? t("yes") : t("no")], [t("updated"), formatDate(item.updatedAt, language)]]} />
       {stock !== undefined && stock.onHandThousandths < 0 && <Notice tone="warning" text={t("negativeStock")} />}
     </Section>
@@ -84,16 +85,16 @@ export function ProductScreen(): React.JSX.Element {
 
 /** Product creation (with optional opening stock) or editing from the displayed version. */
 export function ProductFormScreen(): React.JSX.Element {
-  const { t } = useText(), s = useStyles(), nav = useNav(), { productId } = useParams("productForm"), { context, branchId } = useSession(), permissions = usePermissions();
+  const { t, language } = useText(), s = useStyles(), nav = useNav(), { productId } = useParams("productForm"), { context, branchId } = useSession(), permissions = usePermissions();
   const revision = useRevision(["products"]), action = useAction(), request = useRequestId(), openingRequest = useRequestId(), openingSaved = useRef(false);
   const loaded = useMemo(() => { try { return productId === undefined ? undefined : productRead(context, productId); } catch { return undefined; } }, [context, productId]);
   const [name, setName] = useState(loaded?.name ?? ""), [unit, setUnit] = useState(loaded?.unit ?? t("defaultUnit")), [barcode, setBarcode] = useState(loaded?.barcode ?? "");
   const [price, setPrice] = useState(loaded === undefined ? "" : String(loaded.sellingPriceMinor)), [cost, setCost] = useState(loaded?.purchasePriceMinor === undefined ? "" : String(loaded.purchasePriceMinor));
   const [minimum, setMinimum] = useState(loaded === undefined ? "" : quantityInput(loaded.minimumStock)), [divisible, setDivisible] = useState(loaded?.divisible ?? false);
-  const [group, setGroup] = useState<Category | undefined>(() => { try { return loaded?.categoryId === undefined ? undefined : categoryRead(context, loaded.categoryId); } catch { return undefined; } });
+  const [group, setGroup] = useState<Category | undefined>(() => { try { const stored = loaded?.categoryId === undefined ? undefined : categoryRead(context, loaded.categoryId); return stored === undefined ? undefined : labelled(stored, language); } catch { return undefined; } });
   const [opening, setOpening] = useState("");
   const loadedSet = useMemo(() => { try { return loaded === undefined ? { categories: [] } : productCategories(context, loaded.id); } catch { return { categories: [] }; } }, [context, loaded]);
-  const [extras, setExtras] = useState<readonly { readonly id: string; readonly name: string }[]>(() => loadedSet.categories.map(({ id, name }) => ({ id, name })));
+  const [extras, setExtras] = useState<readonly { readonly id: string; readonly name: string }[]>(() => loadedSet.categories.map(item => ({ id: item.id, name: categoryLabel(item, language) })));
   const dirty = loaded === undefined ? name !== "" || price !== "" || barcode !== "" : name !== loaded.name || price !== String(loaded.sellingPriceMinor) || barcode !== (loaded.barcode ?? "") || unit !== loaded.unit;
   useLeaveGuard(dirty);
   const canPrice = loaded === undefined || permissions.includes("products.price");
@@ -136,11 +137,11 @@ export function ProductFormScreen(): React.JSX.Element {
       {loaded === undefined ? <Toggle label={t("divisible")} value={divisible} onChange={setDivisible} hint={t("divisibleHelp")} /> : <Text style={s.muted}>{t("divisibleFixed")}</Text>}
       <Field label={t("minimum")} value={minimum} onChange={setMinimum} kind="quantity" />
       <Picker<Category> label={t("mainCategory")} value={group} onChange={value => { setGroup(value); if (value !== undefined) setExtras(current => current.filter(item => item.id !== value.id)); }} optional
-        load={page => categories(context, page)} revision={revision} />
+        load={page => labelledPage(categories(context, page), language)} revision={revision} />
       <Text style={[s.muted, { fontWeight: "600" }]}>{t("otherCategories")}</Text>
       <RowGroup>{extras.map(item => <ListRow key={item.id} title={item.name} trailing={t("remove")} trailingTone="muted" accessibilityLabel={t("removeLineLabel", { name: item.name })}
         onPress={() => setExtras(current => current.filter(other => other.id !== item.id))} />)}</RowGroup>
-      {extras.length < 20 && <Picker<Category> label={t("addCategory")} value={undefined} placeholder={t("choose")} load={page => categories(context, page)} revision={revision}
+      {extras.length < 20 && <Picker<Category> label={t("addCategory")} value={undefined} placeholder={t("choose")} load={page => labelledPage(categories(context, page), language)} revision={revision}
         onChange={value => { if (value !== undefined && value.id !== group?.id) setExtras(current => current.some(item => item.id === value.id) ? current : [...current, { id: value.id, name: value.name }]); }} />}
       <Text style={s.muted}>{t("otherCategoriesHelp")}</Text>
       {loaded === undefined && permissions.includes("inventory.adjust") && <Field label={t("openingQuantity")} value={opening} onChange={setOpening} kind="quantity" hint={t("openingHelp")} />}
@@ -187,13 +188,23 @@ export function StockHistoryScreen(): React.JSX.Element {
   </Screen>;
 }
 
+/** A category as pickers show it: `name` replaced by its label in the device language (ADR-037). */
+export function labelled(category: Category, language: Language): Category { return { ...category, name: categoryLabel(category, language) }; }
+/** A page of categories labelled for the device language; the cursor still follows the main names. */
+export function labelledPage(page: Page<Category>, language: Language): Page<Category> { return { ...page, items: page.items.map(item => labelled(item, language)) }; }
+/** "Français : … · Anglais : …" for the names set on a category, or nothing. */
+function translations(category: Category, t: (key: TextKey, values?: Record<string, string>) => string): string | undefined {
+  const parts = [category.names?.fr === undefined ? undefined : t("categoryNameFrValue", { name: category.names.fr }), category.names?.en === undefined ? undefined : t("categoryNameEnValue", { name: category.names.en })].filter(part => part !== undefined);
+  return parts.length === 0 ? undefined : parts.join(" · ");
+}
+
 /** Categories list, reachable from Products. */
 export function CategoriesScreen(): React.JSX.Element {
   const { t } = useText(), nav = useNav(), { context } = useSession(), permissions = usePermissions(), revision = useRevision(["products"]), [archived, setArchived] = useState(false);
   return <Screen title={t("categories")} onBack={nav.back} scroll={false} actions={permissions.includes("products.create") ? <Button label={t("new")} variant="ghost" onPress={() => nav.push("categoryForm", {})} /> : undefined}>
     <PagedList<Category> revision={revision} identify={item => item.id} deps={[archived]} load={page => categories(context, { ...page, includeInactive: archived })}
       header={<Toggle label={t("showArchived")} value={archived} onChange={setArchived} />} empty={{ title: t("noCategories") }}
-      render={item => <ListRow title={item.name} tag={item.active ? undefined : t("archived")} onPress={permissions.includes("products.edit") ? () => nav.push("categoryForm", { categoryId: item.id }) : undefined} />} />
+      render={item => <ListRow title={item.name} subtitle={translations(item, t)} tag={item.active ? undefined : t("archived")} onPress={permissions.includes("products.edit") ? () => nav.push("categoryForm", { categoryId: item.id }) : undefined} />} />
   </Screen>;
 }
 
@@ -201,17 +212,19 @@ export function CategoriesScreen(): React.JSX.Element {
 export function CategoryFormScreen(): React.JSX.Element {
   const { t } = useText(), nav = useNav(), { categoryId } = useParams("categoryForm"), { context } = useSession(), permissions = usePermissions(), action = useAction(), request = useRequestId();
   const loaded = useMemo(() => { try { return categoryId === undefined ? undefined : categoryRead(context, categoryId); } catch { return undefined; } }, [context, categoryId]);
-  const [name, setName] = useState(loaded?.name ?? "");
-  useLeaveGuard(name !== (loaded?.name ?? ""));
+  const [name, setName] = useState(loaded?.name ?? ""), [fr, setFr] = useState(loaded?.names?.fr ?? ""), [en, setEn] = useState(loaded?.names?.en ?? "");
+  useLeaveGuard(name !== (loaded?.name ?? "") || fr !== (loaded?.names?.fr ?? "") || en !== (loaded?.names?.en ?? ""));
   const write = (active: boolean): void => action.run(() => {
     if (name.trim() === "") throw new FormProblem("nameRequired");
-    const now = new Date().toISOString();
-    if (loaded === undefined) { if (categoryRead(context, request.current) === undefined) saveCategory(context, { id: request.current, name: name.trim(), active: true, createdAt: now, updatedAt: now }); return; }
+    const now = new Date().toISOString(), names = { fr, en };
+    if (loaded === undefined) { if (categoryRead(context, request.current) === undefined) saveCategory(context, { id: request.current, name: name.trim(), active: true, createdAt: now, updatedAt: now, names }); return; }
     const stored = categoryRead(context, loaded.id); requireVersion(stored, loaded.updatedAt);
-    if (!saveCategory(context, { ...stored!, name: name.trim(), active, updatedAt: nextVersion(stored!.updatedAt) })) throw new FormProblem("newerEdit");
+    if (!saveCategory(context, { ...stored!, name: name.trim(), active, updatedAt: nextVersion(stored!.updatedAt), names })) throw new FormProblem("newerEdit");
   }, () => { request.renew(); nav.leave(); });
   return <Screen title={loaded === undefined ? t("newCategory") : t("editCategory")} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={() => write(loaded?.active ?? true)} /></>}>
-    <Section><Field label={t("name")} value={name} onChange={setName} autoFocus /></Section>
+    <Section><Field label={t("name")} value={name} onChange={setName} autoFocus />
+      <Field label={t("categoryNameFr")} value={fr} onChange={setFr} />
+      <Field label={t("categoryNameEn")} value={en} onChange={setEn} hint={t("categoryNamesHelp")} /></Section>
     {loaded !== undefined && permissions.includes("products.archive") && <View style={{ gap: spacing.sm }}>
       <Button label={t(loaded.active ? "archive" : "restore")} variant={loaded.active ? "danger" : "secondary"} onPress={() => write(!loaded.active)} /></View>}
   </Screen>;

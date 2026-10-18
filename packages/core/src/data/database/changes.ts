@@ -5,7 +5,7 @@ export type ChangedDomain = "products" | "inventory" | "sales" | "customers" | "
 const tables: Record<string, readonly ChangedDomain[]> = {
   business_returns: ["sales", "purchases", "inventory", "customers", "suppliers", "accounts"],
   business_return_items: ["sales", "purchases", "inventory"], business_return_refunds: ["accounts"],
-  products: ["products"], categories: ["products"], product_photos: ["products"], product_categories: ["products"], product_category_sets: ["products"], inventory_movements: ["inventory"],
+  products: ["products"], categories: ["products"], category_names: ["products"], product_photos: ["products"], product_categories: ["products"], product_category_sets: ["products"], inventory_movements: ["inventory"],
   sales: ["sales"], sale_items: ["sales"], sale_payments: ["sales", "accounts"],
   customers: ["customers"], customer_transactions: ["customers", "accounts"],
   suppliers: ["suppliers"], supplier_transactions: ["suppliers", "accounts"],

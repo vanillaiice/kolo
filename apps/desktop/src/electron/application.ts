@@ -16,7 +16,7 @@ import { subscribeChanges } from "@kolo/core/data/database/changes";
 import { sealPendingEvents } from "@kolo/core/application/exchange";
 import type { ExchangeCrypto } from "@kolo/core/exchange/types";
 import type { CategoryView, CustomerDetails, CustomerView, ProductView, Result, SessionPreferences, ShopService, WorkspaceView } from "../shared/service.js";
-import { object, text, uuid, whole, boolean, page, optional } from "./validation.ts";
+import { object, text, uuid, whole, boolean, page, optional, categoryNames } from "./validation.ts";
 import { CommandError, isValidationError, nextVersion, type Host } from "./host.ts";
 import * as purchasing from "./purchasing.ts";
 import * as finance from "./finance.ts";
@@ -411,16 +411,17 @@ export class DesktopApplication implements ShopService {
   /** Creates a category named by its request ID; only this actor's identical creation counts as a retry. */
   createCategory(input: unknown): ReturnType<ShopService["createCategory"]> {
     return this.#run(() => {
-      const data = object(input, ["sessionId", "requestId", "name"]), context = this.#actor(data, ["products.create"]);
-      const id = uuid(data["requestId"]), name = text(data["name"]), at = this.ports.now();
+      const data = object(input, ["sessionId", "requestId", "name", "names"]), context = this.#actor(data, ["products.create"]);
+      const id = uuid(data["requestId"]), name = text(data["name"]), names = optional(data["names"], categoryNames) ?? {}, at = this.ports.now();
       return this.ports.database.transaction(tx => {
         if (tx.get(`SELECT 1 FROM categories WHERE id=?`, [id]) !== undefined) {
           const original = categoryOf(tx, context.businessId, id);
           const actor = tx.get(`SELECT user_id FROM local_audit WHERE business_id=? AND device_id=? AND action='CATEGORY_SAVED' AND entity_id=? ORDER BY occurred_at LIMIT 1`, [context.businessId, context.deviceId, id]);
-          if (original === undefined || actor?.["user_id"] !== context.userId || original.createdAt !== original.updatedAt || original.name !== name) throw new CommandError("request_conflict");
+          if (original === undefined || actor?.["user_id"] !== context.userId || original.createdAt !== original.updatedAt || original.name !== name ||
+            original.names?.fr !== names.fr || original.names?.en !== names.en) throw new CommandError("request_conflict");
           return this.#category(original);
         }
-        saveCategory(context, { id, name, active: true, createdAt: at, updatedAt: at });
+        saveCategory(context, { id, name, active: true, createdAt: at, updatedAt: at, names });
         return this.#category(categoryOf(tx, context.businessId, id)!);
       });
     });
@@ -428,15 +429,16 @@ export class DesktopApplication implements ShopService {
   /** Renames, archives or restores a category from its displayed version. */
   updateCategory(input: unknown): ReturnType<ShopService["updateCategory"]> {
     return this.#run(() => {
-      const data = object(input, ["sessionId", "categoryId", "version", "name", "active"]), context = this.#actor(data, ["products.edit"]);
-      const id = uuid(data["categoryId"]), version = text(data["version"], 64), name = text(data["name"]), active = boolean(data["active"]);
+      const data = object(input, ["sessionId", "categoryId", "version", "name", "active", "names"]), context = this.#actor(data, ["products.edit"]);
+      const id = uuid(data["categoryId"]), version = text(data["version"], 64), name = text(data["name"]), active = boolean(data["active"]), names = optional(data["names"], categoryNames);
       return this.ports.database.transaction(tx => {
         const stored = categoryOf(tx, context.businessId, id);
         if (stored === undefined) throw new WorkspaceError("scope_mismatch");
         if (stored.active !== active) this.#actor(data, ["products.archive"]);
-        if (stored.name === name && stored.active === active) return this.#category(stored);
+        const sameNames = names === undefined || (names.fr === stored.names?.fr && names.en === stored.names?.en);
+        if (stored.name === name && stored.active === active && sameNames) return this.#category(stored);
         if (stored.updatedAt !== version) throw new CommandError("request_conflict");
-        if (!saveCategory(context, { id, name, active, createdAt: stored.createdAt, updatedAt: this.#nextVersion(stored.updatedAt) })) throw new CommandError("request_conflict");
+        if (!saveCategory(context, { id, name, active, createdAt: stored.createdAt, updatedAt: this.#nextVersion(stored.updatedAt), ...(names === undefined ? {} : { names }) })) throw new CommandError("request_conflict");
         return this.#category(categoryOf(tx, context.businessId, id)!);
       });
     });
@@ -832,7 +834,8 @@ export class DesktopApplication implements ShopService {
       ...(customer.notes === undefined ? {} : { notes: customer.notes }), ...(customer.creditLimitMinor === undefined ? {} : { creditLimitMinor: customer.creditLimitMinor }) };
   }
   #category(category: Category): CategoryView {
-    return { id: category.id, name: category.name, active: category.active, version: category.updatedAt };
+    return { id: category.id, name: category.name, active: category.active, version: category.updatedAt,
+      names: { ...(category.names?.fr === undefined ? {} : { fr: category.names.fr }), ...(category.names?.en === undefined ? {} : { en: category.names.en }) } };
   }
   /** Local edits of the displayed version win locally even when this clock is behind the stored edit. */
   #nextVersion(stored: string): string { return nextVersion(this.#host, stored); }

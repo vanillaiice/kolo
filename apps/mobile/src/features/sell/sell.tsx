@@ -20,6 +20,7 @@ import { FormProblem, useAction } from "../../components/command.tsx";
 import { spacing, useTheme, WIDE_LAYOUT } from "../../components/theme.ts";
 import { Button, Divider, EmptyState, Field, ListRow, Notice, Picker, RowGroup, Screen, Section, Segmented, Toggle, useDebounced, usePages, useStyles } from "../../components/ui.tsx";
 import { Thumbnail } from "../products/photos.tsx";
+import { labelledPage } from "../products/products.tsx";
 
 /** How a sale is settled: cash (one account, full amount), split across accounts, or partly on a customer's credit. */
 export type Settlement = "cash" | "split" | "credit";
@@ -62,7 +63,7 @@ function CartBar({ draft, onOpen }: { readonly draft: SellDraft; readonly onOpen
  * after a short pause. On wide screens the cart sits beside the catalogue.
  */
 export function SellScreen(): React.JSX.Element {
-  const { t } = useText(), s = useStyles(), nav = useNav(), { context, businessName } = useSession(), permissions = usePermissions();
+  const { t, language } = useText(), s = useStyles(), nav = useNav(), { context, businessName } = useSession(), permissions = usePermissions();
   const revision = useRevision(["products", "inventory"]), [draft, setDraft] = useSellDraft();
   const [term, setTerm] = useState(""), query = useDebounced(term.trim()), [notice, setNotice] = useState<{ key: TextKey; values?: Record<string, string> }>();
   const [category, setCategory] = useState<Category>(), input = useRef<TextInput>(null), { width } = useWindowDimensions(), { colors } = useTheme();
@@ -98,7 +99,7 @@ export function SellScreen(): React.JSX.Element {
     ListHeaderComponent={<View style={{ padding: spacing.lg, gap: spacing.md }}>
       <Field label={t("scan")} value={term} onChange={setTerm} onSubmit={scan} inputRef={input} kind="code" hint={t("scanHint")} />
       {notice !== undefined && <Notice tone={notice.key === "addedToCart" ? "success" : "warning"} text={t(notice.key, notice.values)} />}
-      <Picker<Category> label={t("category")} value={category} onChange={setCategory} optional placeholder={t("allCategories")} load={page => categories(context, page)} revision={revision} />
+      <Picker<Category> label={t("category")} value={category} onChange={setCategory} optional placeholder={t("allCategories")} load={page => labelledPage(categories(context, page), language)} revision={revision} />
     </View>}
     ListEmptyComponent={results.failed ? <Notice tone="error" text={t("loadFailed")} action={<Button label={t("retry")} variant="secondary" onPress={results.retry} />} />
       : <EmptyState title={query === "" && category === undefined ? t("noProducts") : t("noMatches")} text={query === "" && category === undefined ? t("noProductsHelp") : undefined} />}

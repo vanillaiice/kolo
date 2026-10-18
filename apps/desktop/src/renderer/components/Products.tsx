@@ -2,6 +2,7 @@ import { PhotoEditor, ProductThumb } from "./Photo.tsx";
 import { useEffect, useState } from "react";
 import { moneyEntry, quantityEntry, quantityInput, rateEntry, rateInput } from "@kolo/core/domain/entry";
 import { formatMoney, formatQuantity, formatQuantityWithUnit, formatRate } from "@kolo/core/domain/money";
+import { categoryLabel } from "@kolo/core/domain/category-names";
 import type { Cursor } from "@kolo/core/application/queries";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { CategoryView, ProductTaxView, ProductView, Result, ShopService } from "../../shared/service.ts";
@@ -102,7 +103,7 @@ function ProductTax({service,sessionId,revision,productId,canEdit}:{service:Shop
   </div>;
 }
 function EditProduct({service,sessionId,product,onReload,onSaved,onClose}:{service:ShopService;sessionId:string;product:ProductView;onReload:()=>void;onSaved:(value:ProductView)=>void;onClose:()=>void}):React.JSX.Element{
-  const {t}=useText(),action=useAction();
+  const {t,language}=useText(),action=useAction();
   const [name,setName]=useState(product.name),[unit,setUnit]=useState(product.unit),[barcode,setBarcode]=useState(product.barcode??""),[price,setPrice]=useState(String(product.sellingPriceMinor));
   const [cost,setCost]=useState(product.purchasePriceMinor===undefined?"":String(product.purchasePriceMinor)),[minimum,setMinimum]=useState(quantityInput(product.minimumStockThousandths)),[categoryId,setCategoryId]=useState(product.categoryId??""),[others,setOthers]=useState<readonly string[]>(product.otherCategoryIds??[]);
   const options=useRead(()=>service.listCategories({sessionId,includeInactive:true,limit:100}),[service,sessionId]);
@@ -116,7 +117,7 @@ function EditProduct({service,sessionId,product,onReload,onSaved,onClose}:{servi
     });
     if(value!==undefined)onSaved(value);
   };
-  const choices=[{value:"",label:t("noCategory")},...(options.data?.items??[]).filter(item=>item.active||item.id===product.categoryId).map(item=>({value:item.id,label:item.active?item.name:`${item.name} · ${t("archived")}`}))];
+  const choices=[{value:"",label:t("noCategory")},...(options.data?.items??[]).filter(item=>item.active||item.id===product.categoryId).map(item=>({value:item.id,label:item.active?categoryLabel(item,language):`${categoryLabel(item,language)} · ${t("archived")}`}))];
   return <div className="panel form-panel"><h2>{t("editProduct")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}>
     <fieldset disabled={action.busy}><div className="two-fields"><Field id="edit-name" label={t("name")} value={name} onChange={setName}/><Field id="edit-unit" label={t("unit")} value={unit} onChange={setUnit}/></div>
       <div className="two-fields"><Field id="edit-barcode" label={t("barcode")} value={barcode} onChange={setBarcode} required={false} maxLength={256}/><Select id="edit-category" label={t("category")} value={categoryId} onChange={setCategoryId} options={choices}/></div>
@@ -124,7 +125,7 @@ function EditProduct({service,sessionId,product,onReload,onSaved,onClose}:{servi
       <Field id="edit-minimum" label={t("minimumStock")} value={minimum} onChange={setMinimum} numeric/>
       <fieldset className="permission-group"><legend>{t("otherCategories")}</legend>
         {(options.data?.items??[]).filter(item=>item.id!==categoryId&&(item.active||others.includes(item.id))).map(item=><label key={item.id} className="check">
-          <input type="checkbox" checked={others.includes(item.id)} onChange={event=>setOthers(current=>event.target.checked?[...current,item.id].slice(0,20):current.filter(id=>id!==item.id))}/>{item.active?item.name:`${item.name} · ${t("archived")}`}</label>)}
+          <input type="checkbox" checked={others.includes(item.id)} onChange={event=>setOthers(current=>event.target.checked?[...current,item.id].slice(0,20):current.filter(id=>id!==item.id))}/>{item.active?categoryLabel(item,language):`${categoryLabel(item,language)} · ${t("archived")}`}</label>)}
         <p className="hint">{t("otherCategoriesHelp")}</p></fieldset>
     </fieldset>
     <ErrorText message={action.error} conflictMessage="staleVersion"/><div className="actions"><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):t("save")}</button>
@@ -185,8 +186,9 @@ function Categories({service,sessionId,revision,permissions}:Props):React.JSX.El
     {editing!==undefined&&<CategoryForm key={editing.version} service={service} sessionId={sessionId} category={editing} onDone={()=>setEditing(undefined)}/>}
     <div className="panel"><label className="check"><input type="checkbox" checked={archived} onChange={event=>{setArchived(event.target.checked);setCursor(undefined);}}/>{t("showArchived")}</label>
       <ReadState loading={list.loading} error={list.error} empty={list.data?.items.length===0} emptyText={t("noCategories")} retry={list.retry}>
-        <div className="table-wrap"><table><thead><tr><th>{t("categoryName")}</th><th></th></tr></thead><tbody>
+        <div className="table-wrap"><table><thead><tr><th>{t("categoryName")}</th><th>{t("categoryNameFrShort")}</th><th>{t("categoryNameEnShort")}</th><th></th></tr></thead><tbody>
           {list.data?.items.map(item=><tr key={item.id}><td><strong>{item.name}</strong>{!item.active&&<span className="tag">{t("archived")}</span>}</td>
+            <td>{item.names.fr??"—"}</td><td>{item.names.en??"—"}</td>
             <td className="row-actions">{canEdit&&item.active&&<button className="text-button" onClick={()=>setEditing(item)}>{t("rename")}</button>}
               {canArchive&&<ArchiveCategory service={service} sessionId={sessionId} category={item}/>}</td></tr>)}
         </tbody></table></div>
@@ -196,23 +198,25 @@ function Categories({service,sessionId,revision,permissions}:Props):React.JSX.El
 }
 function CreateCategory({service,sessionId}:{service:ShopService;sessionId:string}):React.JSX.Element{
   const {t}=useText(),action=useAction();
-  const [name,setName]=useState(""),[requestId,setRequestId]=useState(()=>crypto.randomUUID()),[uncertain,setUncertain]=useState(false);
+  const [name,setName]=useState(""),[fr,setFr]=useState(""),[en,setEn]=useState(""),[requestId,setRequestId]=useState(()=>crypto.randomUUID()),[uncertain,setUncertain]=useState(false);
   const submit=async():Promise<void>=>{
     const value=await action.run(async()=>{
-      const result=await service.createCategory({sessionId,requestId,name}).catch(()=>({ok:false as const,error:{code:"unavailable" as const}}));
+      const result=await service.createCategory({sessionId,requestId,name,names:{fr,en}}).catch(()=>({ok:false as const,error:{code:"unavailable" as const}}));
       setUncertain(!result.ok&&result.error.code==="unavailable"); return result;
     });
-    if(value!==undefined){setName("");setRequestId(crypto.randomUUID());}
+    if(value!==undefined){setName("");setFr("");setEn("");setRequestId(crypto.randomUUID());}
   };
   return <div className="panel form-panel"><form className="inline-form" onSubmit={event=>{event.preventDefault();void submit();}}>
-    <fieldset disabled={action.busy||uncertain}><Field id="category-name" label={t("newCategory")} value={name} onChange={setName}/></fieldset>
+    <fieldset disabled={action.busy||uncertain}><Field id="category-name" label={t("newCategory")} value={name} onChange={setName}/>
+      <Field id="category-name-fr" label={t("categoryNameFr")} value={fr} onChange={setFr} required={false}/><Field id="category-name-en" label={t("categoryNameEn")} value={en} onChange={setEn} required={false}/></fieldset>
     <button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):uncertain?t("retry"):t("save")}</button>
-  </form><ErrorText message={action.error}/></div>;
+  </form><p className="hint">{t("categoryNamesHelp")}</p><ErrorText message={action.error}/></div>;
 }
 function CategoryForm({service,sessionId,category,onDone}:{service:ShopService;sessionId:string;category:CategoryView;onDone:()=>void}):React.JSX.Element{
-  const {t}=useText(),action=useAction(),[name,setName]=useState(category.name);
-  return <div className="panel form-panel"><form className="inline-form" onSubmit={event=>{event.preventDefault();void action.run(()=>service.updateCategory({sessionId,categoryId:category.id,version:category.version,name,active:category.active})).then(value=>{if(value!==undefined)onDone();});}}>
-    <fieldset disabled={action.busy}><Field id="category-rename" label={t("rename")} value={name} onChange={setName}/></fieldset>
+  const {t}=useText(),action=useAction(),[name,setName]=useState(category.name),[fr,setFr]=useState(category.names.fr??""),[en,setEn]=useState(category.names.en??"");
+  return <div className="panel form-panel"><form className="inline-form" onSubmit={event=>{event.preventDefault();void action.run(()=>service.updateCategory({sessionId,categoryId:category.id,version:category.version,name,active:category.active,names:{fr,en}})).then(value=>{if(value!==undefined)onDone();});}}>
+    <fieldset disabled={action.busy}><Field id="category-rename" label={t("rename")} value={name} onChange={setName}/>
+      <Field id="category-rename-fr" label={t("categoryNameFr")} value={fr} onChange={setFr} required={false}/><Field id="category-rename-en" label={t("categoryNameEn")} value={en} onChange={setEn} required={false}/></fieldset>
     <button className="primary" type="submit" disabled={action.busy}>{t("save")}</button><button type="button" className="secondary" onClick={onDone}>{t("cancel")}</button>
   </form><ErrorText message={action.error} conflictMessage="staleVersion"/></div>;
 }
