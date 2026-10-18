@@ -40,8 +40,6 @@ function catalogue<T>(tx: Queryable, businessId: string, table: "products" | "ca
     where += ` AND (search_name LIKE ? ESCAPE '\\'`; values.push(prefix);
     if (table === "products") { where += ` OR barcode=? OR sku LIKE ? ESCAPE '\\'`; values.push(term, prefix); }
     if (table === "customers" || table === "suppliers") { where += " OR phone LIKE ? ESCAPE '\\'"; values.push(prefix); }
-    // A category is also found by its French or English name.
-    if (table === "categories") { where += " OR id IN (SELECT id FROM category_names WHERE business_id=? AND (search_fr LIKE ? ESCAPE '\\' OR search_en LIKE ? ESCAPE '\\'))"; values.push(businessId, prefix, prefix); }
     // Any word of the name (and brand, description, phone, contact) through the full-text index.
     const words = table === "products" || table === "customers" || table === "suppliers" ? fullTextQuery(term) : undefined;
     if (words !== undefined) { where += " OR id IN (SELECT id FROM catalogue_search WHERE catalogue_search MATCH ? AND entity=? AND business_id=?)"; values.push(words, table, businessId); }

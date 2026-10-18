@@ -83,9 +83,9 @@ export function Analytics({ service, sessionId, revision, permissions }: Props):
 
 function AnalyticsView({ service, sessionId, revision, period, bucket }: { service: ShopService; sessionId: string; revision: number; period: { from: string; until: string }; bucket: AnalyticsBucket | "auto" }): React.JSX.Element {
   // The offset at the period's start; XAF zones keep one offset all year.
-  const offsetMinutes = -new Date(period.from).getTimezoneOffset(), { language } = useText();
-  const read = useRead(() => service.analytics({ sessionId, from: period.from, until: period.until, offsetMinutes, language, ...(bucket === "auto" ? {} : { bucket }) }),
-    [service, sessionId, period.from, period.until, offsetMinutes, bucket, language, revision]);
+  const offsetMinutes = -new Date(period.from).getTimezoneOffset();
+  const read = useRead(() => service.analytics({ sessionId, from: period.from, until: period.until, offsetMinutes, ...(bucket === "auto" ? {} : { bucket }) }),
+    [service, sessionId, period.from, period.until, offsetMinutes, bucket, revision]);
   return <ReadState loading={read.loading} error={read.error} empty={false} emptyText="" retry={read.retry}>{read.data !== undefined && <Dashboard value={read.data}/>}</ReadState>;
 }
 

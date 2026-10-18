@@ -253,38 +253,6 @@ it("category dependencies and last-write-wins edits relay without losing product
   assert.equal(applyEvent(b.context,await verifyEvent(b.context,categoryEvent,crypto)), "duplicate");
 });
 
-it("category French/English names relay under last-write-wins, wait for their category and need edit authority to replace", async () => {
-  const [a,b] = await replicas() as [Replica,Replica], category = randomUUIDv7(), later = "2026-10-06T06:05:00.000Z";
-  commands.saveCategory(a.context, { id: category, name: "Boissons", active: true, createdAt: at, updatedAt: at, names: { en: "Drinks" } });
-  await sealPendingEvents(a.context,crypto); const events = eventsForDestination(a.context,dest(a,b));
-  const categoryEvent = events.find(e => e.envelope.event_type === "CATEGORY_SAVED")!, namesEvent = events.find(e => e.envelope.event_type === "CATEGORY_NAMES_SET")!;
-  assert.deepEqual(namesEvent.envelope.required_permissions, ["products.create"], "first names ride on the creation");
-  assert.equal(applyEvent(b.context,await verifyEvent(b.context,namesEvent,crypto)), "deferred", "names wait for their category");
-  assert.equal(applyEvent(b.context,await verifyEvent(b.context,categoryEvent,crypto)), "applied"); assert.equal(retryDeferred(b.context),1);
-  assert.deepEqual(queries.category(b.context, category)!.names, { en: "Drinks" });
-  assert.equal(applyEvent(b.context,await verifyEvent(b.context,namesEvent,crypto)), "duplicate");
-
-  // B renames later; A adopts it and A's older fact never undoes it.
-  commands.saveCategory(b.context, { id: category, name: "Boissons", active: true, createdAt: at, updatedAt: later, names: { fr: "Rafraîchissements", en: "Beverages" } });
-  await send(b,a);
-  assert.deepEqual(queries.category(a.context, category)!.names, { fr: "Rafraîchissements", en: "Beverages" });
-  assert.equal(applyEvent(a.context,await verifyEvent(a.context,namesEvent,crypto)), "duplicate");
-  assert.deepEqual(queries.category(a.context, category)!.names, { fr: "Rafraîchissements", en: "Beverages" });
-
-  // Replacing names already set needs products.edit; claiming only creation (or nothing) is quarantined with no effect.
-  for (const [sequence, claims] of [[900, ["products.create"]], [901, ["sales.create"]]] as const) {
-    const forged = structuredClone(namesEvent.envelope); forged.event_id = randomUUIDv7(); forged.origin_sequence = sequence; forged.required_permissions = [...claims];
-    forged.payload = { category_id: category, en: "Forged", updated_at: "2026-10-06T07:00:00.000Z" };
-    assert.equal(applyEvent(b.context, await verifyEvent(b.context, await signed(a, forged), crypto)), "quarantined");
-  }
-  assert.deepEqual(queries.category(b.context, category)!.names, { fr: "Rafraîchissements", en: "Beverages" });
-  // Control: the same fact claiming edit authority the owner holds applies, so the refusals above were the authority check.
-  const edit = structuredClone(namesEvent.envelope); edit.event_id = randomUUIDv7(); edit.origin_sequence = 902; edit.required_permissions = ["products.edit"];
-  edit.payload = { category_id: category, en: "Edited", updated_at: "2026-10-06T07:00:00.000Z" };
-  assert.equal(applyEvent(b.context, await verifyEvent(b.context, await signed(a, edit), crypto)), "applied");
-  assert.deepEqual(queries.category(b.context, category)!.names, { en: "Edited" }, "an absent French name clears it");
-});
-
 it("additional product categories relay under last-write-wins, keep the main category for reports and replay harmlessly", async () => {
   const [a,b] = await replicas() as [Replica,Replica], food = randomUUIDv7(), drinks = randomUUIDv7(), promo = randomUUIDv7(), p = randomUUIDv7();
   for (const [id, name] of [[food, "Food"], [drinks, "Drinks"], [promo, "Promo"]] as const) commands.saveCategory(a.context, { id, name, active: true, createdAt: at, updatedAt: at });

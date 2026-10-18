@@ -1,6 +1,6 @@
 import { parseEventPayload } from "@kolo/contracts/events";
 import { writeProductCategories } from "../data/products/product-categories.ts";
-import { categoryNamesOf, upsertCategory, writeCategoryNames, type Category, type CategoryNames } from "../data/products/categories.ts";
+import { upsertCategory, type Category } from "../data/products/categories.ts";
 import { enqueue } from "../data/sync/outbox.ts";
 import { sumAmounts } from "../rules/amounts.ts";
 import { sqlInteger } from "../data/database/safe-values.ts";
@@ -344,46 +344,22 @@ export function adjustCashToCount(context: OperationContext, input: { readonly a
   });
 }
 
-/**
- * Saves a category under product create/edit/archive authority. LWW details, v2 event and audit commit together.
- * With `names`, its French/English names (ADR-037) are set too, trimmed, blank meaning none: a `CATEGORY_NAMES_SET`
- * event follows only when they differ from the stored ones. Omitted `names` leaves them unchanged. False when a newer
- * version of the details or of the names is stored.
- */
+/** Saves a category under product create/edit/archive authority. LWW details, v2 event and audit commit together. */
 export function saveCategory(context: OperationContext, input: Omit<Category, "businessId" | "updatedByDevice">): boolean {
   return authorizedOperation(context, [], (_database, tx, ports, revision) => {
     const existing = existingScoped(tx, context, "categories", input.id);
-    const claim: Permission = existing === undefined ? "products.create" : "products.edit";
-    const permissions: Permission[] = [claim];
+    const permissions: Permission[] = [existing === undefined ? "products.create" : "products.edit"];
     if (!input.active) permissions.push("products.archive");
     if (input.updatedAt < input.createdAt) throw new WorkspaceError("invalid_input");
     const payload = { category: { id: input.id, name: input.name, active: input.active, created_at: input.createdAt, updated_at: input.updatedAt } };
     try { parseEventPayload("CATEGORY_SAVED", 2, payload); } catch { throw new WorkspaceError("invalid_input"); }
-    const names = input.names === undefined ? undefined : cleanNames(input.names);
-    const stored = names === undefined ? undefined : categoryNamesOf(tx, context.businessId, input.id);
-    const namesChanged = names !== undefined && (names.fr !== stored?.fr || names.en !== stored?.en);
-    const namesPayload = names === undefined ? undefined : { category_id: input.id, ...names, updated_at: input.updatedAt };
-    if (namesPayload !== undefined) try { parseEventPayload("CATEGORY_NAMES_SET", 2, namesPayload); } catch { throw new WorkspaceError("invalid_input"); }
-    const result = authorizedOperation(context, permissions, () => {
+    return authorizedOperation(context, permissions, () => {
       const result = upsertCategory(tx, { ...input, businessId: context.businessId }, context.deviceId);
       enqueue(tx, { eventId: nextId(ports), ...context, type: "CATEGORY_SAVED", payload, occurredAt: input.updatedAt });
       appendLocalAudit(tx, context, ports, revision, "CATEGORY_SAVED", input.id);
       return result;
     });
-    if (!namesChanged || !result) return result;
-    return authorizedOperation(context, [stored === undefined ? claim : "products.edit"], () => {
-      if (!writeCategoryNames(tx, context.businessId, input.id, { ...names, updatedAt: input.updatedAt }, context.deviceId)) return false;
-      enqueue(tx, { eventId: nextId(ports), ...context, type: "CATEGORY_NAMES_SET", payload: namesPayload!, occurredAt: input.updatedAt });
-      appendLocalAudit(tx, context, ports, revision, "CATEGORY_NAMES_SET", input.id);
-      return result;
-    });
   });
-}
-
-/** Trims names and drops blank ones, so "no translation" is always stored and signed as absent. */
-function cleanNames(names: CategoryNames): CategoryNames {
-  const fr = names.fr?.trim(), en = names.en?.trim();
-  return { ...(fr === undefined || fr === "" ? {} : { fr }), ...(en === undefined || en === "" ? {} : { en }) };
 }
 
 /**

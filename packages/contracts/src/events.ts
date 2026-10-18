@@ -37,8 +37,6 @@ export const EVENT_PAYLOAD_SCHEMAS = {
   SALE_RETURNED: z.strictObject({ returned }),
   PURCHASE_RETURNED: z.strictObject({ returned }),
   CATEGORY_SAVED: z.strictObject({ category: z.strictObject({ id: uuid, name, active: z.boolean(), created_at: timestamp, updated_at: timestamp }) }),
-  /** A category's optional French and English names beside its main `name` (ADR-037); last write wins per category. Absent falls back to the main name. */
-  CATEGORY_NAMES_SET: z.strictObject({ category_id: uuid, fr: name.optional(), en: name.optional(), updated_at: timestamp }),
   PRODUCT_SAVED: z.strictObject({ product: z.strictObject({ id: uuid, category_id: uuid.optional(), name, unit: name,
     selling_price_minor: money, purchase_price_minor: money.optional(), sku: text.optional(), barcode: text.optional(), description: text.optional(), brand: text.optional(),
     divisible: z.boolean().optional(), active: z.boolean().optional(), tax_rate_basis_points: whole.min(0).max(10000).optional(), minimum_stock: money.optional(), created_at: timestamp, updated_at: timestamp }) }),

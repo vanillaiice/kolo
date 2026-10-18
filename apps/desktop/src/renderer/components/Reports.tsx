@@ -42,8 +42,7 @@ export function Reports({ service, sessionId, revision, permissions }: Props): R
   </section>;
 }
 function ReportView({service,sessionId,revision,kind,period}:{service:ShopService;sessionId:string;revision:number;kind:ReportKind;period:{from:string;until:string}}):React.JSX.Element{
-  const {language}=useText();
-  const read=useRead(()=>service.report({sessionId,kind,from:period.from,until:period.until,language}),[service,sessionId,kind,period.from,period.until,language,revision]);
+  const read=useRead(()=>service.report({sessionId,kind,from:period.from,until:period.until}),[service,sessionId,kind,period.from,period.until,revision]);
   return <ReadState loading={read.loading} error={read.error} empty={false} emptyText="" retry={read.retry}>{read.data!==undefined&&<Result value={read.data}/>}</ReadState>;
 }
 function Tile({label,value,tone}:{label:string;value:string;tone?:"negative"}):React.JSX.Element{

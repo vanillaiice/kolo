@@ -28,17 +28,6 @@ export function boolean(value: unknown): boolean {
   if (typeof value !== "boolean") throw new WorkspaceError("invalid_input");
   return value;
 }
-/** A category's French/English names over IPC: each optional, at most 120 characters, blank meaning none. */
-export function categoryNames(value: unknown): { fr?: string; en?: string } {
-  const data = object(value, ["fr", "en"]), result: { fr?: string; en?: string } = {};
-  for (const language of ["fr", "en"] as const) {
-    const item = data[language];
-    if (item === undefined) continue;
-    if (typeof item !== "string" || item.length > 120) throw new WorkspaceError("invalid_input");
-    if (item.trim() !== "") result[language] = item.trim();
-  }
-  return result;
-}
 /** Absent optional fields stay absent; present ones must pass their own parser. */
 export function optional<T>(value: unknown, parse: (value: unknown) => T): T | undefined {
   return value === undefined ? undefined : parse(value);

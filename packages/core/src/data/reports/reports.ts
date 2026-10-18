@@ -23,8 +23,6 @@ import { discountedLineTotals } from "../../rules/returns.ts";
 
 import type { Queryable } from "../database/driver.ts";
 import { QUANTITY_SCALE } from "../inventory/movements.ts";
-import { categoryLabel } from "../../domain/category-names.ts";
-import type { Language } from "../../domain/money.ts";
 
 /** What a period sold. */
 export interface SalesSummary {
@@ -239,8 +237,6 @@ export interface NetSaleFact {
   /** Empty when the product is in no category. */
   readonly categoryId: string;
   readonly categoryName: string | undefined;
-  /** The category's French/English names (ADR-037), when any are set. */
-  readonly categoryNames?: { readonly fr?: string; readonly en?: string } | undefined;
   readonly saleId: string;
   readonly userId: string;
   readonly userName: string | undefined;
@@ -261,20 +257,15 @@ export function netSaleFacts(tx: Queryable, businessId: string, from: string, to
   const forCustomer = customerId === undefined ? "" : " AND s.customer_id = ?4";
   const parameters = customerId === undefined ? [businessId, from, to] : [businessId, from, to, customerId];
   const text = (value: unknown): string | undefined => typeof value === "string" ? value : undefined;
-  const names = (row: Record<string, unknown>): NetSaleFact["categoryNames"] => {
-    const fr = text(row["category_fr"]), en = text(row["category_en"]);
-    return fr === undefined && en === undefined ? undefined : { ...(fr === undefined ? {} : { fr }), ...(en === undefined ? {} : { en }) };
-  };
   const sold = tx.all(
     `SELECT i.id, i.sale_id, i.product_id, i.name, i.unit_price_minor, i.quantity, i.discount_minor, i.unit_cost_minor,
             s.discount_minor AS sale_discount, s.user_id, u.name AS user_name,
-            p.name AS product_name, coalesce(p.category_id, '') AS category_id, c.name AS category_name, cn.name_fr AS category_fr, cn.name_en AS category_en
+            p.name AS product_name, coalesce(p.category_id, '') AS category_id, c.name AS category_name
        FROM sale_items i
        JOIN sales s ON s.id = i.sale_id
        LEFT JOIN users u ON u.id = s.user_id
        LEFT JOIN products p ON p.id = i.product_id AND p.business_id = s.business_id
        LEFT JOIN categories c ON c.id = p.category_id
-       LEFT JOIN category_names cn ON cn.id = c.id
       WHERE s.business_id = ?1 AND s.occurred_at >= ?2 AND s.occurred_at < ?3${forCustomer}
       ORDER BY i.sale_id, i.id`,
     parameters,
@@ -292,7 +283,7 @@ export function netSaleFacts(tx: Queryable, businessId: string, from: string, to
     for (const [index, row] of lines.entries()) {
       const line = priced[index]!, cost = row["unit_cost_minor"];
       facts.push({ productId: String(row["product_id"]), name: String(row["name"]), productName: text(row["product_name"]),
-        categoryId: String(row["category_id"]), categoryName: text(row["category_name"]), categoryNames: names(row), saleId: String(row["sale_id"]),
+        categoryId: String(row["category_id"]), categoryName: text(row["category_name"]), saleId: String(row["sale_id"]),
         userId: String(row["user_id"]), userName: text(row["user_name"]), quantity: line.quantity,
         revenueMinor: net?.get(line.id) ?? lineTotal(line), costMinor: cost === null || cost === undefined ? 0 : multiplyRatio(sqlInteger(cost), line.quantity, QUANTITY_SCALE),
         uncosted: cost === null || cost === undefined, returned: false });
@@ -300,7 +291,7 @@ export function netSaleFacts(tx: Queryable, businessId: string, from: string, to
   }
   const returned = tx.all(
     `SELECT ri.product_id, ri.quantity, ri.amount_minor, ri.cost_minor, si.name, s.id AS sale_id, s.user_id, u.name AS user_name,
-            p.name AS product_name, coalesce(p.category_id, '') AS category_id, c.name AS category_name, cn.name_fr AS category_fr, cn.name_en AS category_en
+            p.name AS product_name, coalesce(p.category_id, '') AS category_id, c.name AS category_name
        FROM business_return_items ri
        JOIN business_returns r ON r.business_id = ri.business_id AND r.id = ri.return_id
        JOIN sales s ON s.business_id = r.business_id AND s.id = r.original_id
@@ -308,14 +299,13 @@ export function netSaleFacts(tx: Queryable, businessId: string, from: string, to
        LEFT JOIN users u ON u.id = s.user_id
        LEFT JOIN products p ON p.id = ri.product_id AND p.business_id = r.business_id
        LEFT JOIN categories c ON c.id = p.category_id
-       LEFT JOIN category_names cn ON cn.id = c.id
       WHERE r.business_id = ?1 AND r.kind = 'SALE' AND r.occurred_at >= ?2 AND r.occurred_at < ?3${forCustomer}
       ORDER BY r.occurred_at, ri.id`,
     parameters,
   );
   for (const row of returned) {
     facts.push({ productId: String(row["product_id"]), name: String(row["name"]), productName: text(row["product_name"]),
-      categoryId: String(row["category_id"]), categoryName: text(row["category_name"]), categoryNames: names(row), saleId: String(row["sale_id"]),
+      categoryId: String(row["category_id"]), categoryName: text(row["category_name"]), saleId: String(row["sale_id"]),
       userId: String(row["user_id"]), userName: text(row["user_name"]), quantity: -sqlInteger(row["quantity"]),
       revenueMinor: -sqlInteger(row["amount_minor"]), costMinor: -sqlInteger(row["cost_minor"]), uncosted: false, returned: true });
   }
@@ -441,18 +431,14 @@ export function salesByProduct(
  * breakdown of takings that did not add up to the takings would be worse than
  * an "uncategorised" line. For the same reason the lines are net of discounts
  * and the period's returns, and sum to {@link salesBetween}'s total.
- *
- * Labels are in `language`: a category's French or English name when set (ADR-037), otherwise its main name.
  */
 export function salesByCategory(
   tx: Queryable,
   businessId: string,
   from: string,
   to: string,
-  language: Language = "fr",
 ): Line[] {
-  return linesOf(netSaleFacts(tx, businessId, from, to), fact => [fact.categoryId, fact.categoryName === undefined
-    ? (language === "en" ? "No category" : "Sans catégorie") : categoryLabel({ name: fact.categoryName, names: fact.categoryNames }, language)]);
+  return linesOf(netSaleFacts(tx, businessId, from, to), fact => [fact.categoryId, fact.categoryName ?? "Sans catégorie"]);
 }
 
 /**

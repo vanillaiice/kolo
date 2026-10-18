@@ -63,7 +63,7 @@ export function checkIntegrity(db: Queryable, options: { readonly now?: Date; re
     ["purchase_items", "purchase_id", "purchases"], ["purchase_items", "product_id", "products"],
     ["purchases", "supplier_id", "suppliers"], ["inventory_movements", "product_id", "products"],
     ["account_movements", "account_id", "financial_accounts"], ["customer_transactions", "customer_id", "customers"],
-    ["supplier_transactions", "supplier_id", "suppliers"], ["product_tax_rules", "id", "products"], ["category_names", "id", "categories"],
+    ["supplier_transactions", "supplier_id", "suppliers"], ["product_tax_rules", "id", "products"],
   ] as const) {
     add(`${child}_${foreignKey}_scope`, count(`SELECT count(*) AS n FROM ${child} c JOIN ${parent} p ON p.id=c.${foreignKey} WHERE c.business_id<>p.business_id`));
   }

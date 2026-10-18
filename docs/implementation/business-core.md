@@ -81,14 +81,6 @@ inputs, writes facts and event in one transaction, then returns recorded identif
 and figures. Pure calculations do not import context/DB/network; SQLite/PostgreSQL
 orchestration is distinct while both call the same pure rules.
 
-## Category names (ADR-037)
-
-`saveCategory` takes optional `names` (`fr`, `en`; trimmed, blank is none) beside the main `name`. They are a
-last-write-wins record with their own signed v2 event, `CATEGORY_NAMES_SET`, emitted in the category's transaction only
-when they change; omitted `names` leaves them unchanged. The first names ride on `products.create`, replacing them needs
-`products.edit`. `domain/category-names` `categoryLabel` picks the label for a language, falling back to the main name;
-reports and analytics take a `language` view option for category labels.
-
 ## Tax, payment terms and notifications (ADR-033)
 
 `operations` adds `setTaxSettings` (business.settings), `setProductTaxRule` (products.edit) and `setPaymentTerms`

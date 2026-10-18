@@ -1,6 +1,5 @@
 import { PHOTOS_MIGRATION } from "./photos-migration.ts";
 import { PRODUCT_CATEGORIES_MIGRATION } from "./product-categories-migration.ts";
-import { CATEGORY_NAMES_MIGRATION } from "./category-names-migration.ts";
 import { FULL_TEXT_MIGRATION } from "./full-text-migration.ts";
 import { RETURNS_MIGRATION } from "./returns-migration.ts";
 import { SEARCH_MIGRATION } from "./search-migration.ts";
@@ -1005,7 +1004,6 @@ export const MIGRATIONS: readonly Migration[] = [
   TAX_TERMS_MIGRATION,
   LOCAL_NETWORK_MIGRATION,
   BACKUP_KEY_MIGRATION,
-  CATEGORY_NAMES_MIGRATION,
 ];
 
 /** The version the code in this build expects. */

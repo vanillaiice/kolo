@@ -280,17 +280,6 @@ it("archived products leave the till and stock workflows until restored; categor
     assert.deepEqual(value(await f.application.listCategories({sessionId})).items.map(item=>item.name),["Cold drinks"]);
     value(await f.application.updateCategory({sessionId,categoryId:created.id,version:renamed.version,name:"Cold drinks",active:false}));
     assert.equal(value(await f.application.listCategories({sessionId})).items.length,0);assert.equal(value(await f.application.listCategories({sessionId,includeInactive:true})).items.length,1);
-    // French/English names: optional, trimmed, blank is none; retries must match them; omitted on update leaves them.
-    const namedRequest={sessionId,requestId:randomUUID(),name:"Boissons",names:{fr:" ",en:" Drinks "}},named=value(await f.application.createCategory(namedRequest));
-    assert.deepEqual(named.names,{en:"Drinks"});assert.equal(value(await f.application.createCategory(namedRequest)).id,named.id);
-    failure(await f.application.createCategory({...namedRequest,names:{en:"Beverages"}}),"request_conflict");
-    const renamedNames=value(await f.application.updateCategory({sessionId,categoryId:named.id,version:named.version,name:"Boissons",active:true,names:{fr:"Rafraîchissements",en:""}}));
-    assert.deepEqual(renamedNames.names,{fr:"Rafraîchissements"});
-    const kept=value(await f.application.updateCategory({sessionId,categoryId:named.id,version:renamedNames.version,name:"Boissons froides",active:true}));
-    assert.deepEqual(kept.names,{fr:"Rafraîchissements"});
-    assert.deepEqual(value(await f.application.listCategories({sessionId,term:"rafraich"})).items.map(item=>item.id),[named.id]);
-    for(const names of [{en:"x".repeat(121)},{de:"Getränke"},{en:5},"Drinks"]) failure(await f.application.updateCategory({sessionId,categoryId:named.id,version:kept.version,name:"Boissons",active:true,names} as never),"invalid_input");
-    value(await f.application.updateCategory({sessionId,categoryId:named.id,version:kept.version,name:"Boissons froides",active:false}));
     const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
     const staff=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"765432"}),cashier=value(await f.application.unlock({userId:staff,secret:"765432"})).sessionId!;
     failure(await f.application.createCategory({sessionId:cashier,requestId:randomUUID(),name:"Snacks"}),"permission_denied");
@@ -620,10 +609,6 @@ it("reports read exact period figures under report authority and refuse malforme
     const dashboard=value(await f.application.report({...period,kind:"dashboard"}));
     assert.deepEqual(dashboard.kind==="dashboard"&&[dashboard.salesMinor,dashboard.transactions,dashboard.grossProfitMinor,dashboard.expensesMinor,dashboard.netResultMinor,dashboard.customerDebtMinor],[1000,1,400,100,300,400]);
     const byProduct=value(await f.application.report({...period,kind:"salesByProduct"}));assert.deepEqual(byProduct.kind==="salesByProduct"&&byProduct.lines.map(line=>[line.label,line.totalMinor]),[["Rice",1000]]);
-    const byCategory=(language?:"fr"|"en")=>f.application.report({...period,kind:"salesByCategory",...(language===undefined?{}:{language})});
-    for(const [language,label] of [[undefined,"Sans catégorie"],["fr","Sans catégorie"],["en","No category"]] as const){const lines=value(await byCategory(language));assert.deepEqual(lines.kind==="salesByCategory"&&lines.lines.map(line=>line.label),[label]);}
-    failure(await f.application.report({...period,kind:"salesByCategory",language:"de"} as never),"invalid_input");
-    failure(await f.application.analytics({...period,offsetMinutes:60,language:"de"} as never),"invalid_input");
     const flow=value(await f.application.report({...period,kind:"cashFlow"}));assert.equal(flow.kind==="cashFlow"&&flow.accounts[0]!.closingMinor,4000);
     const valuation=value(await f.application.report({...period,kind:"valuation"}));assert.deepEqual(valuation.kind==="valuation"&&[valuation.totalMinor,valuation.products[0]!.onHandThousandths],[900,3000]);
     const debts=value(await f.application.report({...period,kind:"customerDebt"}));assert.deepEqual(debts.kind==="customerDebt"&&debts.lines.map(line=>line.totalMinor),[400]);

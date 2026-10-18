@@ -1,6 +1,6 @@
 import { applyReturn } from "../returns/returns.ts";
 import { writeProductCategories } from "../products/product-categories.ts";
-import { upsertCategory, writeCategoryNames } from "../products/categories.ts";
+import { upsertCategory } from "../products/categories.ts";
 import { writeProductTaxRule, writeTaxSettings } from "../products/tax.ts";
 import { writePaymentTerms } from "../finance/terms.ts";
 import { parseEventPayload, type EventType, type JournalEnvelope } from "@kolo/contracts/events";
@@ -57,14 +57,6 @@ export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewe
     const old = tx.get(`SELECT * FROM categories WHERE id=?`, [category.id]);
     if (old !== undefined && (category.updated_at > String(old["updated_at"]) || category.updated_at === old["updated_at"] && event.origin_device_id > String(old["updated_by_device"] ?? ""))) require("products.edit");
     upsertCategory(tx, { id: category.id, businessId: event.business_id, name: category.name, active: category.active, createdAt: category.created_at, updatedAt: category.updated_at }, event.origin_device_id);
-    claimEntities(tx,event,model); return;
-  }
-  if (event.event_type === "CATEGORY_NAMES_SET") {
-    const names = parseEventPayload("CATEGORY_NAMES_SET",2,event.payload);
-    const old = tx.get(`SELECT updated_at, updated_by_device FROM category_names WHERE id=?`, [names.category_id]);
-    // Like CATEGORY_SAVED: replacing names already set is an edit; the first names ride on create authority.
-    if (old !== undefined && (names.updated_at > String(old["updated_at"]) || names.updated_at === old["updated_at"] && event.origin_device_id > String(old["updated_by_device"]))) require("products.edit");
-    writeCategoryNames(tx, event.business_id, names.category_id, { fr: names.fr, en: names.en, updatedAt: names.updated_at }, event.origin_device_id);
     claimEntities(tx,event,model); return;
   }
   if (event.event_type === "PRODUCT_CATEGORIES_SET") {

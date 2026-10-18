@@ -6,7 +6,7 @@ import { ExchangeError } from "../../exchange/types.ts";
 import { paymentTermsKey } from "../finance/terms.ts";
 
 /** @internal Allowlisted entity tables used for dependency, scope and immutable-ID checks. */
-export type EntityTable = "business_returns" | "business_return_items" | "business_return_refunds" | "categories" | "category_names" | "products" | "customers" | "suppliers" | "financial_accounts" | "sales" | "sale_items" | "sale_payments" | "inventory_movements" | "customer_transactions" | "purchases" | "purchase_items" | "account_movements" | "supplier_transactions" | "expenses" | "product_category_sets" | "shop_tax_settings" | "product_tax_rules" | "payment_terms";
+export type EntityTable = "business_returns" | "business_return_items" | "business_return_refunds" | "categories" | "products" | "customers" | "suppliers" | "financial_accounts" | "sales" | "sale_items" | "sale_payments" | "inventory_movements" | "customer_transactions" | "purchases" | "purchase_items" | "account_movements" | "supplier_transactions" | "expenses" | "product_category_sets" | "shop_tax_settings" | "product_tax_rules" | "payment_terms";
 /** @internal Entity ownership and dependencies derived only from strict payload schemas. */
 export interface EventModel {
   readonly entities: readonly { readonly table: EntityTable; readonly id: string; readonly mutable: boolean; readonly branch: string | null }[];
@@ -43,12 +43,6 @@ export function eventModel(event: JournalEnvelope): EventModel {
       permissions.push(event.required_permissions.includes("products.edit") ? "products.edit" : "products.create");
       if (!category.active) permissions.push("products.archive");
       if (category.updated_at < category.created_at) fail();
-      break;
-    }
-    case "CATEGORY_NAMES_SET": {
-      const names = parseEventPayload("CATEGORY_NAMES_SET", event.event_version, event.payload);
-      add("category_names", names.category_id, true); ref("categories", names.category_id);
-      permissions.push(event.required_permissions.includes("products.edit") ? "products.edit" : "products.create");
       break;
     }
     case "PRODUCT_SAVED": {

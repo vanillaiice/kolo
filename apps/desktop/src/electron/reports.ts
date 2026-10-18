@@ -12,16 +12,11 @@ function instant(value: unknown): string {
   return new Date(raw).toISOString();
 }
 
-/** The optional label language of a report request; anything but `fr`/`en` is refused. */
-function language(value: unknown): "fr" | "en" | undefined {
-  return optional(value, item => { if (item !== "fr" && item !== "en") throw new WorkspaceError("invalid_input"); return item; });
-}
-
 /** One report under its core permission; the period is at most about ten years and must not be empty. */
 export function report(host: Host, input: unknown): ReportResult {
-  const data = object(input, ["sessionId", "kind", "from", "until", "language"]), context = host.actor(data);
+  const data = object(input, ["sessionId", "kind", "from", "until"]), context = host.actor(data);
   if (!REPORT_KINDS.includes(data["kind"] as ReportKind)) throw new WorkspaceError("invalid_input");
-  return reportView(context, data["kind"] as ReportKind, instant(data["from"]), instant(data["until"]), { language: language(data["language"]) });
+  return reportView(context, data["kind"] as ReportKind, instant(data["from"]), instant(data["until"]));
 }
 
 /**
@@ -30,11 +25,11 @@ export function report(host: Host, input: unknown): ReportResult {
  * `application/report-views`, shared with the mobile client.
  */
 export function analytics(host: Host, input: unknown): AnalyticsResult {
-  const data = object(input, ["sessionId", "from", "until", "offsetMinutes", "bucket", "language"]), context = host.actor(data);
+  const data = object(input, ["sessionId", "from", "until", "offsetMinutes", "bucket"]), context = host.actor(data);
   const offset = data["offsetMinutes"];
   if (typeof offset !== "number") throw new WorkspaceError("invalid_input");
   const bucket = optional(data["bucket"], value => { if (!buckets.includes(value as AnalyticsBucket)) throw new WorkspaceError("invalid_input"); return value as AnalyticsBucket; });
-  return analyticsView(context, { from: instant(data["from"]), until: instant(data["until"]), offsetMinutes: offset, bucket }, { language: language(data["language"]) });
+  return analyticsView(context, { from: instant(data["from"]), until: instant(data["until"]), offsetMinutes: offset, bucket });
 }
 
 /** One page of the operation journal under audit.view; summaries come from core `application/audit`, shared with mobile. */

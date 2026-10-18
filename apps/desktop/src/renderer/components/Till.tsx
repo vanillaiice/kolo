@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import type { Cursor } from "@kolo/core/application/queries";
 import { quantityEntry, quantityInput } from "@kolo/core/domain/entry";
 import { formatMoney, formatQuantityWithUnit } from "@kolo/core/domain/money";
-import { categoryLabel } from "@kolo/core/domain/category-names";
 import { lineTotal, subtotalOf } from "@kolo/core/rules/pricing";
 import { moneyEntry } from "@kolo/core/domain/entry";
 import { sumAmounts } from "@kolo/core/rules/amounts";
@@ -96,7 +95,7 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
       <form className="scanner-form" onSubmit={event=>{event.preventDefault();if(!frozen)void scan();}}><label className="sr-only" htmlFor="barcode-scan">{t("scanner")}</label><input id="barcode-scan" ref={scanner} value={barcode} placeholder={t("scanner")} autoComplete="off" disabled={frozen} maxLength={256} onChange={event=>setBarcode(event.target.value)}/><button className="secondary" disabled={frozen||barcode.trim()===""} type="submit" aria-label={t("scan")}><span aria-hidden="true">↵</span></button></form>
       <div className="two-fields"><Field id="till-search" label={t("search")} value={term} required={false} disabled={frozen} onChange={value=>{setTerm(value);setCursor(undefined);}}/>
         <Select id="till-category" label={t("category")} value={categoryId} disabled={frozen} onChange={value=>{setCategoryId(value);setCursor(undefined);}}
-          options={[{value:"",label:t("allCategories")},...(groups.data?.items??[]).map(item=>({value:item.id,label:categoryLabel(item,language)}))]}/></div>
+          options={[{value:"",label:t("allCategories")},...(groups.data?.items??[]).map(item=>({value:item.id,label:item.name}))]}/></div>
       <ReadState loading={products.loading} error={products.error} empty={products.data?.items.length===0} emptyText={t(term===""&&categoryId===""?"noProducts":"noResults")} retry={products.retry}>
         <div className="product-grid">{products.data?.items.map(product=><button key={product.id} className="product-tile" disabled={frozen} onClick={()=>add(product)}>
           <ProductThumb service={service} sessionId={sessionId} product={product}/><strong>{product.name}</strong><span className="money">{formatMoney(product.sellingPriceMinor,language)}</span>

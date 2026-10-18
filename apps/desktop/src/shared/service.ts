@@ -48,11 +48,7 @@ export interface ProductView {
   readonly otherCategoryIds?: readonly string[];
 }
 /** Catalogue grouping. Archived categories remain attached to existing products. */
-export interface CategoryView { readonly id: string; readonly name: string; readonly active: boolean; readonly version: string;
-  /** Optional French/English names (ADR-037); screens show the one for their language, else `name`. */
-  readonly names: CategoryNamesView; }
-/** A category's optional names per language; an absent one falls back to the main name. */
-export interface CategoryNamesView { readonly fr?: string; readonly en?: string }
+export interface CategoryView { readonly id: string; readonly name: string; readonly active: boolean; readonly version: string; }
 /** One immutable stock movement; corrections appear as later compensating rows. */
 export interface StockMovementView {
   readonly id: string; readonly occurredAt: string; readonly type: string; readonly quantityThousandths: number; readonly reason?: string;
@@ -358,10 +354,10 @@ export interface ShopService {
   photoUsage(input: SessionRequest): Promise<Result<PhotoUsage>>;
   /** Bounded categories, optionally including archived ones. */
   listCategories(input: CatalogueQuery): Promise<Result<Page<CategoryView>>>;
-  /** Creates a category whose ID is the stable request ID, with optional French/English names (blank is none); matching retries return it. */
-  createCategory(input: SessionRequest & { readonly requestId: string; readonly name: string; readonly names?: CategoryNamesView }): Promise<Result<CategoryView>>;
-  /** Renames, archives or restores a category from its displayed version; `names` (blank is none) replaces its French/English names, omitted leaves them. */
-  updateCategory(input: SessionRequest & { readonly categoryId: string; readonly version: string; readonly name: string; readonly active: boolean; readonly names?: CategoryNamesView }): Promise<Result<CategoryView>>;
+  /** Creates a category whose ID is the stable request ID; matching retries return it. */
+  createCategory(input: SessionRequest & { readonly requestId: string; readonly name: string }): Promise<Result<CategoryView>>;
+  /** Renames, archives or restores a category from its displayed version. */
+  updateCategory(input: SessionRequest & { readonly categoryId: string; readonly version: string; readonly name: string; readonly active: boolean }): Promise<Result<CategoryView>>;
   /** Adds or removes stock for one active product; matching retries record nothing more. */
   moveStock(input: StockMoveRequest): Promise<Result<ProductView>>;
   /** Records a shelf count; a retried count never recounts against later sales. */
@@ -422,16 +418,14 @@ export interface ShopService {
   reverseExpense(input: SessionRequest & { readonly requestId: string; readonly expenseId: string }): Promise<Result<ExpenseView>>;
   /**
    * Reads one report for a period given as ISO instants [from, until), computed by the UI from
-   * local calendar days. Period-free reports (valuation, debts, alerts) ignore the period. Category
-   * labels follow `language` (default French).
+   * local calendar days. Period-free reports (valuation, debts, alerts) ignore the period.
    */
-  report(input: SessionRequest & { readonly kind: ReportKind; readonly from: string; readonly until: string; readonly language?: "fr" | "en" }): Promise<Result<ReportResult>>;
+  report(input: SessionRequest & { readonly kind: ReportKind; readonly from: string; readonly until: string }): Promise<Result<ReportResult>>;
   /**
    * Reads light analytics for [from, until) under reports.sales, bucketing by the shop's local time
-   * given as minutes east of UTC. The bucket defaults to one that keeps the trend readable. Category
-   * labels follow `language` (default French).
+   * given as minutes east of UTC. The bucket defaults to one that keeps the trend readable.
    */
-  analytics(input: SessionRequest & { readonly from: string; readonly until: string; readonly offsetMinutes: number; readonly bucket?: AnalyticsBucket; readonly language?: "fr" | "en" }): Promise<Result<AnalyticsResult>>;
+  analytics(input: SessionRequest & { readonly from: string; readonly until: string; readonly offsetMinutes: number; readonly bucket?: AnalyticsBucket }): Promise<Result<AnalyticsResult>>;
   /**
    * One newest-first page of the operation journal under audit.view: every till's signed facts once synced, plus
    * counts only this computer recorded. Narrowed by period [from, until), member, device, family or record.

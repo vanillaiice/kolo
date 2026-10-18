@@ -1,7 +1,6 @@
 import type { Queryable } from "../data/database/driver.ts";
 import { sqlInteger } from "../data/database/safe-values.ts";
 import { productOf, type Product } from "../data/products/products.ts";
-import type { CategoryNames } from "../data/products/categories.ts";
 import { customerOf, balanceOf, type Customer } from "../data/customers/customers.ts";
 import { supplierOf, balanceOfSupplier, type Supplier } from "../data/suppliers/suppliers.ts";
 import { accountOf, type Account } from "../data/finance/accounts.ts";
@@ -95,18 +94,15 @@ export function expense(context: OperationContext, id: string): ExpenseDetail | 
 }
 
 /**
- * A product's additional categories (not its main one), named (with French/English `names` when set),
- * with the version of the set an edit must advance past, under products.view.
+ * A product's additional categories (not its main one), named, with the version of the set an edit
+ * must advance past, under products.view.
  */
-export function productCategories(context: OperationContext, productId: string): { readonly categories: readonly { readonly id: string; readonly name: string; readonly active: boolean; readonly names?: CategoryNames }[]; readonly updatedAt?: string } {
+export function productCategories(context: OperationContext, productId: string): { readonly categories: readonly { readonly id: string; readonly name: string; readonly active: boolean }[]; readonly updatedAt?: string } {
   return authorizedOperation(context, ["products.view"], (_db, tx) => {
     if (productOf(tx, context.businessId, productId) === undefined) return { categories: [] };
     const version = tx.get(`SELECT updated_at FROM product_category_sets WHERE business_id = ? AND id = ?`, [context.businessId, productId]);
-    const categories = tx.all(`SELECT c.id, c.name, c.active, n.name_fr, n.name_en FROM product_categories pc JOIN categories c ON c.business_id = pc.business_id AND c.id = pc.category_id
-      LEFT JOIN category_names n ON n.id = c.id WHERE pc.business_id = ? AND pc.product_id = ? ORDER BY c.name, c.id`, [context.businessId, productId]).map(row => {
-      const fr = row["name_fr"], en = row["name_en"], item = { id: String(row["id"]), name: String(row["name"]), active: row["active"] === 1 };
-      return typeof fr === "string" || typeof en === "string" ? { ...item, names: { ...(typeof fr === "string" ? { fr } : {}), ...(typeof en === "string" ? { en } : {}) } } : item;
-    });
+    const categories = tx.all(`SELECT c.id, c.name, c.active FROM product_categories pc JOIN categories c ON c.business_id = pc.business_id AND c.id = pc.category_id
+      WHERE pc.business_id = ? AND pc.product_id = ? ORDER BY c.name, c.id`, [context.businessId, productId]).map(row => ({ id: String(row["id"]), name: String(row["name"]), active: row["active"] === 1 }));
     return version === undefined ? { categories } : { categories, updatedAt: String(version["updated_at"]) };
   });
 }
