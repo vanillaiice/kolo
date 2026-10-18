@@ -123,7 +123,7 @@ export function JournalScreen(): React.JSX.Element {
     <Choice label={t("journalFamily")} value={group} onChange={setGroup} options={[{ id: "", label: t("journalAnyGroup") }, ...GROUPS.map(id => ({ id, label: t(`jg.${id}` as TextKey) }))]} />
     {canExport && <Button label={t("journalExport")} hint={t("journalExportHelp")} variant="secondary" busy={exporting.busy} disabled={period === undefined} onPress={exportCsv} />}
     {exporting.notice}
-    {exported !== undefined && <Notice tone={exported.truncated ? "warning" : "success"} text={t(exported.truncated ? "journalExportTruncated" : "journalExported", { count: exported.count })} />}
+    {exported !== undefined && <Notice tone={exported.truncated ? "warning" : "success"} text={t(exported.truncated ? "journalExportTruncated" : exported.count === 1 ? "journalExportedOne" : "journalExported", { count: exported.count })} />}
     {subject !== undefined && <Notice tone="info" text={t("journalOnlyRecord", { name: name(subject) })} action={<Button label={t("journalClearRecord")} variant="secondary" onPress={() => setSubject(undefined)} />} />}
   </>;
   return <Screen title={t("journal")} onBack={nav.back} scroll={false}>

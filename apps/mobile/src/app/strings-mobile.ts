@@ -575,7 +575,7 @@ export const mobileStrings = {
   journalEmpty: ["Aucune opération pour ces critères.", "No operations match."], journalOnlyRecord: ["Historique de {name}", "History of {name}"], journalClearRecord: ["Tout afficher", "Show everything"],
   journalUnknown: ["inconnu", "unknown"], journalThisDevice: ["Cet appareil", "This device"], journalByOn: ["{who} · {device}", "{who} · {device}"],
   journalExport: ["Exporter en CSV", "Export CSV"], journalExportHelp: ["Toutes les opérations affichées, dans un fichier pour un tableur.", "Every operation shown, in a file for a spreadsheet."],
-  journalExported: ["{count} opérations exportées.", "{count} operations exported."],
+  journalExported: ["{count} opérations exportées.", "{count} operations exported."], journalExportedOne: ["1 opération exportée.", "1 operation exported."],
   journalExportTruncated: ["Seules les {count} opérations les plus récentes ont été exportées. Réduisez la période pour le reste.", "Only the {count} most recent operations were exported. Narrow the period for the rest."],
   journalShopWide: ["Toutes les caisses", "Shop-wide"],
   "jc.date": ["Date", "Date"], "jc.time": ["Heure", "Time"], "jc.utc": ["Horodatage UTC", "UTC timestamp"], "jc.member": ["Membre", "Member"], "jc.device": ["Appareil", "Device"],

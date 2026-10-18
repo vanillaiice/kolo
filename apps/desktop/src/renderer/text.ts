@@ -456,7 +456,7 @@ const strings = {
   journalOnlyRecord: ["Historique de", "History of"], journalClearRecord: ["Tout afficher", "Show everything"], journalUnknown: ["inconnu", "unknown"],
   journalThisDevice: ["Cet appareil seulement", "This device only"], journalThisDeviceHelp: ["Un comptage qui n’a rien changé n’est enregistré que sur l’appareil où il a été fait.", "A count that changed nothing is recorded only on the device where it was made."],
   journalExport: ["Exporter en CSV", "Export CSV"], journalExporting: ["Export en cours…", "Exporting…"],
-  journalExported: ["{count} opérations exportées.", "{count} operations exported."],
+  journalExported: ["{count} opérations exportées.", "{count} operations exported."], journalExportedOne: ["1 opération exportée.", "1 operation exported."],
   journalExportTruncated: ["Seules les {count} opérations les plus récentes ont été exportées. Réduisez la période pour le reste.", "Only the {count} most recent operations were exported. Narrow the period for the rest."],
   journalShopWide: ["Toutes les caisses", "Shop-wide"],
   "jc.date": ["Date", "Date"], "jc.time": ["Heure", "Time"], "jc.utc": ["Horodatage UTC", "UTC timestamp"], "jc.member": ["Membre", "Member"], "jc.device": ["Appareil", "Device"],

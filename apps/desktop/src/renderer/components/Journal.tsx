@@ -121,7 +121,7 @@ export function Journal({ service, sessionId, revision, canExport }: { readonly 
         <button className="secondary" onClick={() => preset(undefined)}>{t("journalAll")}</button></div>
       {canExport && <div className="actions journal-export"><button className="secondary" disabled={exporting.busy || range === undefined || page.data?.items.length === 0} onClick={exportCsv}>{exporting.busy ? t("journalExporting") : t("journalExport")}</button></div>}
       <ErrorText message={exporting.error}/>
-      {exported !== undefined && <p className={`notice ${exported.truncated ? "error" : "success"} journal-notice`} role="status">{fill(t(exported.truncated ? "journalExportTruncated" : "journalExported"), { count: exported.count.toLocaleString(language === "fr" ? "fr-FR" : "en-GB") })}</p>}
+      {exported !== undefined && <p className={`notice ${exported.truncated ? "error" : "success"} journal-notice`} role="status">{fill(t(exported.truncated ? "journalExportTruncated" : exported.count === 1 ? "journalExportedOne" : "journalExported"), { count: exported.count.toLocaleString(language === "fr" ? "fr-FR" : "en-GB") })}</p>}
       {subject !== undefined && <p className="journal-subject" role="status">{t("journalOnlyRecord")} <strong>{name(subject)}</strong>
         <button className="text-button" onClick={() => setSubject(undefined)}>{t("journalClearRecord")}</button></p>}
     </div>
