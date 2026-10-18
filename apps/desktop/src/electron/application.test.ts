@@ -586,6 +586,15 @@ it("the operation journal crosses the bridge under audit.view with strict filter
     const staff=await createLocalMember(context,{name:"Partner",role:"MANAGER",secret:"765432"});
     const manager=value(await f.application.unlock({userId:staff,secret:"765432"})).sessionId!;
     failure(await f.application.journal({sessionId:manager}),"permission_denied");
+    failure(await f.application.journalExport({sessionId:manager}),"permission_denied");
+    const books=await createLocalMember(await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports),{name:"Books",role:"ACCOUNTANT",secret:"876543"});
+    const accountant=value(await f.application.unlock({userId:books,secret:"876543"})).sessionId!;
+    assert.ok(value(await f.application.journal({sessionId:accountant})).items.length>0,"an accountant reads the journal");
+    failure(await f.application.journalExport({sessionId:accountant}),"permission_denied");
+    const ownerSession=value(await f.application.unlock({userId:workspace.members[0]!.id,secret:"654321"})).sessionId!;
+    const exported=value(await f.application.journalExport({sessionId:ownerSession,group:"sales"}));
+    assert.deepEqual([exported.truncated,exported.items.map(entry=>entry.subject?.id)],[false,[sale.saleId]]);
+    failure(await f.application.journalExport({sessionId:ownerSession,limit:5} as never),"invalid_input");
   }finally{await f.dispose();}
 });
 it("reports read exact period figures under report authority and refuse malformed periods",async()=>{

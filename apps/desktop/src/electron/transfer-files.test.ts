@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "node:crypto";
 import { MAX_TRANSFER_FILE_BYTES } from "@kolo/core/backup/types";
 import { encryptTransfer, decryptTransfer } from "@kolo/core/backup/encryption";
-import { clearOutgoing, openTransferFile, readBoundedTransferFile, pickDesktopTransferFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.ts";
+import { clearOutgoing, openTransferFile, readBoundedTransferFile, pickDesktopTransferFile, saveDesktopExportFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.ts";
 import { desktopTransferCrypto as crypto } from "./local-credentials.ts";
 it("real desktop AES-GCM and bounded selected files preserve container bytes, reject corruption, and never overwrite existing files",async()=>{
  const directory=mkdtempSync(join(tmpdir(),"kolo-transfer-")),path=join(directory,"batch.kolo-exchange"),id=randomUUIDv7(),password="desktop portable password";
@@ -90,3 +90,19 @@ it("streamed saves go through a private temporary file that never survives, and 
  }finally{rmSync(directory,{recursive:true,force:true});}
 });
 
+it("spreadsheet exports save exact bytes under a plain .csv name and never overwrite a file",async()=>{
+ const directory=mkdtempSync(join(tmpdir(),"kolo-export-")),path=join(directory,"journal.csv"),bytes=new TextEncoder().encode("\uFEFFDate;Membre\r\n2026-10-18;Awa\r\n");
+ try{
+  let filters:unknown,offeredName:unknown;
+  assert.equal(await saveDesktopExportFile("kolo-journal-2026-10-12_2026-10-18.csv",bytes,{showSaveDialog:async options=>{filters=options.filters;offeredName=options.defaultPath;return {canceled:false,filePath:path};}}),true);
+  assert.deepEqual([filters,offeredName],[[{name:"CSV",extensions:["csv"]}],"kolo-journal-2026-10-12_2026-10-18.csv"]);
+  assert.deepEqual(new Uint8Array(readFileSync(path)),bytes);
+  await assert.rejects(saveDesktopExportFile("journal.csv",new TextEncoder().encode("other"),{showSaveDialog:async()=>({canceled:false,filePath:path})}));
+  assert.deepEqual(new Uint8Array(readFileSync(path)),bytes,"an existing file is left as it was");
+  assert.equal(await saveDesktopExportFile("journal.csv",bytes,{showSaveDialog:async()=>({canceled:true,filePath:""})}),false);
+  for(const filename of ["../journal.csv","a/b.csv",".csv","journal.exe","journal.csv.exe","journal",`${"x".repeat(97)}.csv`,"-x.csv","journal\u0000.csv"])
+   await assert.rejects(saveDesktopExportFile(filename,bytes,{showSaveDialog:async()=>{throw new Error("no dialog for a refused name");}}),filename);
+  await assert.rejects(saveDesktopExportFile("journal.csv",new Uint8Array(0),{showSaveDialog:async()=>{throw new Error("no dialog");}}));
+  assert.equal(await saveDesktopExportFile("Journal été 2026.csv",bytes,{showSaveDialog:async()=>({canceled:false,filePath:join(directory,"é.csv")})}),true,"accented names are plain names");
+ }finally{rmSync(directory,{recursive:true,force:true});}
+});

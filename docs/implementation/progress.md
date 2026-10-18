@@ -1914,3 +1914,48 @@ grants `audit.view` (for example a manager who is a shareholder). No schema chan
   test, and journal text coverage. The Electron workflow smoke opens the Journal, finds the day's expense, runs the
   axe audit in light and dark, and narrows to a record.
 - Mobile: localization test that every operation, family and status has French and English text.
+
+## 2026-10-18: Journal CSV export (desktop and mobile)
+
+- **Core.** `application/audit.auditExport` reads every entry matching the journal filters, page by page under
+  `audit.view`, up to 20,000 (`truncated` beyond). The pure `domain/audit-csv.auditCsv` writes them with papaparse
+  5.5.5 (new core dependency, MIT): UTF-8 byte-order mark, CRLF, `;` (French) or `,` (English), local date and time
+  plus the UTC instant, whole-XAF amounts as numbers, client-supplied headings and wording. Formula escaping uses our
+  own pattern: papaparse's default misses a cell that starts with `=`, `+`, `-` or `@` and continues on another line
+  (found by the fuzz test).
+- **Desktop.** Export CSV on the Journal; `saveCsv` bridge command and `saveDesktopExportFile`, which never overwrites.
+- **Mobile.** Export CSV on the journal screen, saved into a folder the member picks.
+- **Not done.** Installed Android acceptance of the folder picker and file.
+
+### Verification
+
+- Core: export joined across pages, truncation at the limit, permission; CSV read back cell for cell with papaparse's
+  parser in both separators, formulas defused, accented and quoted text; 300-case fuzz round trip.
+- Desktop inside Electron: the adapter saves exact bytes, refuses unsafe names and empty files, never overwrites;
+  the bridge saves the renderer's text exactly and refuses malformed input and a locked session. The workflow smoke
+  exports the day's journal and reads the saved file back.
+- Mobile: text coverage for every export column.
+
+## 2026-10-18: `data.export` permission
+
+Exporting shop data now needs its own permission, so staff who can see figures cannot take them away in bulk.
+
+- **Contract.** `data.export` is appended to `PERMISSIONS`. Owners hold it; no other role does by default (managers
+  explicitly exclude it); the owner grants it per member in Staff (Administration group).
+- **Core.** `auditExport` requires `audit.view` and `data.export` on every page, so a revocation stops an export under
+  way. Reading the journal on screen still needs only `audit.view`.
+- **Desktop.** New `journalExport` bridge command runs the export in the main process under both permissions; `saveCsv`
+  requires `data.export`. The Export button is hidden without it.
+- **Mobile.** The Export button is hidden without it; the core check refuses it regardless.
+- **Compatibility.** Synced facts carry only the permissions their own operation required, and exporting creates no
+  fact, so older tills are unaffected. A grant or revocation of `data.export` itself is a new value to a till that
+  has not been updated: that till holds the fact back until it is. Update every till before granting it.
+- Backups, invitations and exchange files already require `business.settings` (owner by default).
+
+### Verification
+
+- Core: an accountant reads the journal but cannot export; a grant allows it and a revocation stops it; managers can
+  do neither by default. Contracts tests pass with the new permission.
+- Desktop inside Electron: `journalExport` and `saveCsv` refuse members without `data.export`, including the owner
+  once it is revoked; malformed export filters are refused.
+

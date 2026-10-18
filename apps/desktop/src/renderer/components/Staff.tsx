@@ -12,7 +12,7 @@ const groups: readonly (readonly [TextKey, (permission: Permission) => boolean])
   ["group_sales", permission => permission.startsWith("sales.")], ["group_customers", permission => permission.startsWith("customers.")],
   ["group_suppliers", permission => permission.startsWith("suppliers.") || permission.startsWith("purchases.")],
   ["group_money", permission => permission.startsWith("cash.") || permission.startsWith("finance.") || permission.startsWith("expenses.")],
-  ["group_reports", permission => permission.startsWith("reports.")], ["group_admin", permission => permission.startsWith("users.") || permission.startsWith("business.") || permission.startsWith("audit.")],
+  ["group_reports", permission => permission.startsWith("reports.")], ["group_admin", permission => permission.startsWith("users.") || permission.startsWith("business.") || permission.startsWith("data.") || permission.startsWith("audit.")],
 ];
 
 /** Local staff, their roles and effective permissions. Only the owner changes them; core rechecks. */

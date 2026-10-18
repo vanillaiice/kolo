@@ -157,6 +157,7 @@ const baseStrings = {
   "permission.users.manage": ["Gérer le personnel", "Manage staff"],
   "permission.business.settings": ["Configurer la boutique", "Configure shop"],
   "permission.audit.view": ["Consulter le journal des opérations", "View operation journal"],
+  "permission.data.export": ["Exporter des données (fichiers CSV)", "Export data (CSV files)"],
   "permission.sales.price_override": ["Modifier le prix lors d’une vente", "Override sale price"],
   "transferError.authentication_failed": ["Mot de passe incorrect ou fichier endommagé.", "Incorrect password or damaged file."],
   "transferError.invalid_password": ["Utilisez une phrase de 12 à 256 caractères, différente du code local.", "Use a 12–256 character passphrase different from the local code."],
@@ -300,6 +301,7 @@ export const permissionKeys = {
   "business.settings": "permission.business.settings",
   "audit.view": "permission.audit.view",
   "sales.price_override": "permission.sales.price_override",
+  "data.export": "permission.data.export",
 } as const satisfies Record<Permission, TextKey>;
 /** Exhaustive localized role labels. */
 export const roleKeys = {

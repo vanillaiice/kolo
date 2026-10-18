@@ -10,7 +10,9 @@ import { createLocalMember } from "../identity/members.ts";
 import { WorkspaceError, type OperationContext, type WorkspacePorts } from "../identity/types.ts";
 import * as commands from "./operations.ts";
 import * as queries from "./queries.ts";
-import { auditGroupOf, auditTrail, type AuditEntry, type AuditQuery } from "./audit.ts";
+import Papa from "papaparse";
+import { auditExport, auditGroupOf, auditTrail, type AuditEntry, type AuditQuery } from "./audit.ts";
+import { AUDIT_CSV_COLUMNS, auditCsv, type AuditCsvText } from "../domain/audit-csv.ts";
 
 const start = Date.parse("2026-10-06T09:00:00.000Z"), secret = "fixture-secret";
 const databases: Database[] = [];
@@ -171,4 +173,82 @@ it("files every current event type under a family", () => {
   for (const type of ["SALE_COMPLETED", "PURCHASE_RETURNED", "STOCK_MOVED", "EXPENSE_RECORDED", "PRODUCT_TAX_SET", "PAYMENT_TERMS_SET", "PERMISSION_REVOKED", "SHOP_BACKUP_KEY", "TAX_SETTINGS_SET"])
     assert.notEqual(auditGroupOf(type), "other", type);
   assert.equal(auditGroupOf("SOMETHING_NEW"), "other");
+});
+
+const csvText: AuditCsvText = {
+  headings: Object.fromEntries(AUDIT_CSV_COLUMNS.map(column => [column, column.toUpperCase()])) as AuditCsvText["headings"],
+  operation: entry => `op ${entry.type}`, details: entry => entry.facts.reason ?? "", source: entry => entry.source, status: entry => entry.status ?? "", unknown: "?",
+};
+const parse = (csv: string, delimiter: string): string[][] => {
+  assert.ok(csv.startsWith("\uFEFF"), "a byte-order mark for spreadsheets");
+  const result = Papa.parse<string[]>(csv.slice(1), { delimiter, newline: "\r\n" });
+  assert.deepEqual(result.errors, []);
+  return result.data;
+};
+
+it("exports the whole filtered journal page by page, bounded, and says when it stopped early", async () => {
+  const f = await fixture(), barrow = f.product(f.owner, "Wheelbarrow", 25_000);
+  for (let index = 0; index < 450; index++) commands.adjustStock(f.owner, { id: randomUUIDv7(), productId: barrow, type: "ADJUSTMENT", quantity: 1000, reason: `Weld ${index}`, occurredAt: f.now() }, randomUUIDv7());
+  const everything = all(f.owner), exported = auditExport(f.owner);
+  assert.deepEqual([exported.truncated, exported.items.map(entry => entry.id)], [false, everything.map(entry => entry.id)], "more than two full pages, in order, none repeated");
+  const stock = auditExport(f.owner, { group: "stock" });
+  assert.equal(stock.items.length, 450);
+  const capped = auditExport(f.owner, {}, 201);
+  assert.deepEqual([capped.truncated, capped.items.map(entry => entry.id)], [true, everything.slice(0, 201).map(entry => entry.id)]);
+  assert.equal(auditExport(f.owner, {}, everything.length).truncated, false, "exactly the limit is complete");
+  for (const bad of [0, 20_001, 1.5]) assert.throws(() => auditExport(f.owner, {}, bad), code("invalid_input"));
+  const manager = await f.member(f.owner, "Partner", "MANAGER"), books = await f.member(f.owner, "Books", "ACCOUNTANT");
+  const partner = await f.login(manager);
+  assert.throws(() => auditExport(partner), code("permission_denied"), "managers neither read nor export the journal by default");
+  const accountant = await f.login(books);
+  assert.ok(auditTrail(accountant).items.length > 0, "an accountant reads the journal");
+  assert.throws(() => auditExport(accountant), code("permission_denied"), "but taking it away needs data.export");
+  grantPermission(await f.login(f.ownerId), books, "data.export");
+  assert.equal(auditExport(await f.login(books)).truncated, false, "granted, the export works");
+  revokePermission(await f.login(f.ownerId), books, "data.export");
+  const revoked = await f.login(books);
+  assert.throws(() => auditExport(revoked), code("permission_denied"), "a revocation applies at once");
+});
+
+it("writes CSV a spreadsheet reads back cell for cell, with formulas defused and either separator", async () => {
+  const f = await fixture(), barrow = f.product(f.owner, "Brouette « renforcée »; 2 roues", 25_000);
+  const reasons = ["=HYPERLINK(\"http://x\")", "+1", "-2", "@SUM(A1)", "ligne 1\r\nligne 2", "guillemet \" et ; virgule ,", "\tonglet", "Été déjà — ok", ""];
+  for (const reason of reasons.filter(Boolean)) commands.adjustStock(f.owner, { id: randomUUIDv7(), productId: barrow, type: "DAMAGE", quantity: -1000, reason, occurredAt: f.now() }, randomUUIDv7());
+  const spent = randomUUIDv7();
+  commands.recordExpense(f.owner, { id: spent, category: "OTHER", accountId: f.account, amountMinor: 1500, description: "Disc", occurredAt: f.now(), eventId: randomUUIDv7() });
+  commands.recordExpense(f.owner, { id: randomUUIDv7(), category: "OTHER", accountId: f.account, amountMinor: -1500, description: "Disc", reversesId: spent, occurredAt: f.now(), eventId: randomUUIDv7() });
+  const entries = auditExport(f.owner).items;
+  for (const delimiter of [";", ","] as const) {
+    const csv = auditCsv(entries, csvText, delimiter), rows = parse(csv, delimiter);
+    assert.ok(csv.includes("\r\n") && !/[^\r]\n(?![^"]*"[^"]*$)/.test(csv.split("\r\n")[0]!), "CRLF rows");
+    assert.deepEqual(rows[0], AUDIT_CSV_COLUMNS.map(column => column.toUpperCase()));
+    assert.equal(rows.length, entries.length + 1);
+    entries.forEach((entry, index) => {
+      const row = rows[index + 1]!, cell = (column: typeof AUDIT_CSV_COLUMNS[number]): string => row[AUDIT_CSV_COLUMNS.indexOf(column)]!;
+      assert.equal(cell("id"), entry.id); assert.equal(cell("utc"), entry.occurredAt); assert.equal(cell("type"), entry.type);
+      const local = new Date(entry.occurredAt);
+      assert.equal(new Date(`${cell("date")}T${cell("time")}`).getTime(), local.getTime() - local.getMilliseconds(), "local date and time name the same instant");
+      assert.equal(cell("amount"), entry.facts.amountMinor === undefined ? "" : String(entry.facts.amountMinor), "amounts stay numbers, negatives included");
+      const reason = entry.facts.reason ?? "";
+      assert.equal(cell("details"), /^[=+\-@\t\r]/.test(reason) ? `'${reason}` : reason, "text a spreadsheet would run is prefixed, everything else is exact");
+      assert.equal(cell("record"), entry.subject === undefined ? "" : entry.subject.name ?? "?");
+    });
+  }
+});
+
+it("round-trips arbitrary text through the CSV (fuzz)", () => {
+  let seed = 7;
+  const next = (below: number): number => { seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648; return seed % below; };
+  const alphabet = ["a", "é", ";", ",", "\"", "'", "\r", "\n", "\r\n", " ", "=", "+", "-", "@", "\t", "€", "🙂", "\u00a0"];
+  for (let round = 0; round < 300; round++) {
+    const reason = Array.from({ length: next(12) }, () => alphabet[next(alphabet.length)]).join("");
+    const entry: AuditEntry = { id: `e${round}`, type: "STOCK_MOVED", group: "stock", occurredAt: "2026-10-06T09:00:00.000Z", actor: { id: "a", name: reason }, device: { id: "d" }, source: "journal", facts: { reason } };
+    for (const delimiter of [";", ","] as const) {
+      const row = parse(auditCsv([entry], csvText, delimiter), delimiter)[1]!;
+      const expected = /^[=+\-@\t\r]/.test(reason) ? `'${reason}` : reason;
+      assert.equal(row[AUDIT_CSV_COLUMNS.indexOf("member")], expected, JSON.stringify(reason));
+      assert.equal(row[AUDIT_CSV_COLUMNS.indexOf("details")], expected);
+      assert.equal(row[AUDIT_CSV_COLUMNS.indexOf("device")], "?");
+    }
+  }
 });

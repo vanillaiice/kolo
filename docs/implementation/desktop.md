@@ -281,6 +281,13 @@ else (for example a manager who is a shareholder). The Journal section filters b
 Today, 7 and 30 days, All), member, device and type; choosing a record narrows to its history.
 Commands live in `electron/reports.ts`.
 
+**Export CSV** (shown only with `data.export`) asks `journalExport` for every entry matching the
+filters (core `auditExport`: at most 20,000, newest first, with a notice when more matched) and writes one file with core `domain/audit-csv`, shared with mobile:
+a UTF-8 byte-order mark, CRLF lines, `;` between cells in French and `,` in English, local date
+and time beside the UTC instant, whole-XAF amounts as numbers, and cells a spreadsheet would run
+as a formula prefixed with `'`. `saveCsv` (`data.export`; a plain `.csv` name of at most
+100 characters; bounded like transfer files) offers it in the save dialog and, like transfer
+files, publishes a complete new file and never overwrites one (`electron/exports.ts`).
 
 ## Product photos
 

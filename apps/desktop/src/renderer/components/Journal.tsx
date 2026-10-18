@@ -1,10 +1,11 @@
 import { useState } from "react";
 import type { Cursor } from "@kolo/core/application/queries";
+import { AUDIT_CSV_COLUMNS, auditCsv, type AuditCsvText } from "@kolo/core/domain/audit-csv";
 import { localDayPeriod } from "@kolo/core/domain/entry";
 import { formatMoney, formatQuantity, formatRate } from "@kolo/core/domain/money";
 import type { AuditEntry, AuditGroup, AuditSubject, ShopService } from "../../shared/service.ts";
 import { hasText, type Language, type TextKey } from "../text.ts";
-import { Pager, ReadState, Select, useRead, useText } from "./ui.tsx";
+import { ErrorText, Pager, ReadState, Select, useAction, useRead, useText } from "./ui.tsx";
 
 const GROUPS: readonly AuditGroup[] = ["sales", "purchases", "stock", "money", "catalogue", "people", "staff", "devices", "settings", "other"];
 /** Local calendar day as YYYY-MM-DD, the input the shared period rule expects. */
@@ -58,11 +59,25 @@ export function journalDetails(entry: AuditEntry, t: (key: TextKey) => string, l
   return line.charAt(0).toLocaleUpperCase(language) + line.slice(1);
 }
 
+/** The operation's name in the current language, with its code when this version does not know it. */
+function operationText(entry: AuditEntry, t: (key: TextKey) => string): string {
+  return hasText(`j.${entry.type}`) ? t(`j.${entry.type}` as TextKey) : `${t("j.other")} (${entry.type})`;
+}
+
+/** Spreadsheet wording for an export in the current language. */
+function csvText(t: (key: TextKey) => string, language: Language): AuditCsvText {
+  return { headings: Object.fromEntries(AUDIT_CSV_COLUMNS.map(column => [column, t(`jc.${column}` as TextKey)])) as AuditCsvText["headings"],
+    operation: entry => operationText(entry, t), details: entry => journalDetails(entry, t, language),
+    source: entry => t(entry.source === "this_device" ? "journalThisDevice" : "journalShopWide"),
+    status: entry => entry.status !== undefined && entry.status !== "applied" && hasText(`jst.${entry.status}`) ? t(`jst.${entry.status}` as TextKey) : "",
+    unknown: t("journalUnknown") };
+}
+
 /**
  * The operation journal under audit.view: newest first, narrowed by days, member, device, family or one record.
  * Choosing a record shows every operation that involved it (a product's price changes, sales and counts).
  */
-export function Journal({ service, sessionId, revision }: { readonly service: ShopService; readonly sessionId: string; readonly revision: number }): React.JSX.Element {
+export function Journal({ service, sessionId, revision, canExport }: { readonly service: ShopService; readonly sessionId: string; readonly revision: number; readonly canExport: boolean }): React.JSX.Element {
   const { t, language } = useText(), today = day(new Date());
   const [from, setFrom] = useState(() => { const start = new Date(); start.setDate(start.getDate() - 6); return day(start); }), [to, setTo] = useState(today);
   const [actorId, setActorId] = useState(""), [deviceId, setDeviceId] = useState(""), [group, setGroup] = useState<AuditGroup | "">(""), [subject, setSubject] = useState<AuditSubject>();
@@ -77,6 +92,18 @@ export function Journal({ service, sessionId, revision }: { readonly service: Sh
     const start = new Date(); start.setDate(start.getDate() - days); setFrom(day(start)); setTo(today);
   };
   const name = (value: AuditSubject): string => value.name ?? t("journalUnknown");
+  const exporting = useAction(), [exported, setExported] = useState<{ count: number; truncated: boolean }>();
+  // Every page matching the filters, then one file; the save dialog decides where it goes.
+  const exportCsv = (): void => { if (range === undefined) return; setExported(undefined); void exporting.run(async () => {
+    const query = { sessionId, ...range, ...(actorId === "" ? {} : { actorId }), ...(deviceId === "" ? {} : { deviceId }), ...(group === "" ? {} : { group }), ...(subject === undefined ? {} : { subjectId: subject.id }) };
+    const read = await service.journalExport(query);
+    if (!read.ok) return read;
+    const { items: shown, truncated } = read.value;
+    const saved = await service.saveCsv({ sessionId, filename: `kolo-journal-${from === "" ? "start" : from}_${to === "" ? today : to}.csv`,
+      content: auditCsv(shown, csvText(t, language), language === "fr" ? ";" : ",") });
+    if (saved.ok && saved.value) setExported({ count: shown.length, truncated });
+    return saved;
+  }); };
   return <section className="workspace-content">
     <div className="section-heading"><div><p className="eyebrow">{t("journal")}</p><h1>{t("journalTitle")}</h1><p className="muted">{t("journalHelp")}</p></div></div>
     <div className="report-controls panel">
@@ -92,6 +119,9 @@ export function Journal({ service, sessionId, revision }: { readonly service: Sh
         <button className="secondary" onClick={() => preset(6)}>{t("last7")}</button>
         <button className="secondary" onClick={() => preset(29)}>{t("last30")}</button>
         <button className="secondary" onClick={() => preset(undefined)}>{t("journalAll")}</button></div>
+      {canExport && <div className="actions journal-export"><button className="secondary" disabled={exporting.busy || range === undefined || page.data?.items.length === 0} onClick={exportCsv}>{exporting.busy ? t("journalExporting") : t("journalExport")}</button></div>}
+      <ErrorText message={exporting.error}/>
+      {exported !== undefined && <p className={`notice ${exported.truncated ? "error" : "success"} journal-notice`} role="status">{fill(t(exported.truncated ? "journalExportTruncated" : "journalExported"), { count: exported.count.toLocaleString(language === "fr" ? "fr-FR" : "en-GB") })}</p>}
       {subject !== undefined && <p className="journal-subject" role="status">{t("journalOnlyRecord")} <strong>{name(subject)}</strong>
         <button className="text-button" onClick={() => setSubject(undefined)}>{t("journalClearRecord")}</button></p>}
     </div>
@@ -102,10 +132,10 @@ export function Journal({ service, sessionId, revision }: { readonly service: Sh
             <td className="journal-when">{new Date(entry.occurredAt).toLocaleDateString(language === "fr" ? "fr-FR" : "en-GB")}<small>{new Date(entry.occurredAt).toLocaleTimeString(language === "fr" ? "fr-FR" : "en-GB")}</small></td>
             <td>{entry.actor.name ?? t("journalUnknown")}</td>
             <td>{entry.device.label ?? t("journalUnknown")}</td>
-            <td>{t(hasText(`j.${entry.type}`) ? `j.${entry.type}` as TextKey : "j.other")}
+            <td>{operationText(entry, t)}
               {entry.source === "this_device" && <span className="tag neutral" title={t("journalThisDeviceHelp")}>{t("journalThisDevice")}</span>}
               {entry.status !== undefined && entry.status !== "applied" && hasText(`jst.${entry.status}`) && <span className="tag">{t(`jst.${entry.status}` as TextKey)}</span>}
-              {!hasText(`j.${entry.type}`) && <span className="muted"> {entry.type}</span>}</td>
+</td>
             <td>{entry.subject !== undefined && (subject?.id === entry.subject.id ? name(entry.subject)
               : <button className="row-link" title={`${t("journalShowRecord")} ${name(entry.subject)}`} onClick={() => setSubject(entry.subject)}>{name(entry.subject)}</button>)}
               {entry.related?.name !== undefined && <span className="muted"> · {entry.related.name}</span>}</td>

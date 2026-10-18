@@ -9,6 +9,7 @@ import { migrate } from "@kolo/core/data/database/migrations";
 import type { Database } from "@kolo/core/data/database/driver";
 import { TransferError, type TransferDocument } from "@kolo/core/backup/types";
 import { decryptTransfer, encryptTransfer } from "@kolo/core/backup/encryption";
+import { AUDIT_CSV_COLUMNS, auditCsv, type AuditCsvText } from "@kolo/core/domain/audit-csv";
 import { canonicalJson } from "@kolo/contracts/canonical";
 import { deflateRawSync } from "node:zlib";
 import { DesktopApplication } from "./application.ts";
@@ -28,10 +29,11 @@ function native(): NativeSafeStorage {
 async function installation(clock: () => string) {
   const directory = mkdtempSync(join(tmpdir(), "kolo-desktop-transfer-")), slots = nodeWorkspaceFiles(join(directory, "data"));
   const credentials = localCredentialsOnDesktop(join(directory, "vault"), native()), opened: Database[] = [];
-  const inbox: { next?: Uint8Array; saved: TransferDocument[]; cancel: boolean } = { saved: [], cancel: false };
+  const inbox: { next?: Uint8Array; saved: TransferDocument[]; cancel: boolean; exports: { filename: string; text: string }[] } = { saved: [], cancel: false, exports: [] };
   // Picked files are read in pieces like real ones; backups arrive through the streamed save.
   const dialogs = { open: async () => inbox.cancel || inbox.next === undefined ? undefined : pickedBytes(inbox.next), save: async (document: TransferDocument) => { inbox.saved.push(document); return true; },
-    saveStream: async (write: (sink: { write(bytes: Uint8Array): Promise<void> }) => Promise<string>) => { const parts: Uint8Array[] = []; const filename = await write({ write: async bytes => { parts.push(bytes); } }); inbox.saved.push({ filename, bytes: new Uint8Array(Buffer.concat(parts)) }); return true; } };
+    saveStream: async (write: (sink: { write(bytes: Uint8Array): Promise<void> }) => Promise<string>) => { const parts: Uint8Array[] = []; const filename = await write({ write: async bytes => { parts.push(bytes); } }); inbox.saved.push({ filename, bytes: new Uint8Array(Buffer.concat(parts)) }); return true; },
+    saveExport: async (filename: string, bytes: Uint8Array) => { if (inbox.cancel) return false; inbox.exports.push({ filename, text: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes) }); return true; } };
   const holder: { application?: DesktopApplication; database?: Database } = {};
   const faults = { activation: false, restore: false };
   const files = { ...slots, open: async (bytes: Uint8Array) => {
@@ -289,3 +291,25 @@ it("two desktops pair by compared fingerprint and code, then exchange sales and 
   } finally { await a.dispose(); await b.dispose(); }
 });
 
+it("a journal export is assembled from readable pages and saved as one .csv through the dialog", async () => {
+  const f = await installation(clock);
+  try {
+    const sessionId = await shop(f, "Atelier");
+    value(await f.app.createProduct({ sessionId, requestId: randomUUID(), name: "Brouette; renforcée", unit: "unit", divisible: false, sellingPriceMinor: 25_000, openingThousandths: 3000 }));
+    const entries = value(await f.app.journal({ sessionId, limit: 200 })).items;
+    const content = auditCsv(entries, { headings: Object.fromEntries(AUDIT_CSV_COLUMNS.map(column => [column, column])) as AuditCsvText["headings"],
+      operation: entry => entry.type, details: () => "", source: entry => entry.source, status: () => "", unknown: "?" });
+    assert.equal(value(await f.app.saveCsv({ sessionId, filename: "kolo-journal.csv", content })), true);
+    assert.deepEqual(f.inbox.exports.map(item => [item.filename, item.text]), [["kolo-journal.csv", content]], "the exact text, BOM included");
+    assert.ok(content.includes("\"Brouette; renforcée\""), "a separator inside a name is quoted");
+    f.inbox.cancel = true;
+    assert.equal(value(await f.app.saveCsv({ sessionId, filename: "kolo-journal.csv", content })), false, "a cancelled dialog saves nothing");
+    f.inbox.cancel = false;
+    for (const bad of [{ filename: "../x.csv", content }, { filename: "x.txt", content }, { filename: "x.csv", content: "" }, { filename: "x.csv", content: 42 }, { filename: "x.csv", content, extra: true }])
+      failure(await f.app.saveCsv({ sessionId, ...bad } as never), "invalid_input");
+    failure(await f.app.saveCsv({ sessionId: randomUUID(), filename: "x.csv", content } as never), "locked");
+    f.database.run(`UPDATE local_memberships SET revoked='["data.export"]', revision=revision+1 WHERE role='OWNER'`);
+    failure(await f.app.saveCsv({ sessionId, filename: "kolo-journal.csv", content }), "permission_denied");
+    assert.equal(f.inbox.exports.length, 1);
+  } finally { await f.dispose(); }
+});

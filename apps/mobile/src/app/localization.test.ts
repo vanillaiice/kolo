@@ -4,6 +4,7 @@ import { WorkspaceError } from "@kolo/core/identity/types";
 import { TransferError } from "@kolo/core/backup/types";
 import { PERMISSIONS } from "@kolo/core/identity/permissions";
 import { AUDIT_GROUPS } from "@kolo/core/application/audit";
+import { AUDIT_CSV_COLUMNS } from "@kolo/core/domain/audit-csv";
 import { EVENT_PAYLOAD_SCHEMAS } from "@kolo/contracts/events";
 import { permissionKeys, strings, translate } from "./strings.ts";
 import { transferErrorKey, workspaceErrorText } from "./identity-errors.ts";
@@ -49,8 +50,8 @@ test("transfer errors use localized stable codes and hide unknown native errors"
   assert.equal(transferErrorKey(new Error("__proto__")), "transferError.failed");
 });
 
-test("every journal operation, local check, family and status has French and English text", () => {
+test("every journal operation, local check, family, status and export column has French and English text", () => {
   const types = [...Object.keys(EVENT_PAYLOAD_SCHEMAS), "STOCK_COUNTED", "CASH_COUNTED", "CASH_RECONCILED", "other"];
-  for (const key of [...types.map(type => `j.${type}`), ...AUDIT_GROUPS.map(group => `jg.${group}`), ...["quarantined", "deferred", "unsupported", "stored"].map(status => `jst.${status}`)])
+  for (const key of [...types.map(type => `j.${type}`), ...AUDIT_GROUPS.map(group => `jg.${group}`), ...["quarantined", "deferred", "unsupported", "stored"].map(status => `jst.${status}`), ...AUDIT_CSV_COLUMNS.map(column => `jc.${column}`)])
     assert.ok(Object.hasOwn(strings, key), key);
 });

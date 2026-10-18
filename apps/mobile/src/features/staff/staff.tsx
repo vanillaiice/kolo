@@ -16,7 +16,7 @@ const GROUPS: readonly (readonly [TextKey, (permission: Permission) => boolean])
   ["group.products", p => p.startsWith("products.")], ["group.inventory", p => p.startsWith("inventory.")], ["group.sales", p => p.startsWith("sales.")],
   ["group.customers", p => p.startsWith("customers.")], ["group.suppliers", p => p.startsWith("suppliers.") || p.startsWith("purchases.")],
   ["group.money", p => p.startsWith("cash.") || p.startsWith("finance.") || p.startsWith("expenses.")], ["group.reports", p => p.startsWith("reports.")],
-  ["group.admin", p => p.startsWith("users.") || p.startsWith("business.") || p.startsWith("audit.")],
+  ["group.admin", p => p.startsWith("users.") || p.startsWith("business.") || p.startsWith("audit.") || p.startsWith("data.")],
 ];
 
 /** Effective permissions: role defaults plus grants minus revocations, as the desktop shows them. */

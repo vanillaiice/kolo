@@ -84,7 +84,7 @@ function Shop({service,view,sessionId,revision,refresh,onRecoveryKey,preferences
       {canCustomers&&<div hidden={section!=="customers"}><Customers service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {canPurchases&&<div hidden={section!=="purchases"}><Purchases service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {canFinance&&<div hidden={section!=="finance"}><Finance service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
-      {section==="journal"&&<Journal service={service} sessionId={sessionId} revision={revision}/>}
+      {section==="journal"&&<Journal service={service} sessionId={sessionId} revision={revision} canExport={permissions.includes("data.export")}/>}
       {section==="analytics"&&<Analytics service={service} sessionId={sessionId} revision={revision} permissions={permissions}/>}
       {section==="reports"&&<Reports service={service} sessionId={sessionId} revision={revision} permissions={permissions}/>}
       {section==="staff"&&<Staff service={service} sessionId={sessionId} revision={revision} isOwner={view.actor?.isOwner===true}/>}

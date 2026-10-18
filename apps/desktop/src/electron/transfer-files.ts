@@ -70,6 +70,14 @@ export async function saveDesktopTransferFile(document:TransferDocument,native:P
  const result=await native.showSaveDialog({title:"KOLO — enregistrer le fichier",defaultPath:document.filename,filters:[{name:"KOLO",extensions:[extension]}]});if(result.canceled||result.filePath===undefined)return false;
  await publishNewFile(result.filePath,async file=>{let at=0;while(at<bytes.length)at+=(await file.write(bytes,at,bytes.length-at)).bytesWritten;});return true;
 }
+/** Spreadsheet exports KOLO writes: a plain name ending in .csv, at most 100 characters. */
+export const EXPORT_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,95}\.csv$/u;
+/** Main-process save dialog for a spreadsheet export; like transfer files it publishes a complete new file and never overwrites one. */
+export async function saveDesktopExportFile(filename:string,bytes:Uint8Array,native:Pick<Dialog,"showSaveDialog">,maximum:number=MAX_TRANSFER_FILE_BYTES):Promise<boolean>{
+ if(!EXPORT_NAME.test(filename)||!(bytes instanceof Uint8Array))throw new TransferError("invalid_file");if(bytes.length<1||bytes.length>maximum)throw new TransferError("too_large");
+ const result=await native.showSaveDialog({title:"KOLO — exporter",defaultPath:filename,filters:[{name:"CSV",extensions:["csv"]}]});if(result.canceled||result.filePath===undefined)return false;
+ await publishNewFile(result.filePath,async file=>{let at=0;while(at<bytes.length)at+=(await file.write(bytes,at,bytes.length-at)).bytesWritten;});return true;
+}
 /** Removes temporary files an interrupted streamed save left in the private outgoing directory. */
 export function clearOutgoing(directory:string):void{
  mkdirSync(directory,{recursive:true,mode:0o700});

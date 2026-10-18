@@ -1,16 +1,19 @@
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { auditTrail, type AuditEntry, type AuditGroup, type AuditSubject } from "@kolo/core/application/audit";
+import { auditExport, auditTrail, type AuditEntry, type AuditGroup, type AuditSubject } from "@kolo/core/application/audit";
+import { AUDIT_CSV_COLUMNS, auditCsv, type AuditCsvText } from "@kolo/core/domain/audit-csv";
 import { formatMoney, formatQuantity, formatRate } from "@kolo/core/domain/money";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { ChangedDomain } from "@kolo/core/data/database/changes";
 import { useText, type Language, type TextKey } from "../../app/i18n.tsx";
 import { strings, translate, permissionKeys } from "../../app/strings.ts";
 import { useNav } from "../../app/navigation.tsx";
-import { useRevision, useSession } from "../../app/session.tsx";
+import { usePermissions, useRevision, useSession } from "../../app/session.tsx";
 import { type as typography, useTheme } from "../../components/theme.ts";
 import { Button, ListRow, Notice, PagedList, Screen, Sheet, useStyles } from "../../components/ui.tsx";
 import { usePeriod } from "../reports/reports.tsx";
+import { useAction } from "../../components/command.tsx";
+import { saveTextFile } from "../../data/output/print-on-device.ts";
 import { formatDate, useRecord } from "../shared.tsx";
 
 const GROUPS: readonly AuditGroup[] = ["sales", "purchases", "stock", "money", "catalogue", "people", "staff", "devices", "settings", "other"];
@@ -58,6 +61,21 @@ export function journalDetails(entry: AuditEntry, language: Language): string {
   return line.charAt(0).toLocaleUpperCase(language) + line.slice(1);
 }
 
+/** The operation's name in the current language, with its code when this version does not know it. */
+function operationText(entry: AuditEntry, language: Language): string {
+  return known(`j.${entry.type}`) ? translate(language, `j.${entry.type}` as TextKey) : `${translate(language, "j.other")} (${entry.type})`;
+}
+
+/** Spreadsheet wording for an export in the current language; the same columns as the desktop export. */
+function csvText(language: Language): AuditCsvText {
+  const t = (key: TextKey): string => translate(language, key);
+  return { headings: Object.fromEntries(AUDIT_CSV_COLUMNS.map(column => [column, t(`jc.${column}` as TextKey)])) as AuditCsvText["headings"],
+    operation: entry => operationText(entry, language), details: entry => journalDetails(entry, language),
+    source: entry => t(entry.source === "this_device" ? "journalThisDevice" : "journalShopWide"),
+    status: entry => entry.status !== undefined && entry.status !== "applied" && known(`jst.${entry.status}`) ? t(`jst.${entry.status}` as TextKey) : "",
+    unknown: t("journalUnknown") };
+}
+
 /** A labelled value that opens a short list in a sheet; for members, devices and operation types. */
 function Choice({ label, value, options, onChange }: {
   readonly label: string; readonly value: string; readonly options: readonly { readonly id: string; readonly label: string }[]; readonly onChange: (id: string) => void;
@@ -81,20 +99,31 @@ function Choice({ label, value, options, onChange }: {
  * shows every operation that involved its record (a product's price changes, sales and counts).
  */
 export function JournalScreen(): React.JSX.Element {
-  const { t, language } = useText(), nav = useNav(), { context } = useSession(), revision = useRevision(DOMAINS);
-  const { period, control } = usePeriod("journal-period", "last7");
+  const { t, language } = useText(), nav = useNav(), session = useSession(), { context } = session, revision = useRevision(DOMAINS);
+  const { state: days, period, control } = usePeriod("journal-period", "last7");
   const [actorId, setActorId] = useState(""), [deviceId, setDeviceId] = useState(""), [group, setGroup] = useState(""), [subject, setSubject] = useState<AuditSubject>();
   // Members and devices name the filters; one small read, refreshed with the roster.
   const names = useRecord(() => auditTrail(context, { limit: 1 }), [context, revision]).value;
   const filters = { ...(period ?? {}), ...(actorId === "" ? {} : { actorId }), ...(deviceId === "" ? {} : { deviceId }),
     ...(group === "" ? {} : { group: group as AuditGroup }), ...(subject === undefined ? {} : { subjectId: subject.id }) };
   const name = (value: AuditSubject): string => value.name ?? t("journalUnknown");
+  const canExport = usePermissions().includes("data.export"), exporting = useAction(), [exported, setExported] = useState<{ count: number; truncated: boolean }>();
+  // Every operation matching the filters in one file, saved in a folder the member picks.
+  const exportCsv = (): void => { if (period === undefined) return; void exporting.runAsync(async () => {
+    const { items, truncated } = auditExport(context, filters);
+    const filename = `kolo-journal-${days.from}_${days.to}.csv`;
+    const saved = await session.systemUi(() => saveTextFile(filename, "text/csv", auditCsv(items, csvText(language), language === "fr" ? ";" : ",")));
+    return saved ? { count: items.length, truncated } : undefined;
+  }, result => { if (result !== undefined) setExported(result); }); };
   const header = <>
     <Notice text={t("journalHelp")} />
     {control}
     <Choice label={t("journalWho")} value={actorId} onChange={setActorId} options={[{ id: "", label: t("journalAnyone") }, ...(names?.members ?? []).map(m => ({ id: m.id, label: m.name }))]} />
     <Choice label={t("journalDevice")} value={deviceId} onChange={setDeviceId} options={[{ id: "", label: t("journalAnyDevice") }, ...(names?.devices ?? []).map(d => ({ id: d.id, label: d.label }))]} />
     <Choice label={t("journalFamily")} value={group} onChange={setGroup} options={[{ id: "", label: t("journalAnyGroup") }, ...GROUPS.map(id => ({ id, label: t(`jg.${id}` as TextKey) }))]} />
+    {canExport && <Button label={t("journalExport")} hint={t("journalExportHelp")} variant="secondary" busy={exporting.busy} disabled={period === undefined} onPress={exportCsv} />}
+    {exporting.notice}
+    {exported !== undefined && <Notice tone={exported.truncated ? "warning" : "success"} text={t(exported.truncated ? "journalExportTruncated" : "journalExported", { count: exported.count })} />}
     {subject !== undefined && <Notice tone="info" text={t("journalOnlyRecord", { name: name(subject) })} action={<Button label={t("journalClearRecord")} variant="secondary" onPress={() => setSubject(undefined)} />} />}
   </>;
   return <Screen title={t("journal")} onBack={nav.back} scroll={false}>
@@ -102,7 +131,7 @@ export function JournalScreen(): React.JSX.Element {
       empty={{ title: t("journalEmpty") }}
       load={page => period === undefined ? { items: [] } : auditTrail(context, { ...filters, limit: 30, ...(page.after === undefined ? {} : { after: page.after }) })}
       render={entry => {
-        const action = known(`j.${entry.type}`) ? t(`j.${entry.type}` as TextKey) : `${t("j.other")} (${entry.type})`;
+        const action = operationText(entry, language);
         const by = t("journalByOn", { who: entry.actor.name ?? t("journalUnknown"), device: entry.device.label ?? t("journalUnknown") });
         const details = journalDetails(entry, language);
         const status = entry.status !== undefined && entry.status !== "applied" && known(`jst.${entry.status}`) ? t(`jst.${entry.status}` as TextKey) : undefined;

@@ -1,5 +1,5 @@
 import { analyticsView, reportView, REPORT_KINDS } from "@kolo/core/application/report-views";
-import { auditTrail, AUDIT_GROUPS, type AuditGroup, type AuditPage } from "@kolo/core/application/audit";
+import { auditExport, auditTrail, AUDIT_GROUPS, type AuditEntry, type AuditGroup, type AuditPage, type AuditQuery } from "@kolo/core/application/audit";
 import { WorkspaceError } from "@kolo/core/identity/types";
 import type { AnalyticsBucket, AnalyticsResult, ReportKind, ReportResult } from "../shared/service.js";
 import { object, optional, text, uuid, whole } from "./validation.ts";
@@ -35,9 +35,22 @@ export function analytics(host: Host, input: unknown): AnalyticsResult {
 /** One page of the operation journal under audit.view; summaries come from core `application/audit`, shared with mobile. */
 export function journal(host: Host, input: unknown): AuditPage {
   const data = object(input, ["sessionId", "from", "until", "actorId", "deviceId", "group", "subjectId", "after", "limit"]), context = host.actor(data);
+  return auditTrail(context, { ...filters(data), ...paging(data) });
+}
+
+/** Every entry matching the journal filters for an export, under audit.view and data.export (core `auditExport`). */
+export function journalExport(host: Host, input: unknown): { readonly items: readonly AuditEntry[]; readonly truncated: boolean } {
+  const data = object(input, ["sessionId", "from", "until", "actorId", "deviceId", "group", "subjectId"]), context = host.actor(data);
+  return auditExport(context, filters(data));
+}
+
+function filters(data: Record<string, unknown>): Omit<AuditQuery, "after" | "limit"> {
   const group = optional(data["group"], value => { if (!AUDIT_GROUPS.includes(value as AuditGroup)) throw new WorkspaceError("invalid_input"); return value as AuditGroup; });
+  return { from: optional(data["from"], instant), until: optional(data["until"], instant), actorId: optional(data["actorId"], uuid),
+    deviceId: optional(data["deviceId"], uuid), group, subjectId: optional(data["subjectId"], uuid) };
+}
+function paging(data: Record<string, unknown>): Pick<AuditQuery, "after" | "limit"> {
   const after = optional(data["after"], value => { const cursor = object(value, ["name", "id"]); return { name: instant(cursor["name"]), id: uuid(cursor["id"]) }; });
   const limit = optional(data["limit"], value => { const result = whole(value, 1); if (result > 200) throw new WorkspaceError("invalid_input"); return result; });
-  return auditTrail(context, { from: optional(data["from"], instant), until: optional(data["until"], instant), actorId: optional(data["actorId"], uuid),
-    deviceId: optional(data["deviceId"], uuid), group, subjectId: optional(data["subjectId"], uuid), after, limit });
+  return { after, limit };
 }

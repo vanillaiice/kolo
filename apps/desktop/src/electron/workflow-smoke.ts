@@ -1,8 +1,8 @@
 import { basename, join } from "node:path";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { openTransferFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.ts";
-import { copyFile, readFile, writeFile, mkdir } from "node:fs/promises";
+import { openTransferFile, saveDesktopExportFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.ts";
+import { copyFile, readFile, readdir, writeFile, mkdir } from "node:fs/promises";
 import { nativeTheme, type BrowserWindow, type Dialog, type SaveDialogOptions, type SaveDialogReturnValue } from "electron";
 import type { TransferDialogs } from "./transfer.ts";
 
@@ -31,6 +31,7 @@ export function smokeDialogs(outgoing: string): TransferDialogs {
     open: async () => { const path = supplied ?? latest ?? (existsSync(persisted) ? persisted : undefined); return path === undefined ? undefined : openTransferFile(path); },
     save: async document => keep(await saveDesktopTransferFile(document, native)),
     saveStream: async write => keep(await saveDesktopTransferStream(write, native, outgoing)),
+    saveExport: async (filename, bytes) => keep(await saveDesktopExportFile(filename, bytes, native)),
   };
 }
 /** Disposable actual Electron DOM/IPC/native-vault workflow; invoked only by the explicit smoke flag. */
@@ -241,6 +242,13 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     // Journal: the day's operations appear with who made them; choosing a record narrows to its history.
     await navigate("Journal"); await wait(`${visible(".journal-table tbody tr")}.some(row=>row.textContent.includes('Expense')&&row.textContent.includes('Charcoal'))`, "journal entries");
     await audit("Journal"); await snapshot("journal");
+    // Export: every matching operation goes to one .csv through the save dialog, readable as a spreadsheet.
+    await clickVisible(".journal-export button", "Export CSV"); await wait(`${visible(".notice.success")}.some(element=>element.textContent.includes('exported'))`, "journal exported");
+    const exportsDirectory = join(process.env["KOLO_DESKTOP_SMOKE_DIR"]!, "saved"), exported = (await readdir(exportsDirectory)).filter(name => name.endsWith(".csv")).sort().at(-1);
+    assert.ok(exported !== undefined && /kolo-journal-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.csv$/.test(exported), "the export is named after its period");
+    const csv = await readFile(join(exportsDirectory, exported), "utf8");
+    assert.ok(csv.startsWith("\uFEFFDate,Time,UTC timestamp,Member,Device,Operation,Code,Record,Related,Amount (XAF),Details,Source,Status,ID\r\n"), "English exports use commas and a byte-order mark");
+    assert.ok(csv.split("\r\n").some(line => line.includes(",Expense,EXPENSE_RECORDED,") && line.includes("Charcoal")), "the day's expense is in the file");
     await evaluate(`${visible(".journal-table .row-link")}[0].click()`); await wait(`${visible(".journal-subject")}.length===1 && ${visible(".journal-table tbody tr")}.length>0`, "journal record history");
     // Settings: an explicit appearance overrides the system theme and persists; "System" follows it again.
     await navigate("Settings"); await wait(`${visible("input[name=appearance]")}.length===3`, "settings page");

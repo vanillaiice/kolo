@@ -21,6 +21,7 @@ import { CommandError, isValidationError, nextVersion, type Host } from "./host.
 import * as purchasing from "./purchasing.ts";
 import * as finance from "./finance.ts";
 import * as reports from "./reports.ts";
+import * as exports from "./exports.ts";
 import * as returns from "./returns.ts";
 import * as settings from "./settings.ts";
 import * as staff from "./staff.ts";
@@ -679,6 +680,10 @@ export class DesktopApplication implements ShopService {
   analytics(input: unknown): ReturnType<ShopService["analytics"]> { return this.#run(() => reports.analytics(this.#host, input)); }
   /** The operation journal under audit.view; see reports.ts. */
   journal(input: unknown): ReturnType<ShopService["journal"]> { return this.#run(() => reports.journal(this.#host, input)); }
+  /** Every journal entry matching the filters, for an export (audit.view and data.export); see reports.ts. */
+  journalExport(input: unknown): ReturnType<ShopService["journalExport"]> { return this.#run(() => reports.journalExport(this.#host, input)); }
+  /** A spreadsheet export through the save dialog (data.export); see exports.ts. */
+  saveCsv(input: unknown): ReturnType<ShopService["saveCsv"]> { return this.#file(host => exports.saveCsv(host, input)); }
   /** Tax, payment terms and notifications; see settings.ts. */
   taxSettings(input: unknown): ReturnType<ShopService["taxSettings"]> { return this.#run(() => settings.taxSettings(this.#host, input)); }
   updateTaxSettings(input: unknown): ReturnType<ShopService["updateTaxSettings"]> { return this.#run(() => settings.updateTaxSettings(this.#host, input)); }

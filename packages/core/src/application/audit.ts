@@ -2,8 +2,11 @@ import type { Queryable, Row, SqlValue } from "../data/database/driver.ts";
 import { sqlInteger } from "../data/database/safe-values.ts";
 import { authorizedOperation } from "../identity/internal-authority.ts";
 import { WorkspaceError, type OperationContext } from "../identity/types.ts";
+import type { Permission } from "../identity/permissions.ts";
 import { subtotalOf } from "../rules/pricing.ts";
 import type { Cursor } from "./queries.ts";
+import { AUDIT_EXPORT_LIMIT } from "../domain/audit-csv.ts";
+export { AUDIT_EXPORT_LIMIT };
 
 /**
  * The operation journal (spec §39, `audit.view`): who did what, when, on which device.
@@ -131,6 +134,10 @@ function instant(value: unknown): string {
  * record. Received facts appear once synced, with the member and device that made them; a held-back fact shows its status.
  */
 export function auditTrail(context: OperationContext, query: AuditQuery = {}): AuditPage {
+  return readPage(context, query, ["audit.view"]);
+}
+
+function readPage(context: OperationContext, query: AuditQuery, required: readonly Permission[]): AuditPage {
   const limit = query.limit ?? 50;
   if (query === null || typeof query !== "object" || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new WorkspaceError("invalid_input");
   const from = query.from === undefined ? undefined : instant(query.from), until = query.until === undefined ? undefined : instant(query.until);
@@ -141,7 +148,7 @@ export function auditTrail(context: OperationContext, query: AuditQuery = {}): A
   const actorId = query.actorId === undefined ? undefined : id(query.actorId), deviceId = query.deviceId === undefined ? undefined : id(query.deviceId);
   const subjectId = query.subjectId === undefined ? undefined : id(query.subjectId);
 
-  return authorizedOperation(context, ["audit.view"], (_db, tx) => {
+  return authorizedOperation(context, required, (_db, tx) => {
     const shop = context.businessId, values: SqlValue[] = [shop, shop];
     const where: string[] = [];
     if (from !== undefined) { where.push("occurred_at >= ?"); values.push(from); }
@@ -344,4 +351,23 @@ function previous(tx: Queryable, shop: string, type: string, recordId: string, e
     ORDER BY occurred_at DESC, event_id DESC LIMIT 1`, [shop, type, `"${recordId}"`, occurredAt, eventId]);
   if (row === undefined) return undefined;
   try { return object(object(JSON.parse(String(row["canonical"])))["payload"]); } catch { return undefined; }
+}
+
+
+/**
+ * Every entry matching `query` (its cursor and limit ignored), newest first, read page by page up to
+ * {@link AUDIT_EXPORT_LIMIT}; `truncated` says more matched. Taking the journal away needs `data.export` as well as
+ * `audit.view`, checked on every page, so a revocation stops an export already under way.
+ */
+export function auditExport(context: OperationContext, query: Omit<AuditQuery, "after" | "limit"> = {}, maximum = AUDIT_EXPORT_LIMIT): { readonly items: readonly AuditEntry[]; readonly truncated: boolean } {
+  if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > AUDIT_EXPORT_LIMIT) throw new WorkspaceError("invalid_input");
+  const items: AuditEntry[] = [];
+  let after: Cursor | undefined;
+  for (;;) {
+    const page = readPage(context, { ...query, after: undefined, limit: Math.min(200, maximum - items.length), ...(after === undefined ? {} : { after }) }, ["audit.view", "data.export"]);
+    items.push(...page.items);
+    if (page.next === undefined) return { items, truncated: false };
+    if (items.length >= maximum) return { items, truncated: true };
+    after = page.next;
+  }
 }

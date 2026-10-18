@@ -10,6 +10,8 @@ export const PERMISSIONS = [
   "reports.customers", "reports.suppliers", "reports.financial",
   "users.view", "users.manage", "business.settings", "audit.view",
   "customers.pay", "customers.credit_override", "sales.price_override", "cash.move",
+  // Taking shop data off the device in bulk (a CSV export). Owners only unless granted.
+  "data.export",
 ] as const;
 
 /** A known local capability; unknown strings are refused at runtime. */
@@ -20,7 +22,7 @@ export type Role = "OWNER" | "MANAGER" | "CASHIER" | "INVENTORY" | "ACCOUNTANT";
 const DEFAULTS: Record<Role, readonly Permission[]> = {
   OWNER: PERMISSIONS,
   MANAGER: PERMISSIONS.filter(p => ![
-    "users.manage", "business.settings", "audit.view", "finance.accounts.manage",
+    "users.manage", "business.settings", "audit.view", "finance.accounts.manage", "data.export",
   ].includes(p)),
   CASHIER: ["products.view", "inventory.view", "sales.create", "sales.view_own", "customers.view", "customers.pay"],
   INVENTORY: [

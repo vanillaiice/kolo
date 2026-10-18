@@ -173,7 +173,7 @@ export interface CashCountView { readonly expectedMinor: number; readonly counte
 export type { ReportKind, ReportLine, ReportResult, AnalyticsBucket, AnalyticsPoint, AnalyticsCell, AnalyticsProduct, AnalyticsCustomer, AnalyticsResult } from "@kolo/core/application/report-views";
 import type { ReportKind, AnalyticsBucket, ReportResult, AnalyticsResult } from "@kolo/core/application/report-views";
 export type { AuditEntry, AuditFacts, AuditGroup, AuditPage, AuditSubject } from "@kolo/core/application/audit";
-import type { AuditGroup, AuditPage } from "@kolo/core/application/audit";
+import type { AuditEntry, AuditGroup, AuditPage } from "@kolo/core/application/audit";
 /** What remains returnable from a sale or purchase, at the original net prices or costs. */
 export interface ReturnSourceView {
   readonly kind: "SALE" | "PURCHASE"; readonly originalId: string; readonly priorId?: string; readonly hasCounterparty: boolean;
@@ -431,6 +431,10 @@ export interface ShopService {
    * counts only this computer recorded. Narrowed by period [from, until), member, device, family or record.
    */
   journal(input: SessionRequest & { readonly from?: string; readonly until?: string; readonly actorId?: string; readonly deviceId?: string; readonly group?: AuditGroup; readonly subjectId?: string; readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<AuditPage>>;
+  /** Every journal entry matching the filters (at most 20,000, newest first) for an export; needs audit.view and data.export. */
+  journalExport(input: SessionRequest & { readonly from?: string; readonly until?: string; readonly actorId?: string; readonly deviceId?: string; readonly group?: AuditGroup; readonly subjectId?: string }): Promise<Result<{ readonly items: readonly AuditEntry[]; readonly truncated: boolean }>>;
+  /** Saves a `.csv` export (UTF-8 text) where the member chooses, under data.export; false when the save dialog was cancelled. */
+  saveCsv(input: SessionRequest & { readonly filename: string; readonly content: string }): Promise<Result<boolean>>;
   /** Returnable lines of a sale (sales.refund) or purchase (purchases.create and purchases.pay). */
   returnSource(input: SessionRequest & { readonly kind: "SALE" | "PURCHASE"; readonly originalId: string }): Promise<Result<ReturnSourceView>>;
   /** Exact value of a selection against the current predecessor. */
