@@ -27,7 +27,7 @@ function presetStart(preset: Preset): Date {
 interface PeriodState { readonly preset?: Preset | undefined; readonly from: string; readonly to: string }
 
 /** Desktop period presets plus custom local days; the shared rule turns days into half-open instants. */
-function usePeriod(key: string, initial: Preset): { state: PeriodState; period: { from: string; until: string } | undefined; control: React.JSX.Element } {
+export function usePeriod(key: string, initial: Preset): { state: PeriodState; period: { from: string; until: string } | undefined; control: React.JSX.Element } {
   const { t } = useText(), today = localDay(new Date());
   const [state, setState] = useDraft<PeriodState>(key, () => ({ preset: initial, from: localDay(presetStart(initial)), to: today }));
   const [from, setFrom] = useState(state.from), [to, setTo] = useState(state.to);

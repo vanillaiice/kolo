@@ -18,6 +18,7 @@ import { applyEvent, retryDeferred, reviewQuarantinedEvent } from "./event-appli
 import { createJournalBatch, importJournalBatch, createPeerReceipt, acknowledgeDelivery, eventsForDestination, exchangeStatus } from "./event-delivery.ts";
 import * as commands from "./operations.ts";
 import * as queries from "./queries.ts";
+import { auditTrail } from "./audit.ts";
 import { stockOf } from "../data/inventory/movements.ts";
 import { balanceOfAccount } from "../data/finance/cash.ts";
 
@@ -73,6 +74,19 @@ it("two offline sales converge with negative stock, unchanged origins and peer r
  assert.equal(count(c,"sales"),2);assert.equal(stockOf(c.db,c.install.businessId,p).onHandThousandths,-2000);
 });
 
+it("the operation journal shows another till's facts once received, with the till that made them",async()=>{
+ const [a,b]=await replicas() as [Replica,Replica],p=product(a),id=sale(a,p);
+ commands.reconcileCash(a.context,account(a),0);
+ const before=auditTrail(b.context).items.filter(entry=>entry.type==="SALE_COMPLETED");
+ assert.deepEqual(before,[],"nothing before it arrives");
+ await send(a,b);
+ const sold=auditTrail(b.context,{group:"sales"}).items;
+ assert.deepEqual(sold.map(entry=>[entry.subject?.id,entry.device.id,entry.device.label,entry.actor.name,entry.source,entry.status,entry.facts.amountMinor]),
+  [[id,a.install.deviceId,"A","Owner","journal","applied",500]]);
+ assert.deepEqual(auditTrail(b.context,{deviceId:b.install.deviceId,group:"sales"}).items,[]);
+ assert.ok(auditTrail(a.context).items.some(entry=>entry.type==="CASH_COUNTED"));
+ assert.ok(!auditTrail(b.context).items.some(entry=>entry.type==="CASH_COUNTED"),"a count that moved no money stays on its own till");
+});
 it("lost receipts, duplicate batches and application identities never repeat financial effects",async()=>{
  const [a,b]=await replicas() as [Replica,Replica],p=product(a);sale(a,p);const batch=await send(a,b);
  await importJournalBatch(b.context,batch,crypto);await send(a,b);assert.equal(count(b,"sales"),1);assert.equal(count(b,"sale_payments"),1);

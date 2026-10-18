@@ -1585,3 +1585,35 @@ integrity/report cross-check. The compositor sometimes withheld animation frames
 background-throttling settings and a bounded frame wait prevent hanging while retaining CSS/accessibility
 assertions. Physical Windows firewall/installed-package and Android camera/Wi-Fi acceptance remain open;
 both installed apps need updated builds to use the new local QR protocol.
+
+## 2026-10-18: Operation journal (desktop and mobile)
+
+A read-only view of who did what, when and on which device (spec §39), for owners, accountants and anyone the owner
+grants `audit.view` (for example a manager who is a shareholder). No schema change and no new events.
+
+- **Core.** `application/audit.auditTrail(context, query)` pages the signed event journal newest first, so it covers
+  every till once synced, plus three checks only the recording till keeps because they changed nothing: cash counts,
+  cash corrections that matched, and stock counts that matched. Entries carry type, family, member, device, source,
+  application status for held-back facts, the record concerned (and a related party or account), and figures: sale
+  and delivery totals through the shared pricing rule, return totals, payments, expenses, stock and cash movements,
+  role and permission changes. A product save shows the previous price and cost when they changed. Filters: period,
+  member, device, family, record (any fact naming its ID), keyset cursor. Key material never leaves a payload.
+- **Desktop.** `journal` bridge command (strict validation in `electron/reports.ts`) and a Journal section after
+  Reports, shown with `audit.view`. A record name narrows the list to its history.
+- **Menu order.** A section added by a newer version now lands after the one it follows by default, inside an order
+  someone chose, instead of at the end.
+- **Mobile.** More → Operation journal, with the shared period picker, member/device/type choosers and tap-to-narrow.
+- **Not done.** Export (CSV or print) of the journal. Facts from other tills appear only once synced; a cash count
+  that moved no money stays on the till where it was made.
+
+### Verification
+
+- Core (real SQLite): `audit.test.ts` covers authorization (cashier and default manager refused, accountant allowed,
+  grant and revocation take effect at once), summaries, price-change detail, local-only checks without duplicates,
+  every filter, paging joined page by page against the whole journal, and malformed queries;
+  `exchange.test.ts` shows another till's sale on the receiving till with that till's device and member.
+- Desktop inside Electron: a host test of the bridge (filters, cursor, refused input, permission), the menu-order
+  test, and journal text coverage. The Electron workflow smoke opens the Journal, finds the day's expense, runs the
+  axe audit in light and dark, and narrows to a record.
+- Mobile: localization test that every operation, family and status has French and English text.
+

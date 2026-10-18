@@ -1,5 +1,5 @@
 /** Sidebar sections in their default order. */
-export const NAV_IDS = ["till", "products", "customers", "purchases", "finance", "analytics", "reports", "staff", "receipts", "devices", "settings"] as const;
+export const NAV_IDS = ["till", "products", "customers", "purchases", "finance", "analytics", "reports", "journal", "staff", "receipts", "devices", "settings"] as const;
 export type NavId = typeof NAV_IDS[number];
 /** The first default, which earlier builds saved on start even when nobody had chosen it. */
 const PREVIOUS_DEFAULT: readonly NavId[] = ["till", "products", "customers", "purchases", "finance", "analytics", "reports", "staff", "devices", "receipts", "settings"];
@@ -7,13 +7,17 @@ const KEY = "kolo.navOrder";
 
 /**
  * A complete order from any stored value: unknown or repeated entries are dropped and sections added by a newer version
- * are appended in their default place, so an old or damaged setting never hides a section.
+ * are placed after the section they follow by default (or at the end), so an old or damaged setting never hides a section.
  */
 export function normalizeNavOrder(value: unknown): NavId[] {
   if (Array.isArray(value) && value.length === PREVIOUS_DEFAULT.length && value.every((id, index) => id === PREVIOUS_DEFAULT[index])) return [...NAV_IDS];
   const seen = new Set<NavId>(), order: NavId[] = [];
   if (Array.isArray(value)) for (const item of value) if ((NAV_IDS as readonly unknown[]).includes(item) && !seen.has(item as NavId)) { seen.add(item as NavId); order.push(item as NavId); }
-  for (const id of NAV_IDS) if (!seen.has(id)) order.push(id);
+  NAV_IDS.forEach((id, index) => {
+    if (seen.has(id)) return;
+    const after = index === 0 ? -1 : order.indexOf(NAV_IDS[index - 1]!);
+    order.splice(after < 0 ? order.length : after + 1, 0, id);
+  });
   return order;
 }
 /** This computer's menu order; a per-computer convenience like language and appearance. */

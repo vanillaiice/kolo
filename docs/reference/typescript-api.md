@@ -142,6 +142,8 @@ class DesktopApplication implements ShopService {
   report(input: unknown): Promise<Result<ReportResult>>;
   /** Period analytics with permission-scoped sections; see reports.ts. */
   analytics(input: unknown): Promise<Result<AnalyticsResult>>;
+  /** The operation journal under audit.view; see reports.ts. */
+  journal(input: unknown): Promise<Result<AuditPage>>;
   /** Tax, payment terms and notifications; see settings.ts. */
   taxSettings(input: unknown): Promise<Result<TaxSettingsView>>;
   updateTaxSettings(input: unknown): Promise<Result<TaxSettingsView>>;
@@ -594,6 +596,12 @@ actors holding reports.financial and reports.customers. Figures come from core
 
 ```ts
 analytics(host: Host, input: unknown): AnalyticsResult;
+```
+
+One page of the operation journal under audit.view; summaries come from core `application/audit`, shared with mobile.
+
+```ts
+journal(host: Host, input: unknown): AuditPage;
 ```
 
 ## [apps/desktop/src/electron/returns.ts](../../apps/desktop/src/electron/returns.ts)
@@ -1960,6 +1968,16 @@ export interface ShopService {
         readonly offsetMinutes: number;
         readonly bucket?: AnalyticsBucket;
     }): Promise<Result<AnalyticsResult>>;
+    journal(input: SessionRequest & {
+        readonly from?: string;
+        readonly until?: string;
+        readonly actorId?: string;
+        readonly deviceId?: string;
+        readonly group?: AuditGroup;
+        readonly subjectId?: string;
+        readonly after?: PageQuery["after"];
+        readonly limit?: number;
+    }): Promise<Result<AuditPage>>;
     returnSource(input: SessionRequest & {
         readonly kind: "SALE" | "PURCHASE";
         readonly originalId: string;
@@ -3950,6 +3968,127 @@ export type SignedPairingInvite = z.infer<typeof signedPairingInviteSchema>;
 export type SignedPairingRequest = z.infer<typeof signedPairingRequestSchema>;
 ```
 
+## [packages/core/src/application/audit.ts](../../packages/core/src/application/audit.ts)
+
+The operation journal (spec §39, `audit.view`): who did what, when, on which device.
+
+Read from the signed event journal, which holds every till's facts once they have synced, plus the few checks that
+only this device records because they change nothing (a cash count, a correction or stock count that matched).
+Nothing is stored for the view; entries are summarized on demand from the immutable facts. Clients localize from
+`type`, `subject` and `facts`; no display text is produced here, and no key material leaves a payload.
+
+Families the journal can be narrowed to.
+
+```ts
+export type AuditGroup = "sales" | "purchases" | "stock" | "money" | "catalogue" | "people" | "staff" | "devices" | "settings" | "other";
+```
+
+```ts
+const AUDIT_GROUPS: readonly AuditGroup[];
+```
+
+The family an event or local check belongs to; names this version does not know are `other`.
+
+```ts
+auditGroupOf(type: string): AuditGroup;
+```
+
+What an entry is about, or what it involved besides. Names are as recorded at the time when the fact carries one.
+
+```ts
+export interface AuditSubject {
+    readonly kind: "product" | "category" | "customer" | "supplier" | "account" | "member" | "device" | "sale" | "purchase" | "shop";
+    readonly id: string;
+    readonly name?: string | undefined;
+}
+```
+
+Figures and codes for one entry; each type fills the ones that apply. Money is XAF, quantity thousandths.
+
+```ts
+export interface AuditFacts {
+    readonly amountMinor?: number;
+    readonly previousAmountMinor?: number;
+    readonly costMinor?: number;
+    readonly previousCostMinor?: number;
+    readonly quantityThousandths?: number;
+    readonly lines?: number;
+    readonly code?: string;
+    readonly reason?: string;
+    readonly reference?: string;
+    readonly created?: boolean;
+    readonly active?: boolean;
+    readonly reversal?: boolean;
+    readonly expected?: number;
+    readonly counted?: number;
+    readonly days?: number | null;
+    readonly rateBasisPoints?: number;
+    readonly enabled?: boolean;
+}
+```
+
+One journal entry, newest first.
+
+```ts
+export interface AuditEntry {
+    readonly id: string;
+    readonly type: string;
+    readonly group: AuditGroup;
+    readonly occurredAt: string;
+    readonly actor: {
+        readonly id: string;
+        readonly name?: string | undefined;
+    };
+    readonly device: {
+        readonly id: string;
+        readonly label?: string | undefined;
+    };
+    readonly source: "journal" | "this_device";
+    readonly status?: string | undefined;
+    readonly subject?: AuditSubject | undefined;
+    readonly related?: AuditSubject | undefined;
+    readonly facts: AuditFacts;
+}
+```
+
+Narrowing for . Times are a half-open ISO range; IDs come from earlier entries or the lists returned.
+
+```ts
+export interface AuditQuery {
+    readonly from?: string | undefined;
+    readonly until?: string | undefined;
+    readonly actorId?: string | undefined;
+    readonly deviceId?: string | undefined;
+    readonly group?: AuditGroup | undefined;
+    readonly subjectId?: string | undefined;
+    readonly after?: Cursor | undefined;
+    readonly limit?: number | undefined;
+}
+```
+
+A page of the journal with the shop's members and devices, for naming filters.
+
+```ts
+export interface AuditPage {
+    readonly items: readonly AuditEntry[];
+    readonly next?: Cursor | undefined;
+    readonly members: readonly {
+        readonly id: string;
+        readonly name: string;
+    }[];
+    readonly devices: readonly {
+        readonly id: string;
+        readonly label: string;
+    }[];
+}
+```
+
+One page of the operation journal under `audit.view`, newest first, narrowed by period, member, device, family or
+record. Received facts appear once synced, with the member and device that made them; a held-back fact shows its status.
+
+```ts
+auditTrail(context: OperationContext, query: AuditQuery = {}): AuditPage;
+```
 ## [packages/core/src/application/backup.ts](../../packages/core/src/application/backup.ts)
 
 Verified snapshot summary; the native candidate is held privately and consumed at most once.

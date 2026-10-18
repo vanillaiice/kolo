@@ -72,6 +72,7 @@ destination, then leaves the app.
 | returnSource / previewReturn / recordReturn | Receipt or purchase detail → Return (quantities → preview → refund → confirm) | sales.refund / purchases.create+pay | `application/returns` | Node |
 | report (13 kinds) | More → Reports → kind | reports.* per kind | `application/report-views.report` (shared with desktop) | Node (parity) |
 | analytics | More → Analytics | reports.sales (+financial, +customers sections) | `application/report-views.analytics` (shared) | Node (parity) |
+| journal | More → Operation journal (tap an entry for its record's history) | audit.view | `application/audit.auditTrail` (shared) | Node (core); Device |
 | listStaff / createStaff / setStaffPermission / setStaffActive / resetStaffSecret | More → Staff → Member | owner (users.*) | `identity/members`, `grantPermission` | Node; Device F1 |
 | setRememberSession | More → Settings → Stay signed in | signed-in user | `rememberMember`, `resumeWorkspace` | Node (session memory); Device |
 | setLargeFiles | n/a (desktop only, ADR-027) | n/a | n/a | n/a |

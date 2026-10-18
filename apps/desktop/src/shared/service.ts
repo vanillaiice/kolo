@@ -168,6 +168,8 @@ export interface CashCountView { readonly expectedMinor: number; readonly counte
 /** Report and analytics views are assembled in core so desktop and mobile show the same figures. */
 export type { ReportKind, ReportLine, ReportResult, AnalyticsBucket, AnalyticsPoint, AnalyticsCell, AnalyticsProduct, AnalyticsCustomer, AnalyticsResult } from "@kolo/core/application/report-views";
 import type { ReportKind, AnalyticsBucket, ReportResult, AnalyticsResult } from "@kolo/core/application/report-views";
+export type { AuditEntry, AuditFacts, AuditGroup, AuditPage, AuditSubject } from "@kolo/core/application/audit";
+import type { AuditGroup, AuditPage } from "@kolo/core/application/audit";
 /** What remains returnable from a sale or purchase, at the original net prices or costs. */
 export interface ReturnSourceView {
   readonly kind: "SALE" | "PURCHASE"; readonly originalId: string; readonly priorId?: string; readonly hasCounterparty: boolean;
@@ -423,6 +425,11 @@ export interface ShopService {
    * given as minutes east of UTC. The bucket defaults to one that keeps the trend readable.
    */
   analytics(input: SessionRequest & { readonly from: string; readonly until: string; readonly offsetMinutes: number; readonly bucket?: AnalyticsBucket }): Promise<Result<AnalyticsResult>>;
+  /**
+   * One newest-first page of the operation journal under audit.view: every till's signed facts once synced, plus
+   * counts only this computer recorded. Narrowed by period [from, until), member, device, family or record.
+   */
+  journal(input: SessionRequest & { readonly from?: string; readonly until?: string; readonly actorId?: string; readonly deviceId?: string; readonly group?: AuditGroup; readonly subjectId?: string; readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<AuditPage>>;
   /** Returnable lines of a sale (sales.refund) or purchase (purchases.create and purchases.pay). */
   returnSource(input: SessionRequest & { readonly kind: "SALE" | "PURCHASE"; readonly originalId: string }): Promise<Result<ReturnSourceView>>;
   /** Exact value of a selection against the current predecessor. */

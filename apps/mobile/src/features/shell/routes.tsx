@@ -11,6 +11,7 @@ import { AddTillScreen, BackupCreateScreen, BackupRestoreScreen, DevicesScreen, 
 import { ServerSyncScreen } from "../devices/server-sync.tsx";
 import { AboutScreen, MoreScreen, ResetScreen, SettingsScreen } from "../more/more.tsx";
 import { AlertsScreen } from "../more/alerts.tsx";
+import { JournalScreen } from "../more/journal.tsx";
 import { PartyTermsScreen, ProductTaxScreen, ShopTaxScreen, ShopTermsScreen } from "../more/shop-settings.tsx";
 
 /** Every route's screen. Screens read their parameters with `useParams`. */
@@ -26,7 +27,7 @@ export const SCREENS: Record<RouteName, ComponentType> = {
   devices: DevicesScreen, backupCreate: BackupCreateScreen, backupRestore: BackupRestoreScreen, addTill: AddTillScreen, exchangeSend: ExchangeSendScreen,
   exchangeReceive: ExchangeReceiveScreen, exchangeConfirm: ExchangeConfirmScreen, exchangeStatus: ExchangeStatusScreen, recoveryKey: RecoveryKeyScreen, serverSync: ServerSyncScreen,
   settings: SettingsScreen, about: AboutScreen, reset: ResetScreen,
-  alerts: AlertsScreen, shopTax: ShopTaxScreen, shopTerms: ShopTermsScreen, partyTerms: PartyTermsScreen, productTax: ProductTaxScreen,
+  alerts: AlertsScreen, journal: JournalScreen, shopTax: ShopTaxScreen, shopTerms: ShopTermsScreen, partyTerms: PartyTermsScreen, productTax: ProductTaxScreen,
 };
 
 /** Routes shown beside their list on wide screens (list/detail, catalogue/cart). */

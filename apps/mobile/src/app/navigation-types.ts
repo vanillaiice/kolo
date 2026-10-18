@@ -23,7 +23,7 @@ export interface RouteMap {
   devices: undefined; backupCreate: undefined; backupRestore: undefined; addTill: undefined; exchangeSend: undefined; exchangeReceive: undefined;
   exchangeConfirm: undefined; exchangeStatus: undefined; recoveryKey: undefined; serverSync: undefined;
   settings: undefined; about: undefined; reset: undefined;
-  alerts: undefined; shopTax: undefined; shopTerms: undefined;
+  alerts: undefined; journal: undefined; shopTax: undefined; shopTerms: undefined;
   partyTerms: { readonly kind: "customer" | "supplier"; readonly id: string }; productTax: { readonly productId: string };
 }
 export type RouteName = keyof RouteMap;

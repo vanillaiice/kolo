@@ -62,6 +62,7 @@ const bridge: DesktopBridge = {
   reverseExpense: input => ipcRenderer.invoke("kolo:reverse-expense", input),
   report: input => ipcRenderer.invoke("kolo:report", input),
   analytics: input => ipcRenderer.invoke("kolo:analytics", input),
+  journal: input => ipcRenderer.invoke("kolo:journal", input),
   returnSource: input => ipcRenderer.invoke("kolo:return-source", input),
   previewReturn: input => ipcRenderer.invoke("kolo:preview-return", input),
   recordReturn: input => ipcRenderer.invoke("kolo:record-return", input),

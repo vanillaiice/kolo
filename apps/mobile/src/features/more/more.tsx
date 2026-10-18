@@ -26,6 +26,7 @@ export function MoreScreen(): React.JSX.Element {
     (has("reports.sales") || has("reports.financial") || has("reports.inventory") || has("reports.customers") || has("reports.suppliers")) && <ListRow key="reports" title={t("reports")} subtitle={t("reportsMenuHelp")} onPress={() => nav.push("reports")} />,
     has("reports.sales") && <ListRow key="analytics" title={t("analytics")} onPress={() => nav.push("analytics")} />,
     has("users.view") && <ListRow key="staff" title={t("staff")} onPress={() => nav.push("staff")} />,
+    has("audit.view") && <ListRow key="journal" title={t("journal")} subtitle={t("journalMenuHelp")} onPress={() => nav.push("journal")} />,
     session.isOwner && has("business.settings") && <ListRow key="devices" title={t("devicesTitle")} onPress={() => nav.push("devices")} />,
     <ListRow key="settings" title={t("settings")} onPress={() => nav.push("settings")} />,
   ].filter(Boolean);

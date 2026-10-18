@@ -342,3 +342,4 @@ tbody tr:last-child td{border-bottom:0}
 .alert-item.critical{border-left-color:var(--danger)}.alert-item.unread{background:var(--surface-soft)}.alert-item.read{opacity:.8}.alert-item strong{font-size:13px}.alert-item p{margin:4px 0 0;font-size:13px;color:var(--muted)}.alert-item .text-button{white-space:nowrap}
 .receipt-tax{font-size:12px;color:var(--muted);margin:8px 0}.receipt-tax-number{text-align:center;margin-top:12px}
 @media(max-width:850px){.alerts-panel{margin:16px 18px 0}.alerts-button{font-size:0;gap:4px}.alerts-button>span{font-size:14px}}
+.journal-table td{vertical-align:top}.journal-table td .tag{display:table;margin:4px 0 0;white-space:nowrap}.journal-when{white-space:nowrap}.journal-details{width:38%;color:var(--muted);overflow-wrap:anywhere}.tag.neutral{background:var(--selected);color:var(--selected-ink)}.journal-subject{flex-basis:100%;display:flex;gap:12px;align-items:center;margin:0}

@@ -222,6 +222,10 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await wait(`${visible(".chart-frame .recharts-wrapper")}.length===2 && ${visible(".heatmap-cell:not(.is-empty)")}.length>0 && ${visible(".donut .recharts-wrapper")}.length===2`, "analytics charts");
     await audit("Analytics");
     for (const [index, card] of ["busy", "sellers", "shares"].entries()) { await evaluate(`document.querySelectorAll('.analytics .chart-card')[${index + 1}]?.scrollIntoView()`); await snapshot(`analytics-${card}`); }
+    // Journal: the day's operations appear with who made them; choosing a record narrows to its history.
+    await navigate("Journal"); await wait(`${visible(".journal-table tbody tr")}.some(row=>row.textContent.includes('Expense')&&row.textContent.includes('Charcoal'))`, "journal entries");
+    await audit("Journal"); await snapshot("journal");
+    await evaluate(`${visible(".journal-table .row-link")}[0].click()`); await wait(`${visible(".journal-subject")}.length===1 && ${visible(".journal-table tbody tr")}.length>0`, "journal record history");
     // Settings: an explicit appearance overrides the system theme and persists; "System" follows it again.
     await navigate("Settings"); await wait(`${visible("input[name=appearance]")}.length===3`, "settings page");
     await audit("Settings");

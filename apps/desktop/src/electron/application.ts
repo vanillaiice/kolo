@@ -676,6 +676,8 @@ export class DesktopApplication implements ShopService {
   report(input: unknown): ReturnType<ShopService["report"]> { return this.#run(() => reports.report(this.#host, input)); }
   /** Period analytics with permission-scoped sections; see reports.ts. */
   analytics(input: unknown): ReturnType<ShopService["analytics"]> { return this.#run(() => reports.analytics(this.#host, input)); }
+  /** The operation journal under audit.view; see reports.ts. */
+  journal(input: unknown): ReturnType<ShopService["journal"]> { return this.#run(() => reports.journal(this.#host, input)); }
   /** Tax, payment terms and notifications; see settings.ts. */
   taxSettings(input: unknown): ReturnType<ShopService["taxSettings"]> { return this.#run(() => settings.taxSettings(this.#host, input)); }
   updateTaxSettings(input: unknown): ReturnType<ShopService["updateTaxSettings"]> { return this.#run(() => settings.updateTaxSettings(this.#host, input)); }

@@ -262,6 +262,25 @@ category and payment-method donuts (five slices plus "Others") and a customer ta
 each chart has a figures table or legend table as its accessible twin. Commands live in
 `electron/reports.ts`.
 
+## Operation journal contract
+
+`journal` reads one newest-first page (1–200 entries, default 50) of the operation journal under
+`audit.view` (spec §39). Filters are all optional: a period `[from, until)` as ISO instants, a
+member `actorId`, a `deviceId`, a family `group` (`sales`, `purchases`, `stock`, `money`,
+`catalogue`, `people`, `staff`, `devices`, `settings`, `other`), a record `subjectId` (every fact
+naming it: a product's saves, sales and counts), and the `after` cursor from the previous page.
+Unknown fields, non-UUID IDs and malformed instants are refused.
+
+Entries come from core `application/audit`, shared with mobile: the signed event journal (this
+till's facts and every other till's once synced, with the member and device that made them and,
+for a fact held back, its application status), plus the checks only this till records because
+they changed nothing (a cash count, a correction or stock count that matched). Summaries carry
+codes and figures, never key material; a product save shows the previous price and cost when
+they changed. Owners and accountants hold `audit.view` by default; an owner can grant it to anyone
+else (for example a manager who is a shareholder). The Journal section filters by days (with
+Today, 7 and 30 days, All), member, device and type; choosing a record narrows to its history.
+Commands live in `electron/reports.ts`.
+
 ## Product photos and large files
 
 `setProductPhoto` takes a product ID and the bytes of a WebP or JPEG (at most 64 KiB and

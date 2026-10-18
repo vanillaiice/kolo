@@ -546,6 +546,25 @@ it("core validation refusals reach the UI as invalid input, not storage failures
     value(await f.application.recordExpense({sessionId,requestId:randomUUID(),accountId:cash.id,category:"OTHER",amountMinor:100,description:"Charcoal"}));
   }finally{await f.dispose();}
 });
+it("the operation journal crosses the bridge under audit.view with strict filters",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId)));
+    const account=value(await f.application.listCashAccounts({sessionId})).items[0]!;
+    const sale=value(await f.application.checkout({sessionId,requestId:randomUUID(),accountId:account.id,lines:[{productId:item.id,quantity:1000,unitPriceMinor:500}]}));
+    const page=value(await f.application.journal({sessionId,group:"sales"}));
+    assert.deepEqual(page.items.map(entry=>[entry.type,entry.subject?.id,entry.actor.name,entry.device.label,entry.facts.amountMinor]),[["SALE_COMPLETED",sale.saleId,"Owner","PC",500]]);
+    const history=value(await f.application.journal({sessionId,subjectId:item.id,limit:200}));
+    assert.ok(history.items.some(entry=>entry.type==="PRODUCT_SAVED")&&history.items.some(entry=>entry.type==="SALE_COMPLETED"));
+    const first=value(await f.application.journal({sessionId,limit:1}));assert.ok(first.next);
+    const second=value(await f.application.journal({sessionId,limit:1,after:first.next}));assert.notEqual(second.items[0]!.id,first.items[0]!.id);
+    for(const bad of [{group:"all"},{limit:0},{limit:201},{from:"2026-10-06"},{actorId:"Owner"},{subjectId:item.id.toUpperCase()},{after:{name:"x",id:item.id}},{after:{...first.next,extra:1}},{businessId:workspace.members[0]!.id}])
+      failure(await f.application.journal({sessionId,...bad} as never),"invalid_input");
+    const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
+    const staff=await createLocalMember(context,{name:"Partner",role:"MANAGER",secret:"765432"});
+    const manager=value(await f.application.unlock({userId:staff,secret:"765432"})).sessionId!;
+    failure(await f.application.journal({sessionId:manager}),"permission_denied");
+  }finally{await f.dispose();}
+});
 it("reports read exact period figures under report authority and refuse malformed periods",async()=>{
   const f=fixture();try{
     const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:0,purchasePriceMinor:300})));
