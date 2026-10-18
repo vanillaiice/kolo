@@ -9,7 +9,7 @@ import { run } from "./cli.ts";
 import { check, csv, exportRows, exportTables, shop } from "./inspection.ts";
 import { withBackup, withCopy } from "./source.ts";
 import { generateFixture } from "./fixture.ts";
-import { backupPassword, DEVELOPMENT_BACKUP_PASSWORD, MAX_SECRET_FILE_BYTES, readSecretFile } from "./secrets.ts";
+import { backupPassword, backupSecret, DEVELOPMENT_BACKUP_PASSWORD, MAX_SECRET_FILE_BYTES, readSecretFile } from "./secrets.ts";
 
 const env = { KOLO_BACKUP_PASSWORD: "test-password-2026" };
 test("read-only inspection preserves bytes, rejects writes and never creates missing databases", async () => {
@@ -34,19 +34,18 @@ test("read-only inspection preserves bytes, rejects writes and never creates mis
 });
 
 test("signed fixtures verify, decrypt, report and export without touching the source", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "kolo-cli-test-")), path = join(directory, "fixture.json"), copy = join(directory, "copy.db");
+  const directory = mkdtempSync(join(tmpdir(), "kolo-cli-test-")), path = join(directory, "fixture.kolo-backup"), copy = join(directory, "copy.db");
   try {
     const fixture = await generateFixture({ products: 3, sales: 7, days: 3, seed: 42, name: "CLI test", password: env.KOLO_BACKUP_PASSWORD });
-    writeFileSync(path, fixture.text);
+    writeFileSync(path, fixture.bytes);
     let stdout = "";
     const capture = (text: string): void => { stdout += text; };
     assert.equal(await run(["backup", "verify", path], env, capture), 0);
     assert.equal(JSON.parse(stdout).businessName, "CLI test");
     await assert.rejects(run(["backup", "verify", path], { KOLO_BACKUP_PASSWORD: "wrong-password" }, capture), /authentication_failed/);
-    const envelope = JSON.parse(fixture.text);
-    envelope.payload = "AAAA";
-    const damaged = join(directory, "damaged.json"); writeFileSync(damaged, JSON.stringify(envelope));
-    await assert.rejects(run(["backup", "verify", damaged], env, capture));
+    const altered = fixture.bytes.slice(); altered[altered.length - 1] = altered[altered.length - 1]! ^ 1;
+    const damaged = join(directory, "damaged.kolo-backup"); writeFileSync(damaged, altered);
+    await assert.rejects(run(["backup", "verify", damaged], env, capture), /authentication_failed/);
     assert.equal(await run(["backup", "decrypt", path, "--out", copy], env, capture), 0);
     await assert.rejects(run(["backup", "decrypt", path, "--out", copy], env, capture), /EEXIST/);
     stdout = "";
@@ -84,7 +83,7 @@ test("signed fixtures verify, decrypt, report and export without touching the so
       writeFileSync(broken, await handle.bytes());
       assert.equal(await run(["check", "--db", broken], env, capture), 1);
     });
-    assert.equal(readFileSync(path, "utf8"), fixture.text);
+    assert.deepEqual(new Uint8Array(readFileSync(path)), fixture.bytes);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -163,5 +162,17 @@ test("older SQLite copies give migration guidance without modifying the source",
     assert.equal(await run(["check", "--db", path], {}, text => { output += text; }), 1);
     assert.equal(JSON.parse(output).schemaVersion, LATEST_VERSION - 1);
     assert.deepEqual(readFileSync(path), before);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("backups open with a password or, given explicitly, the backup recovery key, never both", () => {
+  const directory = mkdtempSync(join(tmpdir(), "kolo-cli-secret-")), keyFile = join(directory, "key.txt"), passwordFile = join(directory, "password.txt");
+  try {
+    writeFileSync(keyFile, "ABCD-EFGH\n"); writeFileSync(passwordFile, "a long backup password\n");
+    assert.deepEqual(backupSecret(undefined, keyFile, {}), { recoveryKey: "ABCD-EFGH" });
+    assert.deepEqual(backupSecret(undefined, undefined, { KOLO_BACKUP_RECOVERY_KEY: "WXYZ" }), { recoveryKey: "WXYZ" });
+    assert.equal(backupSecret(passwordFile, undefined, {}), "a long backup password");
+    assert.throws(() => backupSecret(passwordFile, keyFile, {}), /either/);
+    assert.throws(() => backupSecret(undefined, undefined, { KOLO_BACKUP_RECOVERY_KEY: "  " }), /empty/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

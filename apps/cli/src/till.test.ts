@@ -43,14 +43,14 @@ test("headless till pairs across restarts, imports atomically, signs, exchanges,
   try {
     await invoke(["init", "--state", state]);
     const invite = await createPairingInvite(source.context, transferCrypto);
-    const invitePath = join(directory, "invite.json"); writeFileSync(invitePath, invite.text);
+    const invitePath = join(directory, "invite.json"); writeFileSync(invitePath, invite.bytes);
     await invoke(["pair", "inspect", invitePath]); const fingerprint = JSON.parse(output).fingerprint as string;
     const requestPath = join(directory, "request.json");
     await assert.rejects(invoke(["pair", "request", invitePath, "--state", state, "--fingerprint", "0".repeat(32), "--label", "Automation", "--out", requestPath]), /confirmation_required/);
     await invoke(["pair", "request", invitePath, "--state", state, "--fingerprint", fingerprint, "--label", "Automation", "--out", requestPath]);
-    const requestText = readFileSync(requestPath, "utf8"), code = (await previewPairingRequest(requestText, transferCrypto)).verificationCode;
-    const enrollment = await confirmPairing(source.context, requestText, code, password, source.files, transferCrypto);
-    const enrollmentPath = join(directory, "enrollment.json"); writeFileSync(enrollmentPath, enrollment.text);
+    const request = new Uint8Array(readFileSync(requestPath)), code = (await previewPairingRequest(request, transferCrypto)).verificationCode;
+    const enrollment = await confirmPairing(source.context, request, code, password, source.files, transferCrypto);
+    const enrollmentPath = join(directory, "shop.kolo-enrollment"); writeFileSync(enrollmentPath, enrollment.bytes);
     const pendingPairPath = join(state, "vault", "kolo.cli.pair"), pendingPairBytes = readFileSync(pendingPairPath);
     await invoke(["pair", "complete", enrollmentPath, "--state", state, "--code", code]);
     // Simulate activation succeeding just before the process lost its response/cleanup.
@@ -61,7 +61,7 @@ test("headless till pairs across restarts, imports atomically, signs, exchanges,
     const deviceId = JSON.parse(output).installation.deviceId as string;
     assert.notEqual(deviceId, source.installation.deviceId);
     const oversizedSecret = join(directory, "oversized-secret"); writeFileSync(oversizedSecret, "x".repeat(4097));
-    const oversizedOutput = join(directory, "oversized-backup.json");
+    const oversizedOutput = join(directory, "oversized.kolo-backup");
     await assert.rejects(invoke(["backup", "--state", state, "--secret-file", oversizedSecret, "--out", oversizedOutput]), /4 KB/);
     await assert.rejects(invoke(["backup", "--state", state, "--password-file", oversizedSecret, "--out", oversizedOutput]), /4 KB/);
     assert.equal(existsSync(oversizedOutput), false);
@@ -84,13 +84,13 @@ test("headless till pairs across restarts, imports atomically, signs, exchanges,
     const priceJob = file("prices.json", { id: randomUUIDv7(), rows: [{ id: productId, sellingPriceMinor: 650 }] });
     await invoke(["import", "prices", priceJob, "--state", state]);
     await invoke(["peers", "--state", state]); const destination = JSON.parse(output).peers[0].id as string;
-    const bundlePath = join(directory, "exchange.json");
+    const bundlePath = join(directory, "batch.kolo-exchange");
     await invoke(["exchange", "export", "--state", state, "--destination", destination, "--out", bundlePath]);
-    const preview = await previewBundle(source.context, readFileSync(bundlePath, "utf8"), password, transferCrypto);
+    const preview = await previewBundle(source.context, new Uint8Array(readFileSync(bundlePath)), password, transferCrypto);
     const outcomes = await importBundle(source.context, preview, transferCrypto);
     assert.ok(outcomes.every(item => ["applied", "duplicate"].includes(item.outcome)));
     const receipt = await exportReceipt(source.context, preview.batchId, password, transferCrypto);
-    assert.ok(receipt); const receiptPath = join(directory, "receipt.json"); writeFileSync(receiptPath, receipt.text);
+    assert.ok(receipt); const receiptPath = join(directory, "batch.kolo-receipt"); writeFileSync(receiptPath, receipt.bytes);
     await invoke(["exchange", "acknowledge", receiptPath, "--state", state, "--destination", destination]);
     assert.ok(JSON.parse(output).acknowledged > 0);
     assert.equal(source.database.get("SELECT selling_price_minor FROM products WHERE id=?", [productId])!["selling_price_minor"], 650);
@@ -107,14 +107,14 @@ test("headless till pairs across restarts, imports atomically, signs, exchanges,
     } finally { till.close(); }
     const vaultFiles = readdirSync(join(state, "vault"));
     for (const entry of vaultFiles) assert.equal(readFileSync(join(state, "vault", entry)).includes(Buffer.from("PRIVATE KEY")), false);
-    const liveBackup = join(directory, "live-backup.json");
+    const liveBackup = join(directory, "live.kolo-backup");
     await invoke(["backup", "--state", state, "--out", liveBackup]);
     assert.equal(await run(["backup", "verify", liveBackup], env, stdout), 0);
     // Owner changes authority; exchange imports those changes before the next write.
     revokePermission(source.context, source.installation.ownerId, "products.price");
     const sourceDestination = exchangeDestinations(source.context).find(peer => peer.deviceId === deviceId)!.id;
     const authority = await exportBundle(source.context, sourceDestination, password, transferCrypto);
-    assert.ok(authority); const authorityPath = join(directory, "authority.json"); writeFileSync(authorityPath, authority.text);
+    assert.ok(authority); const authorityPath = join(directory, "authority.kolo-exchange"); writeFileSync(authorityPath, authority.bytes);
     await invoke(["exchange", "import", authorityPath, "--state", state]);
     const denied = file("denied.json", { id: randomUUIDv7(), rows: [{ id: productId, sellingPriceMinor: 700 }] });
     await assert.rejects(invoke(["import", "prices", denied, "--state", state]), /permission_denied/);

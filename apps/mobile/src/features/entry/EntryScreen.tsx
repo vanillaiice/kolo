@@ -9,13 +9,13 @@ import { WorkspaceError, type InstallationState, type OperationContext, type Wor
 import type { AuthTransport } from "@kolo/core/data/auth/login";
 import type { Database } from "@kolo/core/data/database/driver";
 import type { SnapshotPort } from "@kolo/core/backup/types";
-import { cancelBackupPreview, previewBackup, restoreWorkspace, type BackupPreview } from "@kolo/core/application/backup";
+import { cancelBackupPreview, previewBackupFile, restoreWorkspace, type BackupPreview } from "@kolo/core/application/backup";
 import { acceptPairingInvite, cancelPairing, completePairing, previewPairingInvite } from "@kolo/core/application/pairing";
 import { JoinByCode } from "./JoinByCode.tsx";
-import { transferCryptoOnDevice as crypto } from "../../data/auth/local-credentials-on-device.ts";
-import { pickTransferFile, saveTransferFile } from "../../data/transfer/files-on-device.ts";
+import { sealingCryptoOnDevice as crypto } from "../../data/auth/local-credentials-on-device.ts";
+import { pickTransferFile, saveTransferFile, type PickedFile } from "../../data/transfer/files-on-device.ts";
 import { replaceShop } from "../../data/transfer/replace-shop.ts";
-import { transferFileKind } from "../../data/transfer/file-kind.ts";
+import { transferFileKind } from "@kolo/core/backup/file-kind";
 import type { SlotControl } from "../../data/database/open-on-device.ts";
 import type { BiometricUnlock } from "../../data/auth/biometric-unlock.ts";
 import { useText } from "../../app/i18n.tsx";
@@ -24,14 +24,16 @@ import { failureKey, FormProblem } from "../../components/command.tsx";
 import { AppearanceControl, LanguageControl } from "../../components/controls.tsx";
 import { spacing, useTheme } from "../../components/theme.ts";
 import { Button, Confirm, Field, ListRow, nextPaint, Notice, Page, RowGroup, Section, Toggle, useStyles, Working } from "../../components/ui.tsx";
+/** Largest file read whole: invitations and enrollments. Backups are read in pieces instead. */
+const SMALL_FILE_BYTES = 10 * 1024 * 1024;
 
 type Step =
   | { readonly name: "welcome" | "unlock" | "recover" | "pending" | "legacy" | "joining" | "import" | "joinCode" }
   | { readonly name: "create"; readonly part: 1 | 2 }
   | { readonly name: "recoveryKey"; readonly code: string; readonly context: OperationContext }
-  | { readonly name: "backup"; readonly text: string }
+  | { readonly name: "backup"; readonly file: PickedFile }
   | { readonly name: "restore"; readonly preview: BackupPreview }
-  | { readonly name: "invite"; readonly text: string; readonly invite: Awaited<ReturnType<typeof previewPairingInvite>> }
+  | { readonly name: "invite"; readonly file: Uint8Array; readonly invite: Awaited<ReturnType<typeof previewPairingInvite>> }
   | { readonly name: "requestReady"; readonly code: string; readonly document: Awaited<ReturnType<typeof acceptPairingInvite>>["document"] };
 
 /** Steps a fresh, locked, interrupted or legacy installation starts from. */
@@ -58,12 +60,13 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
   const [shop, setShop] = useState(""), [owner, setOwner] = useState(""), [customize, setCustomize] = useState(false);
   const [till, setTill] = useState(() => t("defaultTill")), [cash, setCash] = useState(() => t("defaultCash"));
   const [secret, setSecret] = useState(""), [confirmation, setConfirmation] = useState(""), [recovery, setRecovery] = useState("");
-  const [phone, setPhone] = useState(""), [serverPin, setServerPin] = useState(""), [password, setPassword] = useState(""), [typedName, setTypedName] = useState(""), [fingerprint, setFingerprint] = useState("");
+  const [phone, setPhone] = useState(""), [serverPin, setServerPin] = useState(""), [password, setPassword] = useState(""), [withKey, setWithKey] = useState(false), [typedName, setTypedName] = useState(""), [fingerprint, setFingerprint] = useState("");
   const [pairingCode, setPairingCode] = useState(""), [acknowledged, setAcknowledged] = useState(false), [replacing, setReplacing] = useState(false);
   const [working, setWorking] = useState<"workingReadFile" | "workingCheckBackup" | "workingRestore">();
   const [busy, setBusy] = useState(false), [failure, setFailure] = useState<unknown>(), [notice, setNotice] = useState<"recovered" | "joinCancelled" | "biometricGone">();
   const staged = useRef<BackupPreview | undefined>(undefined), mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; if (staged.current !== undefined) void cancelBackupPreview(staged.current); }, []);
+  const picked = useRef<PickedFile | undefined>(undefined);
+  useEffect(() => () => { mounted.current = false; void picked.current?.close(); if (staged.current !== undefined) void cancelBackupPreview(staged.current); }, []);
   const configured = state.state === "locked" || state.state === "unlocked";
   const shopName = state.state === "locked" || state.state === "unlocked" ? state.installation.businessName : undefined;
   const allActors = state.state === "locked" ? ports.database.all(`SELECT m.user_id, m.credential_reference, u.name FROM local_memberships m
@@ -130,7 +133,16 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
     clearSecrets();
     if (code === undefined) onUnlocked(context); else go({ name: "recoveryKey", code, context });
   };
-  const pick = async (): Promise<string | undefined> => systemUi(() => pickTransferFile());
+  /** Picks a file and keeps it open: a backup is read in pieces (ADR-035); the previous pick is closed. */
+  const pickFile = async (): Promise<PickedFile | undefined> => {
+    const file = await systemUi(() => pickTransferFile()); if (file === undefined) return undefined;
+    await picked.current?.close(); picked.current = file; return file;
+  };
+  /** Reads a small file (invitation, enrollment) whole and closes it. */
+  const pick = async (): Promise<Uint8Array | undefined> => {
+    const file = await systemUi(() => pickTransferFile()); if (file === undefined) return undefined;
+    try { return await file.bytes(SMALL_FILE_BYTES); } finally { await file.close(); }
+  };
   const discardPreview = async (): Promise<void> => { if (staged.current !== undefined) { const preview = staged.current; staged.current = undefined; await cancelBackupPreview(preview); } };
 
   const message = failure === undefined ? undefined : failure instanceof WorkspaceError && !["locked", "permission_denied"].includes(failure.code) ? workspaceErrorText(failure, language) : t(failureKey(failure));
@@ -223,18 +235,19 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
       <Text style={s.body}>{configured || state.state === "legacy" ? t("importBackupHelp") : t("importFileHelp")}</Text>
       <Text style={s.muted}>{t("importLimitsHelp")}</Text>
       <Button label={t("pickFile")} disabled={busy} onPress={() => { void run(async () => {
-        await showing("workingReadFile"); const text = await pick(); if (text === undefined) return;
-        const kind = transferFileKind(text);
-        if (kind === "backup") go({ name: "backup", text });
-        else if (kind === "invite") { if (state.state !== "empty") throw new FormProblem("inviteNeedsEmpty"); go({ name: "invite", text, invite: await previewPairingInvite(text, crypto) }); }
+        await showing("workingReadFile"); const file = await pickFile(); if (file === undefined) return;
+        const kind = transferFileKind(await file.read(0, Math.min(file.size, 128 * 1024)), crypto);
+        if (kind === "backup") go({ name: "backup", file });
+        else if (kind === "invite") { if (state.state !== "empty") throw new FormProblem("inviteNeedsEmpty"); const bytes = await file.bytes(SMALL_FILE_BYTES); go({ name: "invite", file: bytes, invite: await previewPairingInvite(bytes, crypto) }); }
         else throw new FormProblem("unrecognizedFile");
       }); }} />
     </Section>, { back: () => go(firstStep(state, ports.database)) });
 
     case "backup": return frame(t("importBackup"), <Section>
-      <Text style={s.body}>{t("backupPasswordHelp")}</Text><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
+      <Text style={s.body}>{t("backupPasswordHelp")}</Text><Field label={withKey ? t("recoveryKeyField") : t("filePassword")} value={password} onChange={setPassword} kind={withKey ? "text" : "secret"} />
+      <Toggle label={t("useRecoveryKey")} value={withKey} onChange={value => { setWithKey(value); setPassword(""); }} />
       <Button label={t("checkBackup")} disabled={busy || password === ""} onPress={() => { void run(async () => {
-        await showing("workingCheckBackup"); await discardPreview(); const preview = await previewBackup(step.text, password, files, crypto); setPassword("");
+        await showing("workingCheckBackup"); await discardPreview(); const preview = await previewBackupFile(step.file, withKey ? { recoveryKey: password } : password, files, crypto); setPassword("");
         if (!mounted.current) { await cancelBackupPreview(preview); return; }
         staged.current = preview; go({ name: "restore", preview });
       }); }} />
@@ -276,7 +289,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
       <Field label={t("deviceName")} value={till} onChange={setTill} />{secrets(true)}
       <Button label={t("acceptInvite")} busy={busy} disabled={fingerprint.trim() === "" || secret === ""} onPress={() => { void run(async () => {
         checkNewSecret();
-        const result = await acceptPairingInvite(step.text, { confirmedFingerprint: fingerprint.trim(), label: till.trim() || t("defaultSecondTill"), platform, secret }, ports, crypto);
+        const result = await acceptPairingInvite(step.file, { confirmedFingerprint: fingerprint.trim(), label: till.trim() || t("defaultSecondTill"), platform, secret }, ports, crypto);
         clearSecrets(); go({ name: "requestReady", code: result.verificationCode, document: result.document });
       }); }} />
     </Section>, { back: () => go({ name: "import" }) });
@@ -296,9 +309,9 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
         <Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
         <Field label={t("savedPairingCode")} value={pairingCode} onChange={setPairingCode} kind="code" />
         <Button label={t("pickOwnerFile")} busy={busy} disabled={password === "" || pairingCode.trim() === ""} onPress={() => { void run(async () => {
-          const text = await pick(); if (text === undefined) return;
-          if (transferFileKind(text) !== "enrollment") throw new FormProblem("unrecognizedFile");
-          const result = await completePairing(text, password, pairingCode.trim(), ports, files, crypto);
+          const file = await pick(); if (file === undefined) return;
+          if (transferFileKind(file, crypto) !== "enrollment") throw new FormProblem("unrecognizedFile");
+          const result = await completePairing(file, password, pairingCode.trim(), ports, files, crypto);
           clearSecrets(); onActivated(result.database);
         }); }} /></Section>
       <Button label={t("cancelPairing")} variant="danger" disabled={busy} onPress={() => { void run(async () => { cancelPairing(ports); setPairingCode(""); go({ name: "welcome" }); setNotice("joinCancelled"); onChanged(); }); }} />

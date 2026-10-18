@@ -33,8 +33,7 @@ export function Settings({ service, sessionId, canChangeFiles, canShopSettings, 
   const { t } = useText(), action = useAction();
   const preferences = useRead(() => service.sessionPreferences({ sessionId }), [service, sessionId]);
   const remember = (enabled: boolean): void => { void action.run(() => service.setRememberSession({ sessionId, enabled })).then(value => { if (value !== undefined) preferences.retry(); }); };
-  const large = useAction(), usage = useRead(() => canViewProducts ? service.photoUsage({ sessionId }) : Promise.resolve({ ok: true as const, value: undefined }), [service, sessionId, canViewProducts, preferences.data?.largeFiles]);
-  const setLarge = (enabled: boolean): void => { void large.run(() => service.setLargeFiles({ sessionId, enabled })).then(value => { if (value !== undefined) preferences.retry(); }); };
+  const usage = useRead(() => canViewProducts ? service.photoUsage({ sessionId }) : Promise.resolve({ ok: true as const, value: undefined }), [service, sessionId, canViewProducts]);
   // Kilobytes below a megabyte so a handful of thumbnails does not read as zero; French writes ko/Mo.
   const size = (bytes: number): string => { const megabyte = bytes >= 1024 * 1024, value = bytes / (megabyte ? 1024 * 1024 : 1024);
     return `${new Intl.NumberFormat(language === "fr" ? "fr-FR" : "en-GB", { maximumFractionDigits: 1 }).format(value)} ${language === "fr" ? megabyte ? "Mo" : "ko" : megabyte ? "MB" : "KB"}`; };
@@ -53,13 +52,9 @@ export function Settings({ service, sessionId, canChangeFiles, canShopSettings, 
           disabled={action.busy || preferences.data === undefined} onChange={event => remember(event.target.checked)}/>{t("rememberSession")}</label>
         <p className="hint">{t("rememberSessionHelp")}</p><ErrorText message={action.error ?? preferences.error}/>
       </div>
-      <div className="panel"><h2>{t("largeFiles")}</h2>
-        <label className="check" htmlFor="large-files"><input id="large-files" type="checkbox" checked={preferences.data?.largeFiles ?? false}
-          disabled={!canChangeFiles || large.busy || preferences.data === undefined} onChange={event => setLarge(event.target.checked)}/>{t("largeFilesLabel")}</label>
-        <p className="hint">{t("largeFilesHelp")}</p>{!canChangeFiles && <p className="hint">{t("ownerOnlySetting")}</p>}
-        {usage.data !== undefined && <p className="hint photo-usage">{usage.data.photos} {t(usage.data.photos === 1 ? "photoStored" : "photosStored")} · {size(usage.data.bytes)} / {size(usage.data.limitBytes)}</p>}
-        <ErrorText message={large.error}/>
-      </div>
+      {usage.data !== undefined && <div className="panel"><h2>{t("photoStorage")}</h2>
+        <p className="hint photo-usage">{usage.data.photos} {t(usage.data.photos === 1 ? "photoStored" : "photosStored")} · {size(usage.data.bytes)} / {size(usage.data.limitBytes)}</p>
+      </div>}
       <div className="panel"><h2 id="language-title">{t("language")}</h2><p className="hint">{t("languageHelp")}</p>
         <div className="segmented" role="radiogroup" aria-labelledby="language-title">{(["fr", "en"] as const).map(item =>
           <label key={item} className={language === item ? "selected" : ""}><input type="radio" name="language" value={item} checked={language === item} onChange={() => onLanguage(item)}/>{item === "fr" ? "Français" : "English"}</label>)}</div>

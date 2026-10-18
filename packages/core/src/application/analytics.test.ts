@@ -29,13 +29,14 @@ async function fixture() {
   const installation = await createWorkspace({ businessName: "Fixture", ownerName: "Owner", deviceLabel: "Till", platform: "ANDROID", currency: "XAF", secret }, ports);
   const context = await unlockWorkspace({ userId: installation.ownerId, secret }, ports);
   const account = queries.paymentAccounts(context).items[0]!;
-  const product = (name: string) => {
-    const id = randomUUIDv7(); commands.saveProduct(context, { id, name, unit: "unit", currency: "XAF", sellingPriceMinor: 500, purchasePriceMinor: 300, taxRateBasisPoints: 0, minimumStock: 0, divisible: true, active: true, createdAt: at, updatedAt: at }); return id;
+  /** A product whose cost is `purchasePriceMinor` (null: unknown); sales freeze it at checkout. */
+  const product = (name: string, purchasePriceMinor: number | null = 300) => {
+    const id = randomUUIDv7(); commands.saveProduct(context, { id, name, unit: "unit", currency: "XAF", sellingPriceMinor: 500, ...(purchasePriceMinor === null ? {} : { purchasePriceMinor }), taxRateBasisPoints: 0, minimumStock: 0, divisible: true, active: true, createdAt: at, updatedAt: at }); return id;
   };
   const customer = (name: string) => { const id = randomUUIDv7(); commands.saveCustomer(context, { id, name, active: true, createdAt: at, updatedAt: at }); return id; };
-  /** One paid sale; lines are [product, unit price, thousandths, unit cost?]. */
-  const sell = (occurredAt: string, lines: readonly (readonly [string, number, number, number?])[], options: { discountMinor?: number; customerId?: string } = {}) => {
-    const id = randomUUIDv7(), items = lines.map(([productId, unitPriceMinor, quantity, unitCostMinor]) => ({ id: randomUUIDv7(), movementId: randomUUIDv7(), productId, name: "Sold as", unitPriceMinor, quantity, ...(unitCostMinor === undefined ? {} : { unitCostMinor }) }));
+  /** One paid sale; lines are [product, unit price, thousandths]. */
+  const sell = (occurredAt: string, lines: readonly (readonly [string, number, number])[], options: { discountMinor?: number; customerId?: string } = {}) => {
+    const id = randomUUIDv7(), items = lines.map(([productId, unitPriceMinor, quantity]) => ({ id: randomUUIDv7(), movementId: randomUUIDv7(), productId, name: "Sold as", unitPriceMinor, quantity }));
     const total = lines.reduce((sum, [, price, quantity]) => sum + Math.floor((price * quantity + 500) / 1000), 0) - (options.discountMinor ?? 0);
     commands.completeSale(context, { id, number: id, lines: items, payments: [{ id: randomUUIDv7(), accountId: account.id, amountMinor: total }], occurredAt, eventId: randomUUIDv7(), ...options });
     return { id, items };
@@ -79,8 +80,8 @@ describe("bucket keys", () => {
 describe("analytics over recorded sales", () => {
   it("sums a profit trend to exactly the period's profit, with discounts, uncosted lines and returns", async () => {
     const f = await fixture(), rice = f.product("Rice"), oil = f.product("Oil");
-    const first = f.sell("2026-10-02T10:00:00.000Z", [[rice, 500, 3_000, 300], [oil, 1_250, 1_500]], { discountMinor: 7 });
-    f.sell("2026-10-09T15:30:00.000Z", [[rice, 333, 2_500, 101]]);
+    const first = f.sell("2026-10-02T10:00:00.000Z", [[rice, 500, 3_000], [oil, 1_250, 1_500]], { discountMinor: 7 });
+    f.sell("2026-10-09T15:30:00.000Z", [[rice, 333, 2_500]]);
     f.giveBack(first.id, first.items[0]!.id, 1_000, "2026-10-10T08:00:00.000Z");
     // October in Douala, as the screen computes it from local calendar days.
     const from = "2026-09-30T23:00:00.000Z", to = "2026-10-31T23:00:00.000Z";
@@ -131,9 +132,9 @@ describe("analytics over recorded sales", () => {
   });
 
   it("ranks products by takings net of their returns, including products only returned", async () => {
-    const f = await fixture(), rice = f.product("Rice"), oil = f.product("Oil"), salt = f.product("Salt");
-    const september = f.sell("2026-09-20T10:00:00.000Z", [[salt, 200, 5_000, 120]]);
-    const october = f.sell("2026-10-02T10:00:00.000Z", [[rice, 500, 4_000, 300], [oil, 1_000, 1_000]]);
+    const f = await fixture(), rice = f.product("Rice"), oil = f.product("Oil", null), salt = f.product("Salt", 120);
+    const september = f.sell("2026-09-20T10:00:00.000Z", [[salt, 200, 5_000]]);
+    const october = f.sell("2026-10-02T10:00:00.000Z", [[rice, 500, 4_000], [oil, 1_000, 1_000]]);
     f.sell("2026-10-03T10:00:00.000Z", [[oil, 1_000, 3_000]]);
     f.giveBack(october.id, october.items[0]!.id, 1_000, "2026-10-04T10:00:00.000Z");
     f.giveBack(september.id, september.items[0]!.id, 2_000, "2026-10-04T11:00:00.000Z");

@@ -102,6 +102,12 @@ around that warning. The Windows signing options are those described in
 Rebar Studio's releasing guide (SignPath Foundation, Azure Trusted Signing, an OV certificate).
 The APK uses generated test signing; a Play Store identity is not configured.
 
+**Android app ID.** Since 2026-10-17 the APK is `xyz.hblabs.kolo` (reverse of kolo.hblabs.xyz); releases up to 0.4.1
+were `cm.kolo.app`. Android treats them as two apps: a phone with an older KOLO keeps it, and the new release installs
+beside it instead of updating it. To move a shop, make an encrypted backup in the old app, restore it in the new one,
+then uninstall the old app. The ID can never change once the app is on the Play Store. The desktop ID stays
+`com.hblabs.kolo`: Windows ties installer upgrades to it.
+
 KOLO has no in-app updater: users install the next version over the old one (see
 [desktop release](implementation/desktop-release.md)). The release carries `latest*.yml` so an
 updater can be added later. Shared tags use the standard `v` prefix; an updater would

@@ -321,3 +321,41 @@ it("tax settings, product tax rules and payment terms relay under last-write-win
   badTerms.event_id = randomUUIDv7(); badTerms.origin_sequence = 901; badTerms.payload = { party: "CUSTOMER", days: null, updated_at: "2026-10-06T08:00:00.000Z" };
   assert.equal(applyEvent(b.context, await verifyEvent(b.context, await signed(a, badTerms), crypto)), "quarantined", "a shop default must have days");
 });
+
+it("a sale at a price the catalogue held replays after a later repricing; an unclaimed override stays quarantined", async () => {
+  const [a,b] = await replicas() as [Replica,Replica], p = product(a), later = "2026-10-06T07:00:00.000Z";
+  await send(a,b);
+  commands.saveProduct(b.context, { id: p, name: "Rice", unit: "bag", divisible: false, active: true, sellingPriceMinor: 600, purchasePriceMinor: 300, currency: "XAF", taxRateBasisPoints: 0, minimumStock: 0, createdAt: at, updatedAt: later });
+  const sold = sale(a,p), batch = await send(a,b), event = batch.batch.events.find(e => e.envelope.event_type === "SALE_COMPLETED")!;
+  assert.deepEqual(event.envelope.required_permissions, ["sales.create"]);
+  assert.equal(b.db.get(`SELECT status FROM applied_events WHERE event_id=?`, [event.envelope.event_id])!["status"], "applied");
+  assert.equal(b.db.get(`SELECT unit_price_minor AS price FROM sale_items WHERE sale_id=?`, [sold])!["price"], 500);
+  assert.equal(stockOf(b.db,b.install.businessId,p).onHandThousandths, -1000);
+
+  // A price no signed catalogue fact ever set still needs the override its signer claimed.
+  const id = randomUUIDv7();
+  commands.completeSale(a.context, { id, number: `V-${id}`, eventId: randomUUIDv7(), occurredAt: at, lines: [{ id: randomUUIDv7(), movementId: randomUUIDv7(), productId: p, name: "Rice", unitPriceMinor: 450, quantity: 1000 }], payments: [{ id: randomUUIDv7(), accountId: account(a), amountMinor: 450 }] });
+  await sealPendingEvents(a.context, crypto);
+  const override = eventsForDestination(a.context, dest(a,b)).find(e => e.envelope.event_type === "SALE_COMPLETED" && (e.envelope.payload["sale"] as { id: string }).id === id)!;
+  assert.ok(override.envelope.required_permissions.includes("sales.price_override"));
+  const unclaimed = structuredClone(override.envelope); unclaimed.required_permissions = ["sales.create"];
+  assert.equal(applyEvent(b.context, await verifyEvent(b.context, await signed(a, unclaimed), crypto)), "quarantined");
+  assert.equal(b.db.get(`SELECT reason FROM applied_events WHERE event_id=?`, [unclaimed.event_id])!["reason"], "permission_denied");
+  assert.equal(count(b,"sales"), 1);
+});
+
+it("change kept on account travels as an ordinary customer payment and reads back on the other till's receipt", async () => {
+  const [a,b] = await replicas() as [Replica,Replica], p = product(a), customer = randomUUIDv7(), id = randomUUIDv7();
+  commands.saveCustomer(a.context, { id: customer, name: "Awa", active: true, createdAt: at, updatedAt: at });
+  commands.completeSale(a.context, { id, number: `V-${id}`, eventId: randomUUIDv7(), occurredAt: at, customerId: customer,
+    lines: [{ id: randomUUIDv7(), movementId: randomUUIDv7(), productId: p, name: "Rice", unitPriceMinor: 500, quantity: 1000 }], payments: [{ id: randomUUIDv7(), accountId: account(a), amountMinor: 500 }] },
+  { id: randomUUIDv7(), eventId: randomUUIDv7(), accountId: account(a), amountMinor: 500 });
+  const batch = await send(a,b);
+  assert.deepEqual(batch.batch.events.map(e => e.envelope.event_type).filter(type => ["SALE_COMPLETED","CUSTOMER_PAYMENT"].includes(type)), ["SALE_COMPLETED","CUSTOMER_PAYMENT"]);
+  for (const r of [a,b]) {
+    assert.equal(r.db.get(`SELECT sum(amount_minor) AS n FROM customer_transactions WHERE customer_id=?`, [customer])!["n"], -500, "the same advance on both tills");
+    assert.equal(queries.receipt(r.context, id).changeKeptMinor, 500);
+    assert.equal(balanceOfAccount(r.db, r.install.businessId, account(r)).onHandMinor, 1000);
+  }
+  assert.deepEqual(b.db.all(`SELECT a.status FROM applied_events a JOIN event_journal e ON e.event_id=a.event_id WHERE e.provenance='received' AND a.status<>'applied'`), []);
+});

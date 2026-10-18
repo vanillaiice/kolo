@@ -28,8 +28,13 @@ export function transferErrorKey(error: unknown): TextKey {
   const keys: Record<string, TextKey> = {
     authentication_failed: "transferError.authentication_failed",
     invalid_password: "transferError.invalid_password",
+    invalid_recovery_key: "transferError.invalid_recovery_key",
+    recovery_key_required: "transferError.recovery_key_required",
+    untrusted_backup: "transferError.untrusted_backup",
     invalid_file: "transferError.invalid_file",
     invalid_snapshot: "transferError.invalid_snapshot",
+    inconsistent_records: "transferError.inconsistent_records",
+    sync_keys_unavailable: "transferError.sync_keys_unavailable",
     too_large: "transferError.too_large",
     scope_mismatch: "transferError.scope_mismatch",
     confirmation_required: "transferError.confirmation_required",

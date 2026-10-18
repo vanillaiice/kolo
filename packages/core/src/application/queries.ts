@@ -2,7 +2,7 @@ import { categoryOf, type Category } from "../data/products/categories.ts";
 import type { Queryable, Row, SqlValue } from "../data/database/driver.ts";
 import { fullTextQuery, likePattern } from "../data/database/search.ts";
 import { productOf, productByBarcode, type Product } from "../data/products/products.ts";
-import { customerOf, balanceOf, type Customer } from "../data/customers/customers.ts";
+import { customerOf, balanceOf, changeKeptOnAccount, type Customer } from "../data/customers/customers.ts";
 import { supplierOf, balanceOfSupplier, type Supplier } from "../data/suppliers/suppliers.ts";
 import { accountOf, type Account } from "../data/finance/accounts.ts";
 import { balanceOfAccount } from "../data/finance/cash.ts";
@@ -131,6 +131,8 @@ export interface Receipt {
    * label and registration number. Absent when no line carried tax.
    */
   readonly tax?: { readonly label: string; readonly registration?: string | undefined; readonly groups: readonly TaxGroup[] } | undefined;
+  /** Change the customer left on their account at this sale, as an advance. Absent when none was kept. */
+  readonly changeKeptMinor?: number | undefined;
 }
 function salesAuthority(tx: Queryable, context: OperationContext): boolean {
   const permissions = memberPermissions(activeMember(tx, context, context.userId));
@@ -167,7 +169,8 @@ function receiptOf(tx: Queryable, businessId: string, row: Row, withCustomerAcco
     const settings = taxSettings(tx, businessId), groups = saleTaxGroups(lines.map((line, index) => ({ ...line, taxRateBasisPoints: rates[index]! })), discountMinor).filter(group => group.rateBasisPoints > 0);
     tax = { label: settings.label, ...(settings.registration === undefined ? {} : { registration: settings.registration }), groups };
   }
-  return { ...(tax === undefined ? {} : { tax }), id: saleId, number: String(row["number"]), occurredAt: String(row["occurred_at"]), customerName: typeof row["customer_name"] === "string" ? row["customer_name"] : undefined,
+  const changeKeptMinor = changeKeptOnAccount(tx, businessId, { customerId: typeof row["customer_id"] === "string" ? row["customer_id"] : null, number: String(row["number"]), occurredAt: String(row["occurred_at"]) });
+  return { ...(tax === undefined ? {} : { tax }), ...(changeKeptMinor > 0 ? { changeKeptMinor } : {}), id: saleId, number: String(row["number"]), occurredAt: String(row["occurred_at"]), customerName: typeof row["customer_name"] === "string" ? row["customer_name"] : undefined,
     returnedMinor: sqlInteger(tx.get(`SELECT coalesce(sum(total_minor),0) AS total FROM business_returns WHERE business_id=? AND kind='SALE' AND original_id=?`,[businessId,saleId])!["total"]!),
     lines, payments, discountMinor, ...(customerAccount === undefined ? {} : { customerAccount }), ...saleTotals({ lines, payments, discountMinor, customerId: typeof row["customer_id"] === "string" ? row["customer_id"] : undefined }) };
 }

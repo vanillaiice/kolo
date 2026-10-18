@@ -9,14 +9,13 @@ import { createWorkspace, unlockWorkspace } from "@kolo/core/identity/workspace"
 import { saveProduct, adjustStock, completeSale } from "@kolo/core/application/operations";
 import { createBackup } from "@kolo/core/application/backup";
 import { sealPendingEvents } from "@kolo/core/application/exchange";
-import { LARGE_TRANSFER_LIMITS } from "@kolo/core/backup/types";
 import { fixtureCrypto, transferCrypto } from "./crypto.ts";
 
 export interface FixtureOptions { products: number; sales: number; days: number; seed: number; name: string; password: string }
 /** Signed fixtures exercise the same authorized operations as the apps, in a fresh shop only. */
-export async function generateFixture(options: FixtureOptions): Promise<{ text: string; products: number; sales: number; elapsedMs: number }> {
+export async function generateFixture(options: FixtureOptions): Promise<{ bytes: Uint8Array; products: number; sales: number; elapsedMs: number }> {
   const start = performance.now(), directory = mkdtempSync(join(tmpdir(), "kolo-cli-fixture-"));
-  const files = nodeWorkspaceFiles(directory, { limits: () => LARGE_TRANSFER_LIMITS });
+  const files = nodeWorkspaceFiles(directory);
   const database = files.openActive();
   const secrets = new Map<string, string>();
   let clock = new Date(Date.UTC(2026, 0, 1)).toISOString(), seed = options.seed;
@@ -50,7 +49,7 @@ export async function generateFixture(options: FixtureOptions): Promise<{ text: 
       if ((i + 1) % 1000 === 0) await seal();
     }
     const document = await createBackup(context, options.password, files, transferCrypto);
-    return { text: document.text, products: options.products, sales: options.sales, elapsedMs: Math.round(performance.now() - start) };
+    return { bytes: document.bytes, products: options.products, sales: options.sales, elapsedMs: Math.round(performance.now() - start) };
   } finally {
     secrets.clear(); database.close(); files.close(); rmSync(directory, { recursive: true, force: true });
   }

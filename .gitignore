@@ -43,3 +43,6 @@ release/
 
 # Generated demo shop backups (npm run demo:desktop)
 /kolo-demo/
+
+# Private business plans, financial projections and generated PDFs
+/business/

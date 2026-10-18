@@ -23,7 +23,7 @@ class DesktopApplication implements ShopService {
   constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & {
     readonly onActivated: (database: Database) => Promise<void>;
     readonly onReset?: () => void;
-}, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences(), syncTransport: (url: string) => SyncTransport = sync.httpTransport);
+}, memory?: SessionMemory, syncTransport: (url: string) => SyncTransport = sync.httpTransport);
   /** Completes durable secret/SQLite crash gaps before exposing the locked installation. */
   initialize(): Promise<void>;
   /** Automatic lock from the host. "away" (minimize, suspend, OS lock) is skipped while the user
@@ -55,8 +55,6 @@ class DesktopApplication implements ShopService {
   lock(): Promise<Result<WorkspaceView>>;
   sessionPreferences(input: unknown): Promise<Result<SessionPreferences>>;
   setRememberSession(input: unknown): Promise<Result<SessionPreferences>>;
-  /** Owner switch for this computer's transfer-file and photo-storage limits. */
-  setLargeFiles(input: unknown): Promise<Result<SessionPreferences>>;
   /** Erases this computer's shops after the typed shop name and the owner's code. The session is locked
    * and the remembered user forgotten before the host deletes files, after this command has answered. */
   resetComputer(input: unknown): Promise<Result<null>>;
@@ -76,7 +74,7 @@ class DesktopApplication implements ShopService {
   setProductPhoto(input: unknown): Promise<Result<ProductView>>;
   /** Removes a product's photo under products.edit. */
   removeProductPhoto(input: unknown): Promise<Result<ProductView>>;
-  /** Photo storage against this computer's limit. */
+  /** Photo storage against the shop's limit. */
   photoUsage(input: unknown): Promise<Result<PhotoUsage>>;
   /** Creates product and optional opening stock in one transaction; safe matching retries reuse the product ID. */
   createProduct(input: unknown): Promise<Result<ProductView>>;
@@ -101,8 +99,9 @@ class DesktopApplication implements ShopService {
   listCashAccounts(input: unknown): Promise<Result<Page<{ readonly id: string; readonly name: string; }>>>;
   /** Account names and kinds for payments; balances stay behind finance authority. */
   listPaymentAccounts(input: unknown): Promise<Result<Page<PaymentAccountView>>>;
-  /** Host-bound atomic sale with split payments and optional customer credit. Matching retries
-   * (same actor, lines, payments and customer) return the original ID; differing content is refused.
+  /** Host-bound atomic sale with split payments and optional customer credit. `keptChangeMinor` puts the named
+   * customer's change on their account (into the sale's first cash account, under customers.pay). Matching retries
+   * (same actor, lines, payments, customer and kept change) return the original ID; differing content is refused.
    * The legacy `accountId` form records the exact total in one active cash account. */
   checkout(input: unknown): Promise<Result<{ readonly saleId: string; }>>;
   /** Bounded customers with balances under customers.view. */
@@ -165,6 +164,12 @@ class DesktopApplication implements ShopService {
   setStaffPermission(input: unknown): Promise<Result<StaffView>>;
   setStaffActive(input: unknown): Promise<Result<StaffView>>;
   resetStaffSecret(input: unknown): Promise<Result<StaffView>>;
+  /** The shop's pinned backup recovery keys (ADR-036), newest first; owner settings access. */
+  backupKeys(input: unknown): Promise<Result<readonly BackupKeyView[]>>;
+  /** Creates a backup recovery key after a fresh owner PIN and returns it to show once; nothing is pinned yet. */
+  prepareBackupKey(input: unknown): Promise<Result<PendingBackupKeyView>>;
+  /** Pins the prepared key once the owner typed back the requested groups, then forgets it; a mistyped group can be retried. */
+  confirmBackupKey(input: unknown): Promise<Result<BackupKeyView>>;
   /** Backup, pairing and exchange through native dialogs; see transfer.ts. File work is single-flight. */
   discardFile(): Promise<Result<null>>;
   saveBackup(input?: unknown): Promise<Result<SavedFile>>;
@@ -486,32 +491,6 @@ class LocalNetwork {
 }
 ```
 
-## [apps/desktop/src/electron/preferences.ts](../../apps/desktop/src/electron/preferences.ts)
-
-Per-computer settings that are not business data and must never travel in a backup. Today only
-the large-files switch: off by default, it lifts transfer-file and photo-storage limits for
-computers with memory to spare (ADR-027).
-
-```ts
-export interface DevicePreferences {
-    largeFiles(): boolean;
-    setLargeFiles(value: boolean): void;
-    limits(): TransferLimits;
-}
-```
-
-File-backed preferences; a missing or damaged file reads as the defaults.
-
-```ts
-devicePreferences(path: string): DevicePreferences;
-```
-
-In-memory preferences for tests and smoke runs.
-
-```ts
-memoryPreferences(initial = false): DevicePreferences;
-```
-
 ## [apps/desktop/src/electron/purchasing.ts](../../apps/desktop/src/electron/purchasing.ts)
 
 Bounded suppliers with payables under suppliers.view.
@@ -622,6 +601,16 @@ Records a compensating return named by the request ID; stale predecessors are re
 
 ```ts
 recordReturn(host: Host, input: unknown): { readonly returnId: string; };
+```
+
+## [apps/desktop/src/electron/self-check.ts](../../apps/desktop/src/electron/self-check.ts)
+
+The desktop runtime checks itself: every crypto primitive against known answers in Electron's BoringSSL, and its
+storage path (node:sqlite, every migration, the snapshot copy in a worker thread loaded from inside the asar).
+`--self-check` runs this in a packaged build; electron-runtime.test.ts runs it in the test suite.
+
+```ts
+desktopSelfCheck(): Promise<PlatformCheck>;
 ```
 
 ## [apps/desktop/src/electron/server-sync.ts](../../apps/desktop/src/electron/server-sync.ts)
@@ -785,32 +774,69 @@ resetStaffSecret(host: Host, input: unknown): Promise<StaffView>;
 
 ## [apps/desktop/src/electron/transfer-files.ts](../../apps/desktop/src/electron/transfer-files.ts)
 
-Reads a selected regular file through one descriptor, capped (standard profile by default) even if it grows after the initial stat.
+Reads a selected regular file's bytes through one descriptor, capped even if it grows after the initial stat.
 
 ```ts
-readBoundedTransferFile(path: string, maximum: number = MAX_TRANSFER_FILE_BYTES): string;
+readBoundedTransferFile(path: string, maximum: number = MAX_TRANSFER_FILE_BYTES): Uint8Array<ArrayBufferLike>;
+```
+
+Opens a selected regular file for reading in pieces (ADR-035): a backup is never read whole. The size is fixed when the
+file is opened; reading past it is refused, so a file that grows afterwards cannot feed more than was checked.
+
+```ts
+openTransferFile(path: string, maximum: number = MAX_TRANSFER_FILE_BYTES): Promise<PickedFile>;
 ```
 
 Main-process native picker. Renderer IPC must authenticate its caller before invoking this adapter (F5).
 
 ```ts
-pickDesktopTransferFile(native: Pick<Dialog, "showOpenDialog">, maximum: number = MAX_TRANSFER_FILE_BYTES): Promise<string>;
+pickDesktopTransferFile(native: Pick<Dialog, "showOpenDialog">, maximum: number = MAX_TRANSFER_FILE_BYTES): Promise<PickedFile>;
 ```
 
-Main-process save dialog; writes only a newly created selected file, never overwrites an existing business database.
+Main-process save dialog; publishes only a complete new selected file, never overwrites an existing business database.
 
 ```ts
 saveDesktopTransferFile(document: TransferDocument, native: Pick<Dialog, "showSaveDialog">, maximum: number = MAX_TRANSFER_FILE_BYTES): Promise<boolean>;
 ```
 
+Removes temporary files an interrupted streamed save left in the private outgoing directory.
+
+```ts
+clearOutgoing(directory: string): void;
+```
+
+Streams a large file (a backup) into a new private temporary file under `directory`, synced to disk, then offers it in
+the save dialog and copies it chunk by chunk beside the chosen destination, publishing it whole only once synced and
+never overwriting one. Temporary files are removed whatever happens, so an interrupted or failed save never leaves a
+half-written file under a finished backup's name where the owner keeps backups.
+
+```ts
+saveDesktopTransferStream(write: (sink: ByteSink) => Promise<string>, native: Pick<Dialog, "showSaveDialog">, directory: string, maximum: number = MAX_TRANSFER_FILE_BYTES): Promise<boolean>;
+```
+
 ## [apps/desktop/src/electron/transfer.ts](../../apps/desktop/src/electron/transfer.ts)
+
+A file the owner picked, read by the main process in pieces; closing it releases the file.
+
+```ts
+export interface PickedFile extends ByteReader {
+    close(): Promise<void>;
+}
+```
+
+A picked file already in memory (tests, smoke runs).
+
+```ts
+pickedBytes(bytes: Uint8Array): PickedFile;
+```
 
 Native file access stays in the main process; the renderer never supplies paths or contents.
 
 ```ts
 export interface TransferDialogs {
-    open(): Promise<string | undefined>;
+    open(): Promise<PickedFile | undefined>;
     save(document: TransferDocument): Promise<boolean>;
+    saveStream?(write: (sink: ByteSink) => Promise<string>): Promise<boolean>;
 }
 ```
 
@@ -845,14 +871,14 @@ export type StagedFile = {
     readonly preview: BackupPreview;
 } | {
     readonly kind: "invite";
-    readonly text: string;
+    readonly file: Uint8Array;
 } | {
     readonly kind: "picked";
     readonly fileKind: ImportKind;
-    readonly text: string;
+    readonly file: PickedFile;
 } | {
     readonly kind: "request";
-    readonly text: string;
+    readonly file: Uint8Array;
 } | {
     readonly kind: "bundle";
     readonly preview: BundlePreview;
@@ -883,9 +909,13 @@ Import screen: one file dialog for a backup or an invite; the caller continues w
 chooseImportFile(host: TransferHost, input: unknown): Promise<{ readonly kind: ImportKind; }>;
 ```
 
+Streams the backup into a private temporary file, then offers it in the save dialog (ADR-035): memory stays a few MiB.
+
 ```ts
 saveBackup(host: TransferHost, input: unknown): Promise<SavedFile>;
 ```
+
+Opens the chosen backup with its password or with the shop's backup recovery key, exactly one of them (ADR-036).
 
 ```ts
 openBackup(host: TransferHost, input: unknown): Promise<BackupFileView>;
@@ -956,7 +986,7 @@ openImportReceipt(host: TransferHost, input: unknown): Promise<{ readonly record
 retryExchange(host: TransferHost, input: unknown): Promise<{ readonly applied: number; }>;
 ```
 
-Discards a staged backup snapshot; other staged kinds hold only text.
+Discards a staged backup snapshot and closes a picked file; other staged kinds hold only bytes.
 
 ```ts
 release(file: StagedFile | undefined): Promise<void>;
@@ -1008,10 +1038,12 @@ page(input: Record<string, unknown>): PageQuery;
 
 ## [apps/desktop/src/electron/workflow-smoke.ts](../../apps/desktop/src/electron/workflow-smoke.ts)
 
-Fixture dialogs: saved transfer documents stay in memory and "open" returns the latest one.
+Fixture dialogs: only the OS dialog is replaced. Saves and opens go through the same adapters as the app (a streamed
+backup into a private temporary file, synced, then copied into a new file; files read in pieces), into the smoke
+directory. "Open" returns the latest saved file, or the last backup from an earlier phase.
 
 ```ts
-smokeDialogs(): TransferDialogs;
+smokeDialogs(outgoing: string): TransferDialogs;
 ```
 
 Disposable actual Electron DOM/IPC/native-vault workflow; invoked only by the explicit smoke flag.
@@ -1025,7 +1057,7 @@ runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void>;
 Stable application failures; native exception text, credentials and paths never cross the bridge.
 
 ```ts
-export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" | "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "invalid_photo" | "photo_storage_full" | "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" | "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" | "no_server" | "join_not_found" | "join_conflict";
+export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" | "invalid_file" | "too_large" | "invalid_password" | "invalid_recovery_key" | "recovery_key_required" | "untrusted_backup" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "sync_keys_unavailable" | "inconsistent_records" | "invalid_photo" | "photo_storage_full" | "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" | "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" | "no_server" | "join_not_found" | "join_conflict";
 ```
 
 Serializable results make transport and operation failures explicit.
@@ -1209,6 +1241,7 @@ export interface CheckoutRequest extends SessionRequest {
     readonly customerId?: string;
     readonly expectedCustomerBalanceMinor?: number;
     readonly discountMinor?: number;
+    readonly keptChangeMinor?: number;
     readonly lines: readonly {
         readonly productId: string;
         readonly quantity: number;
@@ -1693,14 +1726,32 @@ export interface NotificationsView {
 
 Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it.
 
-Per-computer session behaviour.
+A pinned backup recovery key: its ID, version, creation date and whether new backups seal to it.
 
-Per-computer preferences. `largeFiles` lifts transfer-file and photo-storage limits for powerful computers.
+```ts
+export interface BackupKeyView {
+    readonly keyId: string;
+    readonly version: number;
+    readonly createdAt: string;
+    readonly current: boolean;
+}
+```
+
+A backup recovery key to show once: its 14 groups, its ID and the 0-based groups the owner must type back.
+
+```ts
+export interface PendingBackupKeyView {
+    readonly text: string;
+    readonly keyId: string;
+    readonly confirm: readonly number[];
+}
+```
+
+Per-computer session behaviour.
 
 ```ts
 export interface SessionPreferences {
     readonly rememberSession: boolean;
-    readonly largeFiles: boolean;
 }
 ```
 
@@ -1787,9 +1838,6 @@ export interface ShopService {
     }): Promise<Result<WorkspaceView>>;
     sessionPreferences(input: SessionRequest): Promise<Result<SessionPreferences>>;
     setRememberSession(input: SessionRequest & {
-        readonly enabled: boolean;
-    }): Promise<Result<SessionPreferences>>;
-    setLargeFiles(input: SessionRequest & {
         readonly enabled: boolean;
     }): Promise<Result<SessionPreferences>>;
     resetComputer(input: SessionRequest & {
@@ -2018,7 +2066,16 @@ export interface ShopService {
     }>>;
     openBackup(input: {
         readonly password: string;
+    } | {
+        readonly recoveryKey: string;
     }): Promise<Result<BackupFileView>>;
+    backupKeys(input: SessionRequest): Promise<Result<readonly BackupKeyView[]>>;
+    prepareBackupKey(input: SessionRequest & {
+        readonly secret: string;
+    }): Promise<Result<PendingBackupKeyView>>;
+    confirmBackupKey(input: SessionRequest & {
+        readonly groups: readonly string[];
+    }): Promise<Result<BackupKeyView>>;
     restoreBackup(input: {
         readonly sessionId?: string;
         readonly confirmedName: string;
@@ -2341,11 +2398,14 @@ export interface CodeView {
     readonly shopId: string | null;
     readonly shopName: string | null;
     readonly includedMonths: number;
+    readonly recoveryShopId: string | null;
 }
 ```
 
 Issues a single-use connection code for one shop. The string carries the server's public address, its fingerprint
 and a 128-bit token, so the owner pastes or scans one thing and never retypes a fingerprint (ADR-030).
+With `recoveryShopId` it is an owner-recovery code (ADR-036): it can only attach a restored owner device to that
+existing shop after every till was lost, and never creates a shop. Issue one only after confirming the owner.
 
 ```ts
 issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publicUrl: string, actor: Actor, input: {
@@ -2353,6 +2413,7 @@ issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publicUrl: string, actor: 
     readonly days: number;
     readonly now: Date;
     readonly includedMonths?: number;
+    readonly recoveryShopId?: string;
 }): Promise<IssuedCode>;
 ```
 
@@ -2756,6 +2817,7 @@ export interface ServerDatabase {
         used_by: string | null;
         cancelled_at: Date | null;
         included_months: Generated<number>;
+        recovery_business_id: string | null;
     };
     join_sessions: {
         join_id: string;
@@ -3103,8 +3165,9 @@ createChallenge(relay: Relay, input: ChallengeRequest): Promise<{ challenge_id: 
 
 Attaches an existing local shop, keeping its IDs. The claim must be signed by the device key it names, and a new
 shop needs an unused, unexpired, uncancelled single-use connection code, which is consumed in the same transaction.
-Re-enrolling from the same authority device is idempotent and needs no code, so a lost response is harmless; any
-other device claiming an enrolled shop is a conflict for the owner to resolve.
+Re-enrolling from the same authority device is idempotent and needs no code, so a lost response is harmless. Another
+device claiming an enrolled shop is a conflict, unless it brings an owner-recovery code issued for exactly that shop
+and names its owner (ADR-036): the restored owner device is then added as an authority device.
 
 ```ts
 enroll(relay: Relay, input: EnrollmentRequest): Promise<void>;
@@ -3151,9 +3214,11 @@ A signed receipt acknowledges exactly the stored and duplicate digests; nothing 
 push(relay: Relay, scope: Scope, signed: SignedSyncBatch): Promise<{ results: { event_id: string; status: "stored" | "duplicate" | "rejected"; code?: "scope_mismatch" | "invalid_event" | "untrusted_device" | "invalid_signature" | "event_identity_conflict" | "plaintext_refused"; retry?: boolean; }[]; receipt?: { ...; }; }>;
 ```
 
-A bounded, server-signed page of facts this device has not acknowledged, oldest first, with every
-original proof intact. The cursor only pages within one pass; unacknowledged facts are offered again
-on the next pass from the start, so a fact skipped by the device is never lost behind a cursor.
+A bounded, server-signed page of facts this device has not acknowledged, with every original proof intact. Each pass
+offers the clear trust, key and address facts first, then the sealed ones, each oldest first: a new till cannot open
+the sealed backlog until it holds its shop-key grant, so the grant must never wait behind it. The cursor only pages
+within one pass; unacknowledged facts are offered again on the next pass from the start, so a fact skipped by the
+device is never lost behind a cursor.
 
 ```ts
 pull(relay: Relay, scope: Scope, cursor: string | undefined, limit: number): Promise<{ has_more: boolean; batch?: { batch: { format: "kolo.sync-batch"; format_version: 1; batch_id: string; business_id: string; sender_device_id: string; receiver_device_id: string; created_at: string; events: ({ ...; } | { ...; })[]; }; digest: string; signature: string; }; cursor?: string; }>;
@@ -3273,7 +3338,7 @@ receiptSigningMessage(receipt: PeerReceipt): string;
 Strict v2 payload schemas for every current business/authority event. No credentials/tokens.
 
 ```ts
-const EVENT_PAYLOAD_SCHEMAS: { readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly PURCHASE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly CATEGORY_SAVED: ZodObject<{ category: ZodObject<{ id: ZodUUID; name: ZodString; active: ZodBoolean; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_SAVED: ZodObject<{ product: ZodObject<{ id: ZodUUID; category_id: ZodOptional<ZodUUID>; name: ZodString; unit: ZodString; selling_price_minor: ZodNumber; purchase_price_minor: ZodOptional<ZodNumber>; sku: ZodOptional<ZodString>; barcode: ZodOptional<ZodString>; description: ZodOptional<ZodString>; brand: ZodOptional<ZodString>; divisible: ZodOptional<ZodBoolean>; active: ZodOptional<ZodBoolean>; tax_rate_basis_points: ZodOptional<ZodNumber>; minimum_stock: ZodOptional<ZodNumber>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_CATEGORIES_SET: ZodObject<{ product_id: ZodUUID; category_ids: ZodArray<ZodUUID>; updated_at: ZodISODateTime; }, $strict>; readonly TAX_SETTINGS_SET: ZodObject<{ enabled: ZodBoolean; label: ZodString; standard_rate_basis_points: ZodNumber; registration: ZodOptional<ZodString>; updated_at: ZodISODateTime; }, $strict>; readonly PRODUCT_TAX_SET: ZodObject<{ product_id: ZodUUID; rule: ZodEnum<{ STANDARD: "STANDARD"; EXEMPT: "EXEMPT"; RATE: "RATE"; }>; rate_basis_points: ZodOptional<ZodNumber>; updated_at: ZodISODateTime; }, $strict>; readonly PAYMENT_TERMS_SET: ZodObject<{ party: ZodEnum<{ CUSTOMER: "CUSTOMER"; SUPPLIER: "SUPPLIER"; }>; party_id: ZodOptional<ZodUUID>; days: ZodNullable<ZodNumber>; updated_at: ZodISODateTime; }, $strict>; readonly CUSTOMER_SAVED: ZodObject<{ customer: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; credit_limit_minor: ZodOptional<ZodNumber>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_SAVED: ZodObject<{ supplier: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; contact: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly ACCOUNT_SAVED: ZodObject<{ account: ZodObject<{ id: ZodUUID; branch_id: ZodOptional<ZodUUID>; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; number: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SALE_COMPLETED: ZodObject<{ sale: ZodObject<{ id: ZodUUID; number: ZodString; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; name: ZodString; unit_price_minor: ZodNumber; quantity: ZodNumber; discount_minor: ZodOptional<ZodNumber>; tax_rate_basis_points: ZodOptional<ZodNumber>; unit_cost_minor: ZodOptional<ZodNumber>; }, $strict>>; customer_id: ZodOptional<ZodUUID>; credit_transaction_id: ZodOptional<ZodUUID>; discount_minor: ZodOptional<ZodNumber>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly PURCHASE_RECORDED: ZodObject<{ purchase: ZodObject<{ id: ZodUUID; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; unit_cost_minor: ZodNumber; quantity: ZodNumber; }, $strict>>; supplier_id: ZodOptional<ZodUUID>; supplier_transaction_id: ZodOptional<ZodUUID>; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reason: ZodString; occurred_at: ZodISODateTime; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CUSTOMER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; customer_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; supplier_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly STOCK_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CASH_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; ADJUSTMENT: "ADJUSTMENT"; CASH_IN: "CASH_IN"; CASH_OUT: "CASH_OUT"; TRANSFER_IN: "TRANSFER_IN"; TRANSFER_OUT: "TRANSFER_OUT"; }>; amount_minor: ZodNumber; counterpart_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>>; }, $strict>; readonly EXPENSE_RECORDED: ZodObject<{ expense: ZodObject<{ id: ZodUUID; category: ZodEnum<{ OTHER: "OTHER"; RENT: "RENT"; ELECTRICITY: "ELECTRICITY"; WATER: "WATER"; TRANSPORT: "TRANSPORT"; SALARY: "SALARY"; PACKAGING: "PACKAGING"; MAINTENANCE: "MAINTENANCE"; INTERNET: "INTERNET"; MARKETING: "MARKETING"; }>; account_id: ZodUUID; amount_minor: ZodNumber; occurred_at: ZodISODateTime; description: ZodOptional<ZodString>; reference: ZodOptional<ZodString>; reverses_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly WORKSPACE_CREATED: ZodObject<{ business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; accounts: ZodArray<ZodObject<{ id: ZodUUID; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; }, $strict>>; }, $strict>; readonly LEGACY_WORKSPACE_ADOPTED: ZodObject<{ business_id: ZodUUID; owner_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; provenance: ZodLiteral<"unsigned_v1_snapshot">; }, $strict>; readonly MEMBER_CREATED: ZodObject<{ user_id: ZodUUID; name: ZodString; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodLiteral<1>; }, $strict>; readonly PERMISSION_GRANTED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_REVOKED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly MEMBER_SUSPENDED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_REINSTATED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_ACCESS_RESET: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly OWNER_ACCESS_RECOVERED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_TRUSTED: ZodObject<{ device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; SERVER: "SERVER"; }>; public_key: ZodString; }, $strict>; authority_allowed: ZodBoolean; revision: ZodNumber; }, $strict>; readonly DEVICE_REVOKED: ZodObject<{ device_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_ENCRYPTION_KEY: ZodObject<{ device_id: ZodUUID; public_key: ZodString; }, $strict>; readonly SHOP_KEY_GRANTED: ZodObject<{ key_id: ZodUUID; epoch: ZodNumber; device_id: ZodUUID; sealed: ZodObject<{ ephemeral_public_key: ZodString; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>; readonly SERVER_ENDPOINT_SET: ZodObject<{ server_device_id: ZodUUID; url: ZodString; fingerprint: ZodString; revision: ZodNumber; }, $strict>; readonly SERVER_ENDPOINT_CLEARED: ZodObject<{ server_device_id: ZodUUID; revision: ZodNumber; }, $strict>; };
+const EVENT_PAYLOAD_SCHEMAS: { readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly PURCHASE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly CATEGORY_SAVED: ZodObject<{ category: ZodObject<{ id: ZodUUID; name: ZodString; active: ZodBoolean; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_SAVED: ZodObject<{ product: ZodObject<{ id: ZodUUID; category_id: ZodOptional<ZodUUID>; name: ZodString; unit: ZodString; selling_price_minor: ZodNumber; purchase_price_minor: ZodOptional<ZodNumber>; sku: ZodOptional<ZodString>; barcode: ZodOptional<ZodString>; description: ZodOptional<ZodString>; brand: ZodOptional<ZodString>; divisible: ZodOptional<ZodBoolean>; active: ZodOptional<ZodBoolean>; tax_rate_basis_points: ZodOptional<ZodNumber>; minimum_stock: ZodOptional<ZodNumber>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_CATEGORIES_SET: ZodObject<{ product_id: ZodUUID; category_ids: ZodArray<ZodUUID>; updated_at: ZodISODateTime; }, $strict>; readonly TAX_SETTINGS_SET: ZodObject<{ enabled: ZodBoolean; label: ZodString; standard_rate_basis_points: ZodNumber; registration: ZodOptional<ZodString>; updated_at: ZodISODateTime; }, $strict>; readonly PRODUCT_TAX_SET: ZodObject<{ product_id: ZodUUID; rule: ZodEnum<{ STANDARD: "STANDARD"; EXEMPT: "EXEMPT"; RATE: "RATE"; }>; rate_basis_points: ZodOptional<ZodNumber>; updated_at: ZodISODateTime; }, $strict>; readonly PAYMENT_TERMS_SET: ZodObject<{ party: ZodEnum<{ CUSTOMER: "CUSTOMER"; SUPPLIER: "SUPPLIER"; }>; party_id: ZodOptional<ZodUUID>; days: ZodNullable<ZodNumber>; updated_at: ZodISODateTime; }, $strict>; readonly CUSTOMER_SAVED: ZodObject<{ customer: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; credit_limit_minor: ZodOptional<ZodNumber>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_SAVED: ZodObject<{ supplier: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; contact: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly ACCOUNT_SAVED: ZodObject<{ account: ZodObject<{ id: ZodUUID; branch_id: ZodOptional<ZodUUID>; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; number: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SALE_COMPLETED: ZodObject<{ sale: ZodObject<{ id: ZodUUID; number: ZodString; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; name: ZodString; unit_price_minor: ZodNumber; quantity: ZodNumber; discount_minor: ZodOptional<ZodNumber>; tax_rate_basis_points: ZodOptional<ZodNumber>; unit_cost_minor: ZodOptional<ZodNumber>; }, $strict>>; customer_id: ZodOptional<ZodUUID>; credit_transaction_id: ZodOptional<ZodUUID>; discount_minor: ZodOptional<ZodNumber>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly PURCHASE_RECORDED: ZodObject<{ purchase: ZodObject<{ id: ZodUUID; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; unit_cost_minor: ZodNumber; quantity: ZodNumber; }, $strict>>; supplier_id: ZodOptional<ZodUUID>; supplier_transaction_id: ZodOptional<ZodUUID>; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reason: ZodString; occurred_at: ZodISODateTime; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CUSTOMER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; customer_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; supplier_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly STOCK_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CASH_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; ADJUSTMENT: "ADJUSTMENT"; CASH_IN: "CASH_IN"; CASH_OUT: "CASH_OUT"; TRANSFER_IN: "TRANSFER_IN"; TRANSFER_OUT: "TRANSFER_OUT"; }>; amount_minor: ZodNumber; counterpart_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>>; }, $strict>; readonly EXPENSE_RECORDED: ZodObject<{ expense: ZodObject<{ id: ZodUUID; category: ZodEnum<{ OTHER: "OTHER"; RENT: "RENT"; ELECTRICITY: "ELECTRICITY"; WATER: "WATER"; TRANSPORT: "TRANSPORT"; SALARY: "SALARY"; PACKAGING: "PACKAGING"; MAINTENANCE: "MAINTENANCE"; INTERNET: "INTERNET"; MARKETING: "MARKETING"; }>; account_id: ZodUUID; amount_minor: ZodNumber; occurred_at: ZodISODateTime; description: ZodOptional<ZodString>; reference: ZodOptional<ZodString>; reverses_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly WORKSPACE_CREATED: ZodObject<{ business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; accounts: ZodArray<ZodObject<{ id: ZodUUID; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; }, $strict>>; }, $strict>; readonly LEGACY_WORKSPACE_ADOPTED: ZodObject<{ business_id: ZodUUID; owner_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; provenance: ZodLiteral<"unsigned_v1_snapshot">; }, $strict>; readonly MEMBER_CREATED: ZodObject<{ user_id: ZodUUID; name: ZodString; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodLiteral<1>; }, $strict>; readonly PERMISSION_GRANTED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_REVOKED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; }>; revision: ZodNumber; }, $strict>; readonly MEMBER_SUSPENDED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_REINSTATED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_ACCESS_RESET: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly OWNER_ACCESS_RECOVERED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_TRUSTED: ZodObject<{ device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; SERVER: "SERVER"; }>; public_key: ZodString; }, $strict>; authority_allowed: ZodBoolean; revision: ZodNumber; }, $strict>; readonly DEVICE_REVOKED: ZodObject<{ device_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_ENCRYPTION_KEY: ZodObject<{ device_id: ZodUUID; public_key: ZodString; }, $strict>; readonly SHOP_KEY_GRANTED: ZodObject<{ key_id: ZodUUID; epoch: ZodNumber; device_id: ZodUUID; sealed: ZodObject<{ ephemeral_public_key: ZodString; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>; readonly SERVER_ENDPOINT_SET: ZodObject<{ server_device_id: ZodUUID; url: ZodString; fingerprint: ZodString; revision: ZodNumber; }, $strict>; readonly SERVER_ENDPOINT_CLEARED: ZodObject<{ server_device_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly SHOP_BACKUP_KEY: ZodObject<{ key_id: ZodString; version: ZodNumber; public_key: ZodString; created_at: ZodISODateTime; }, $strict>; };
 ```
 
 Current supported event names; unknown signed names/versions can be retained unapplied.
@@ -3326,7 +3391,7 @@ parseJournalEnvelope(input: unknown): { event_id: string; business_id: string; o
 Rejects unknown current payload fields; unsupported signed versions are distinguishable.
 
 ```ts
-parseEventPayload<T extends EventType>(type: T, version: number, input: unknown): output<{ readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<...>>; refunds: ZodArray<...>; debt_transaction_id: ZodOptional<...>; }, $strict>; }, $strict>; ... 31 more ...; readonly SERVER_ENDPOINT_...;
+parseEventPayload<T extends EventType>(type: T, version: number, input: unknown): output<{ readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<...>>; refunds: ZodArray<...>; debt_transaction_id: ZodOptional<...>; }, $strict>; }, $strict>; ... 32 more ...; readonly SHOP_BACKUP_KEY:...;
 ```
 
 ## [packages/contracts/src/index.ts](../../packages/contracts/src/index.ts)
@@ -3806,9 +3871,14 @@ The new till's signed request, its X25519 key for the sealed password, both tagg
 const joinRequestSchema: ZodObject<{ request: ZodObject<{ request: ZodObject<{ format: ZodLiteral<"kolo.pairing-request">; format_version: ZodLiteral<1>; request_id: ZodUUID; invite: ZodObject<{ invite: ZodObject<{ format: ZodLiteral<"kolo.pairing-invite">; format_version: ZodLiteral<1>; invite_id: ZodUUID; business_id: ZodUUID; business_name: ZodString; owner_id: ZodUUID; owner_name: ZodString; source_device_id: ZodUUID; source_public_key: ZodString; created_at: ZodISODateTime; expires_at: ZodISODateTime; nonce: ZodString; authority_allowed: ZodBoolean; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>; installation_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; created_at: ZodISODateTime; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>; encryption_public_key: ZodString; mac: ZodString; }, $strict>;
 ```
 
-The owner's encrypted shop file and its password sealed to the new till's key.
+Largest base64 enrollment a join mailbox (hosted server or a desktop's local listener) carries: about
+36 MiB of encrypted container, a few months of a busy shop. A larger shop pairs by file.
 
-Joining moves the shop to a phone, so the standard file limit applies (a larger shop pairs by file).
+```ts
+const MAX_JOIN_ENROLLMENT_CHARS: number;
+```
+
+The owner's encrypted shop file (base64 of its container) and its password sealed to the new till's key.
 
 ```ts
 const joinEnrollmentSchema: ZodObject<{ enrollment: ZodString; sealed_password: ZodObject<{ ephemeral_public_key: ZodString; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; mac: ZodString; }, $strict>;
@@ -3852,68 +3922,140 @@ const transferSignature: ZodString;
 const transferKey: ZodString;
 ```
 
-Size limits for transfer files; every reader and writer checks one profile before allocating.
+Size bounds a transfer reader or writer checks before key derivation or allocation.
 
 ```ts
 export interface TransferLimits {
     readonly snapshotBytes: number;
     readonly contentBytes: number;
-    readonly payloadBytes: number;
     readonly fileBytes: number;
 }
 ```
 
-The default profile, sized for low-cost phones and PCs (ADR-026): about fourteen months of a busy shop.
+The one size limit for backups and enrollment snapshots on every device (ADR-035): a 1 GiB SQLite
+image. Files are whole byte arrays in memory, so peak memory is a few times the snapshot; users are
+expected to have several GiB. The file bound adds 1 MiB to the content for deflate's stored-block
+overhead on incompressible content (under 0.01%), chunk tags (16 bytes per MiB) and the header.
 
 ```ts
-const STANDARD_TRANSFER_LIMITS: TransferLimits;
+const TRANSFER_LIMITS: TransferLimits;
 ```
 
-The opt-in profile for computers with memory to spare (ADR-027). Not unlimited: a file is read
-as one string, and JavaScript engines cap strings near 512 MiB, so the file stays below that and
-the payload below its base64 share. Peak memory during a backup is several times the snapshot.
-
-```ts
-const LARGE_TRANSFER_LIMITS: TransferLimits;
-```
-
-Largest raw SQLite image a standard backup or enrollment may carry (about a year of a busy shop).
+Largest raw SQLite image a backup or enrollment may carry.
 
 ```ts
 const MAX_SNAPSHOT_IMAGE_BYTES: number;
 ```
 
-Largest decompressed transfer content under the standard profile.
+Largest decompressed transfer content.
 
 ```ts
 const MAX_TRANSFER_CONTENT_BYTES: number;
 ```
 
-Largest encrypted (compressed) payload under the standard profile.
-
-```ts
-const MAX_ENCRYPTED_PAYLOAD_BYTES: number;
-```
-
-Largest encrypted file on disk under the standard profile.
+Largest encrypted transfer file on disk.
 
 ```ts
 const MAX_ENCRYPTED_FILE_BYTES: number;
 ```
 
-Version 1 (read-only): uncompressed plaintext. Version 2 (written): `plaintext_bytes` are the
-encrypted deflate bytes and `content_bytes` the exact decompressed length, both authenticated.
+Purposes an encrypted transfer file may declare.
 
 ```ts
-const encryptedHeaderSchema: ZodDiscriminatedUnion<[ZodObject<{ format_version: ZodLiteral<1>; plaintext_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; receipt: "receipt"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>, ZodObject<{ format_version: ZodLiteral<2>; compression: ZodLiteral<"deflate">; plaintext_bytes: ZodNumber; content_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; receipt: "receipt"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>], "format_version">;
+const transferPurposeSchema: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; receipt: "receipt"; exchange: "exchange"; }>;
 ```
 
-```ts
-const encryptedFileSchema: ZodObject<{ header: ZodDiscriminatedUnion<[ZodObject<{ format_version: ZodLiteral<1>; plaintext_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; receipt: "receipt"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>, ZodObject<{ format_version: ZodLiteral<2>; compression: ZodLiteral<"deflate">; plaintext_bytes: ZodNumber; content_bytes: ZodNumber; format: ZodLiteral<"kolo.encrypted">; purpose: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; receipt: "receipt"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; kdf: ZodLiteral<"PBKDF2-SHA256">; iterations: ZodLiteral<600000>; salt: ZodString; nonce: ZodString; }, $strict>], "format_version">; ciphertext: ZodString; tag: ZodString; }, $strict>;
-```
+Purposes an encrypted transfer file may declare.
 
 ```ts
-export type EncryptedHeader = z.infer<typeof encryptedHeaderSchema>;
+export type TransferPurpose = z.infer<typeof transferPurposeSchema>;
+```
+
+First eight bytes of an encrypted container (ADR-035): `\x89KOLO\r\n\x1a`.
+
+```ts
+const CONTAINER_MAGIC: readonly number[];
+```
+
+Magic plus the four-byte big-endian header length.
+
+```ts
+const CONTAINER_PREFIX_BYTES: 12;
+```
+
+Largest canonical content header a container may declare.
+
+```ts
+const MAX_CONTAINER_HEADER_BYTES: 4096;
+```
+
+Largest canonical key-slot section a container may declare.
+
+```ts
+const MAX_CONTAINER_SLOTS_BYTES: 16384;
+```
+
+Most key slots one container may carry.
+
+```ts
+const MAX_KEY_SLOTS: 8;
+```
+
+AES-GCM tag stored after every chunk.
+
+```ts
+const CONTAINER_TAG_BYTES: 16;
+```
+
+Chunk size writers use; readers accept any power of two from 4 KiB to 4 MiB.
+
+```ts
+const CONTAINER_CHUNK_BYTES: number;
+```
+
+The HPKE suite of recipient slots: base mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM (RFC 9180).
+
+```ts
+const RECIPIENT_SUITE: "HPKE-base-X25519-SHA256-AES256GCM";
+```
+
+Immutable content header, format version 3 (ADR-035). It is the canonical JSON after the 12-byte
+prefix; magic, length and header together are the additional data of every chunk. `recipients`
+lists the recovery keys sealed when the file was written, so a removed slot is detectable.
+
+```ts
+const containerHeaderSchema: ZodObject<{ format: ZodLiteral<"kolo.encrypted">; format_version: ZodLiteral<3>; purpose: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; receipt: "receipt"; exchange: "exchange"; }>; file_id: ZodUUID; cipher: ZodLiteral<"AES-256-GCM">; compression: ZodLiteral<"deflate">; nonce_prefix: ZodString; chunk_bytes: ZodNumber; content_bytes: ZodNumber; recipients: ZodArray<ZodString>; }, $strict>;
+```
+
+Parsed container header.
+
+```ts
+export type ContainerHeader = z.infer<typeof containerHeaderSchema>;
+```
+
+A password slot: Argon2id over the NFC-normalized UTF-8 password wraps the file key (bounded parameters).
+
+```ts
+const passwordSlotSchema: ZodObject<{ type: ZodLiteral<"password">; kdf: ZodLiteral<"argon2id">; memory_kib: ZodNumber; passes: ZodNumber; parallelism: ZodNumber; salt: ZodString; nonce: ZodString; wrapped: ZodString; }, $strict>;
+```
+
+A recipient slot: the file key sealed with single-shot HPKE to a shop backup recovery key (ADR-036).
+
+```ts
+const recipientSlotSchema: ZodObject<{ type: ZodLiteral<"recipient">; suite: ZodLiteral<"HPKE-base-X25519-SHA256-AES256GCM">; key_id: ZodString; enc: ZodString; wrapped: ZodString; }, $strict>;
+```
+
+The mutable key-slot section: at most one password slot, first, then recipient slots in ascending
+`key_id` order, so each set of slots has one encoding.
+
+```ts
+const keySlotsSchema: ZodObject<{ slots: ZodArray<ZodDiscriminatedUnion<[ZodObject<{ type: ZodLiteral<"password">; kdf: ZodLiteral<"argon2id">; memory_kib: ZodNumber; passes: ZodNumber; parallelism: ZodNumber; salt: ZodString; nonce: ZodString; wrapped: ZodString; }, $strict>, ZodObject<{ type: ZodLiteral<"recipient">; suite: ZodLiteral<"HPKE-base-X25519-SHA256-AES256GCM">; key_id: ZodString; enc: ZodString; wrapped: ZodString; }, $strict>], "type">>; }, $strict>;
+```
+
+Parsed key slots.
+
+```ts
+export type KeySlots = z.infer<typeof keySlotsSchema>;
 ```
 
 Snapshot boundary includes origin coverage and permanent application count, never a global server cursor.
@@ -3925,11 +4067,11 @@ const snapshotBoundarySchema: ZodObject<{ audit_watermark: ZodNumber; applied_co
 Signed checksum/identity manifest for a sanitized physical SQLite snapshot.
 
 ```ts
-const snapshotManifestSchema: ZodObject<{ format: ZodLiteral<"kolo.snapshot">; format_version: ZodLiteral<1>; snapshot_id: ZodUUID; kind: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; }>; schema_version: ZodNumber; created_at: ZodISODateTime; business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; source_device_id: ZodUUID; source_public_key: ZodString; snapshot_digest: ZodString; snapshot_bytes: ZodNumber; boundary: ZodObject<{ audit_watermark: ZodNumber; applied_count: ZodNumber; origins: ZodArray<ZodObject<{ device_id: ZodUUID; maximum_sequence: ZodNumber; next_local_sequence: ZodNullable<ZodNumber>; }, $strict>>; legacy: ZodArray<ZodObject<{ business_id: ZodUUID; provenance: ZodLiteral<"unsigned_v1_snapshot">; outbox_next: ZodNumber; audit_watermark: ZodNumber; }, $strict>>; }, $strict>; credential_policy: ZodLiteral<"device_local_credentials_excluded">; target: ZodNullable<ZodObject<{ installation_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; authority_allowed: ZodBoolean; invite_id: ZodUUID; request_id: ZodUUID; request_digest: ZodString; }, $strict>>; }, $strict>;
+const snapshotManifestSchema: ZodObject<{ format: ZodLiteral<"kolo.snapshot">; format_version: ZodLiteral<1>; snapshot_id: ZodUUID; kind: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; }>; schema_version: ZodNumber; created_at: ZodISODateTime; business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; source_device_id: ZodUUID; source_public_key: ZodString; snapshot_digest: ZodString; snapshot_bytes: ZodNumber; boundary: ZodObject<{ audit_watermark: ZodNumber; applied_count: ZodNumber; origins: ZodArray<ZodObject<{ device_id: ZodUUID; maximum_sequence: ZodNumber; next_local_sequence: ZodNullable<ZodNumber>; }, $strict>>; legacy: ZodArray<ZodObject<{ business_id: ZodUUID; provenance: ZodLiteral<"unsigned_v1_snapshot">; outbox_next: ZodNumber; audit_watermark: ZodNumber; }, $strict>>; }, $strict>; credential_policy: ZodLiteral<"device_local_credentials_excluded">; target: ZodNullable<ZodObject<{ installation_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; authority_allowed: ZodBoolean; invite_id: ZodUUID; request_id: ZodUUID; request_digest: ZodString; }, $strict>>; shop_keys: ZodOptional<ZodArray<ZodObject<{ key_id: ZodUUID; epoch: ZodNumber; key: ZodString; }, $strict>>>; }, $strict>;
 ```
 
 ```ts
-const signedSnapshotSchema: ZodObject<{ manifest: ZodObject<{ format: ZodLiteral<"kolo.snapshot">; format_version: ZodLiteral<1>; snapshot_id: ZodUUID; kind: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; }>; schema_version: ZodNumber; created_at: ZodISODateTime; business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; source_device_id: ZodUUID; source_public_key: ZodString; snapshot_digest: ZodString; snapshot_bytes: ZodNumber; boundary: ZodObject<{ audit_watermark: ZodNumber; applied_count: ZodNumber; origins: ZodArray<ZodObject<{ device_id: ZodUUID; maximum_sequence: ZodNumber; next_local_sequence: ZodNullable<ZodNumber>; }, $strict>>; legacy: ZodArray<ZodObject<{ business_id: ZodUUID; provenance: ZodLiteral<"unsigned_v1_snapshot">; outbox_next: ZodNumber; audit_watermark: ZodNumber; }, $strict>>; }, $strict>; credential_policy: ZodLiteral<"device_local_credentials_excluded">; target: ZodNullable<ZodObject<{ installation_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; authority_allowed: ZodBoolean; invite_id: ZodUUID; request_id: ZodUUID; request_digest: ZodString; }, $strict>>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>;
+const signedSnapshotSchema: ZodObject<{ manifest: ZodObject<{ format: ZodLiteral<"kolo.snapshot">; format_version: ZodLiteral<1>; snapshot_id: ZodUUID; kind: ZodEnum<{ backup: "backup"; enrollment: "enrollment"; }>; schema_version: ZodNumber; created_at: ZodISODateTime; business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; source_device_id: ZodUUID; source_public_key: ZodString; snapshot_digest: ZodString; snapshot_bytes: ZodNumber; boundary: ZodObject<{ audit_watermark: ZodNumber; applied_count: ZodNumber; origins: ZodArray<ZodObject<{ device_id: ZodUUID; maximum_sequence: ZodNumber; next_local_sequence: ZodNullable<ZodNumber>; }, $strict>>; legacy: ZodArray<ZodObject<{ business_id: ZodUUID; provenance: ZodLiteral<"unsigned_v1_snapshot">; outbox_next: ZodNumber; audit_watermark: ZodNumber; }, $strict>>; }, $strict>; credential_policy: ZodLiteral<"device_local_credentials_excluded">; target: ZodNullable<ZodObject<{ installation_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; authority_allowed: ZodBoolean; invite_id: ZodUUID; request_id: ZodUUID; request_digest: ZodString; }, $strict>>; shop_keys: ZodOptional<ZodArray<ZodObject<{ key_id: ZodUUID; epoch: ZodNumber; key: ZodString; }, $strict>>>; }, $strict>; digest: ZodString; signature: ZodString; }, $strict>;
 ```
 
 ```ts
@@ -4089,6 +4231,59 @@ record. Received facts appear once synced, with the member and device that made 
 ```ts
 auditTrail(context: OperationContext, query: AuditQuery = {}): AuditPage;
 ```
+
+## [packages/core/src/application/backup-key.ts](../../packages/core/src/application/backup-key.ts)
+
+A backup recovery key shown to the owner once (ADR-036) and not yet pinned. `text` is the only copy of the secret;
+`confirm` lists the three 0-based group indices the owner must type back before 
+pins the public half. Discarding the object discards the key.
+
+```ts
+export interface PendingBackupKey {
+    readonly text: string;
+    readonly keyId: string;
+    readonly confirm: readonly number[];
+}
+```
+
+A pinned backup recovery key as the shop sees it: its ID, creation date and whether new backups seal to it.
+
+```ts
+export interface BackupKeyView {
+    readonly keyId: string;
+    readonly version: number;
+    readonly createdAt: string;
+    readonly current: boolean;
+}
+```
+
+Creates a backup recovery key after a fresh owner PIN proof and returns it for showing once. Nothing is stored:
+the secret lives only in the returned text, and the public half is pinned only after confirmation.
+
+```ts
+prepareBackupRecoveryKey(context: OperationContext, secret: string, crypto: TransferCrypto): Promise<PendingBackupKey>;
+```
+
+Pins a prepared key once the owner typed back the requested groups: an owner-signed `SHOP_BACKUP_KEY` fact with the
+next version. New backups then seal to it; earlier keys stay pinned for the backups that need them.
+
+```ts
+confirmBackupRecoveryKey(context: OperationContext, key: PendingBackupKey, typed: readonly string[], crypto: TransferCrypto): Promise<BackupKeyView>;
+```
+
+The shop's pinned backup recovery keys, newest first; the first is the one new backups seal to.
+
+```ts
+backupRecoveryKeys(context: OperationContext): readonly BackupKeyView[];
+```
+
+The recipient new backups seal to: the current pinned key, read from this till's own database (never from a file or the
+network), with its ID checked against its public key so a corrupted row can never redirect encryption.
+
+```ts
+currentBackupRecipient(context: OperationContext, crypto: Pick<TransferCrypto, "sha256Bytes">): Promise<RecoveryRecipient>;
+```
+
 ## [packages/core/src/application/backup.ts](../../packages/core/src/application/backup.ts)
 
 Verified snapshot summary; the native candidate is held privately and consumed at most once.
@@ -4114,16 +4309,44 @@ export interface BackupOptions {
 }
 ```
 
-Consistent encrypted backup excluding credentials, cloud sessions and installation private keys, and optionally product photos.
+Streams a consistent encrypted backup into `sink` (a private temporary file on a till), chunk by chunk, so memory stays a
+few MiB whatever the shop size (ADR-035). It excludes credentials, cloud sessions and installation private keys, and
+optionally product photos. It opens with `password` and, once the owner pinned one, with the shop's backup recovery key;
+`password` null makes a recovery-key-only backup (automatic backups), which needs a pinned key. It carries the shop data
+keys this till holds, so a restore can resume sync with no other till (ADR-036); when a granted key cannot be opened
+(a vault failure) it writes nothing and fails with `sync_keys_unavailable`. Returns the file name to offer.
 
 ```ts
-createBackup(context: OperationContext, password: string, files: SnapshotPort, crypto: TransferCrypto, options: BackupOptions = {}): Promise<TransferDocument>;
+writeBackup(context: OperationContext, password: string | null, files: SnapshotPort, crypto: TransferCrypto, sink: ByteSink, options: BackupOptions = {}): Promise<{ readonly filename: string; }>;
 ```
 
-Authenticates password/image/manifest and validates schema, integrity, scope, foreign keys and replay boundary in isolation.
+ into memory, for callers that hand the whole file to a dialog or a test.
 
 ```ts
-previewBackup(text: string, password: string, files: SnapshotPort, crypto: TransferCrypto): Promise<BackupPreview>;
+createBackup(context: OperationContext, password: string | null, files: SnapshotPort, crypto: TransferCrypto, options: BackupOptions = {}): Promise<TransferDocument>;
+```
+
+How a backup is opened: its password, or the shop's backup recovery key as the owner typed it (ADR-036).
+
+```ts
+export type BackupSecret = string | {
+    readonly recoveryKey: string;
+};
+```
+
+Opens a backup from a reader (a selected file read in chunks), with its password or typed recovery key. The image is
+decrypted and decompressed straight into a private staging file, never whole in memory, then the slot, image digest
+and signed manifest are authenticated and the database is validated (schema, integrity, scope, foreign keys, replay
+boundary) in isolation. Anything that fails discards the staging file.
+
+```ts
+previewBackupFile(reader: ByteReader, secret: BackupSecret, files: SnapshotPort, crypto: TransferCrypto): Promise<BackupPreview>;
+```
+
+ for a backup already in memory.
+
+```ts
+previewBackup(file: Uint8Array, secret: BackupSecret, files: SnapshotPort, crypto: TransferCrypto): Promise<BackupPreview>;
 ```
 
 Releases an unused private candidate; cannot remove an activated business database.
@@ -4292,7 +4515,7 @@ exportBundle(context: OperationContext, destinationId: string, password: string,
 Decrypts bounded bytes and authenticates shop, destination, forwarder and all origins without applying facts.
 
 ```ts
-previewBundle(context: OperationContext, text: string, password: string, crypto: TransferCrypto): Promise<BundlePreview>;
+previewBundle(context: OperationContext, file: Uint8Array, password: string, crypto: TransferCrypto): Promise<BundlePreview>;
 ```
 
 Imports only an opaque authenticated preview and rechecks current trust/authority before any effects.
@@ -4310,7 +4533,7 @@ exportReceipt(context: OperationContext, batchId: string, password: string, cryp
 Decrypts and applies exact digest acknowledgments to the expected destination only.
 
 ```ts
-importReceipt(context: OperationContext, destinationId: string, text: string, password: string, crypto: TransferCrypto): Promise<number>;
+importReceipt(context: OperationContext, destinationId: string, file: Uint8Array, password: string, crypto: TransferCrypto): Promise<number>;
 ```
 
 Known peer selection resolved from current SQLite state.
@@ -4662,13 +4885,30 @@ Application inputs carry facts/IDs; authority and persistence time come from unl
 export type CommandInput<T> = Omit<T, "businessId" | "userId" | "deviceId" | "recordedAt">;
 ```
 
+Change a named customer leaves on their account instead of taking it back: cash handed over beyond the sale's
+total, kept by the shop as the customer's advance. It is recorded as an ordinary customer payment into one of the
+sale's cash accounts, so every till, old or new, applies it the same way.
+
+```ts
+export interface KeptChange {
+    readonly id: string;
+    readonly eventId: string;
+    readonly accountId: string;
+    readonly amountMinor: number;
+}
+```
+
 Records a sale under local authority: sales.create, conditional discount/price
 override/credit permissions and credit-limit enforcement. All related records
 must belong to the installation's shop. Effects, v1 outbox and audit commit
 together; any failure commits nothing. IDs/time of occurrence are caller facts.
 
+With `keptChange`, the customer's change goes on their account in the same transaction, under customers.pay. The
+sale must name a customer, be paid in full, and have been paid into that cash account. The payment's note is the
+sale number and its time the sale's, which is how the receipt finds it ().
+
 ```ts
-completeSale(context: OperationContext, input: CommandInput<Cart>): SaleTotals;
+completeSale(context: OperationContext, input: CommandInput<Cart>, keptChange?: KeptChange): SaleTotals;
 ```
 
 Receives stock under purchases.create, and purchases.pay when money is paid at the door.
@@ -4855,13 +5095,13 @@ createPairingInvite(context: OperationContext, crypto: TransferCrypto, authority
 Authenticated invitation summary for independent fingerprint comparison; does not initialize a shop.
 
 ```ts
-previewPairingInvite(text: string, crypto: TransferCrypto): Promise<{ businessName: string; ownerName: string; fingerprint: string; authorityAllowed: boolean; }>;
+previewPairingInvite(file: Uint8Array, crypto: TransferCrypto): Promise<{ businessName: string; ownerName: string; fingerprint: string; authorityAllowed: boolean; }>;
 ```
 
 Reserves fresh IDs durably before native provisioning. Repeating an interrupted acceptance reuses those IDs.
 
 ```ts
-acceptPairingInvite(text: string, input: {
+acceptPairingInvite(file: Uint8Array, input: {
     confirmedFingerprint: string;
     label: string;
     platform: "ANDROID" | "IOS" | "DESKTOP";
@@ -4873,19 +5113,19 @@ acceptPairingInvite(text: string, input: {
 Verifies the native-key possession request for independent code comparison; has no trust effects.
 
 ```ts
-previewPairingRequest(text: string, crypto: TransferCrypto): Promise<{ deviceLabel: string; businessName: string; verificationCode: string; authorityAllowed: boolean; }>;
+previewPairingRequest(file: Uint8Array, crypto: TransferCrypto): Promise<{ deviceLabel: string; businessName: string; verificationCode: string; authorityAllowed: boolean; }>;
 ```
 
 Owner confirmation pins the exact fresh key and emits an encrypted recipient-bound sanitized baseline.
 
 ```ts
-confirmPairing(context: OperationContext, text: string, confirmedCode: string, password: string, files: SnapshotPort, crypto: TransferCrypto): Promise<TransferDocument>;
+confirmPairing(context: OperationContext, file: Uint8Array, confirmedCode: string, password: string, files: SnapshotPort, crypto: TransferCrypto): Promise<TransferDocument>;
 ```
 
 Finishes only the exact approved enrollment. Existing recovery re-pairing adds trust while preserving newer local history.
 
 ```ts
-completePairing(text: string, password: string, confirmedCode: string, ports: WorkspacePorts, files: SnapshotPort, crypto: TransferCrypto, existingContext?: OperationContext): Promise<{ database: Database; installation: Installation; }>;
+completePairing(file: Uint8Array, password: string, confirmedCode: string, ports: WorkspacePorts, files: SnapshotPort, crypto: TransferCrypto, existingContext?: OperationContext): Promise<{ database: Database; installation: Installation; }>;
 ```
 
 Removes only pending public enrollment state. No initialized business/history is deleted.
@@ -4904,17 +5144,14 @@ cancelPairingInvite(context: OperationContext, inviteId: string): void;
 
 Stores or replaces a product's photo under products.edit. The bytes are checked
 (WebP or JPEG, size and dimension limits) and hashed before the write; the shop's
-total is checked inside it against `options.large` (the large-files setting) or the standard
-limit. Photos are device-local until photo transfer exists:
+total is checked inside it against . Photos are device-local until photo transfer exists:
 no exchange event is journaled, only a local audit entry with the digest.
 
 ```ts
 setProductPhoto(context: OperationContext, input: {
     readonly productId: string;
     readonly bytes: Uint8Array;
-}, crypto: Pick<TransferCrypto, "sha256Bytes">, options: {
-    readonly large?: boolean;
-} = {}): Promise<{ digest: string; }>;
+}, crypto: Pick<TransferCrypto, "sha256Bytes">): Promise<{ digest: string; }>;
 ```
 
 Removes a product's photo under products.edit; returns whether there was one.
@@ -4942,12 +5179,42 @@ on this device are absent. Lists use the digest as a cache key and load bytes fo
 productPhotoDigests(context: OperationContext, productIds: readonly string[]): ReadonlyMap<string, string>;
 ```
 
-How many photos the shop holds against its storage limit (standard or large), under products.view.
+How many photos the shop holds against its storage limit, under products.view.
 
 ```ts
-photoUsage(context: OperationContext, options: {
-    readonly large?: boolean;
-} = {}): { photos: number; bytes: number; limitBytes: number; };
+photoUsage(context: OperationContext): { photos: number; bytes: number; limitBytes: number; };
+```
+
+## [packages/core/src/application/platform-check.ts](../../packages/core/src/application/platform-check.ts)
+
+One named check: whether the runtime's adapter gave the known answer, how long it took, and why not.
+
+```ts
+export interface PlatformCheckResult {
+    readonly name: string;
+    readonly ok: boolean;
+    readonly ms: number;
+    readonly detail?: string;
+}
+```
+
+Every check of one runtime; `ok` only when all passed.
+
+```ts
+export interface PlatformCheck {
+    readonly ok: boolean;
+    readonly checks: readonly PlatformCheckResult[];
+}
+```
+
+Runs the platform adapter of the runtime that ships (Node for CLI and server, Electron's BoringSSL for desktop, Hermes
+and quick-crypto for mobile) against known answers, then opens the golden ADR-035 container with its password and its
+recovery key and round-trips a new one. Node tests on another runtime cannot prove these primitives exist where the
+app runs; this does, on the device or in the packaged app. Pass `sealing` to cover end-to-end sync primitives too.
+Never throws; inputs are public test vectors, so failure details hold no secrets.
+
+```ts
+runPlatformCheck(crypto: TransferCrypto, sealing?: SealingCrypto): Promise<PlatformCheck>;
 ```
 
 ## [packages/core/src/application/queries.ts](../../packages/core/src/application/queries.ts)
@@ -5065,6 +5332,7 @@ export interface Receipt {
         readonly registration?: string | undefined;
         readonly groups: readonly TaxGroup[];
     } | undefined;
+    readonly changeKeptMinor?: number | undefined;
 }
 ```
 
@@ -5761,6 +6029,14 @@ Every shop key granted to this device that it can open. A grant it cannot open i
 shopKeys(context: OperationContext, crypto: SealingCrypto): Promise<readonly ShopKey[]>;
 ```
 
+The shop keys this device opens, and how many keys granted to it it could not open with `crypto` (none on a platform
+without sealing). A device's encryption key never changes, so a missing key is a vault or storage failure; a backup
+must not carry fewer keys than were granted (ADR-036). A shop that never used encrypted sync has no grants.
+
+```ts
+shopKeyCoverage(context: OperationContext, crypto: SealingCrypto | undefined): Promise<{ readonly keys: readonly ShopKey[]; readonly missing: number; }>;
+```
+
 The key new facts are sealed with: highest epoch, then highest key ID so two owner devices agree.
 
 ```ts
@@ -6021,25 +6297,243 @@ class ServerSyncScheduler {
 
 ## [packages/core/src/backup/encryption.ts](../../packages/core/src/backup/encryption.ts)
 
-Backup/exchange passwords are independent of unlock PINs: 12–256 characters, not entirely digits.
+The bounds a container reader or writer checks: decompressed content and the file itself.
+
+```ts
+export type ContainerLimits = Pick<TransferLimits, "contentBytes" | "fileBytes">;
+```
+
+Who can open a new container: a password, recovery keys, or both (at least one).
+
+```ts
+export interface SealKeys {
+    readonly password?: string;
+    readonly recipients?: readonly RecoveryRecipient[];
+}
+```
+
+What opens an existing container: its password, or a recovery key pair whose `keyId` has a slot.
+
+```ts
+export type OpenKey = {
+    readonly password: string;
+} | {
+    readonly recoveryKey: RecoveryKeyPair;
+};
+```
+
+Public facts about a container, read without any secret, for choosing how to open it.
+
+```ts
+export interface ContainerSummary {
+    readonly purpose: TransferPurpose;
+    readonly fileId: string;
+    readonly password: boolean;
+    readonly recipients: readonly string[];
+    readonly sealedFor: readonly string[];
+}
+```
+
+Backup/exchange passwords are independent of unlock PINs: after Unicode NFC normalization, 12–256
+characters, at least 12 after trimming, not entirely digits. Returns the normalized password, so the
+same password typed on a phone and a computer derives the same key (ADR-035).
+
+```ts
+normalizeTransferPassword(password: string): string;
+```
+
+Checks a password without keeping it; see .
 
 ```ts
 validateTransferPassword(password: string): void;
 ```
 
-Deflates, then encrypts with fresh salt/nonce, fixed expensive KDF and authenticated purpose/lengths, within one size profile.
+Argon2id values new password slots use (provisional until the Android measurement, ADR-035).
 
 ```ts
-encryptTransfer(bytes: Uint8Array, purpose: EncryptedHeader["purpose"], fileId: string, password: string, crypto: TransferCrypto, limits: TransferLimits = STANDARD_TRANSFER_LIMITS): Promise<string>;
+const PASSWORD_KDF: Readonly<{ memoryKiB: 65536; passes: 3; parallelism: 1; }>;
 ```
 
-Bounds raw UTF-8 and KDF parameters before work; authenticates all bytes before returning plaintext.
-Version 2 content is inflated into a buffer one byte larger than its authenticated length, so a
-stream that expands further is refused without unbounded allocation. Declared lengths are checked
-against the size profile before any key derivation or allocation.
+Readers accept only these Argon2id ranges, so a file cannot demand unbounded work.
 
 ```ts
-decryptTransfer(text: string, purpose: EncryptedHeader["purpose"], password: string, crypto: TransferCrypto, limits: TransferLimits = STANDARD_TRANSFER_LIMITS): Promise<Uint8Array<ArrayBufferLike>>;
+validPasswordKdf(params: {
+    readonly memoryKiB: number;
+    readonly passes: number;
+    readonly parallelism: number;
+}): boolean;
+```
+
+The 32-byte key-encryption key of a password slot: Argon2id over the NFC-normalized UTF-8 password.
+
+```ts
+passwordKey(password: string, salt: Uint8Array, params: {
+    readonly memoryKiB: number;
+    readonly passes: number;
+    readonly parallelism: number;
+}, crypto: TransferCrypto): Promise<Uint8Array<ArrayBufferLike>>;
+```
+
+True when `bytes` begin with the container magic (ADR-035).
+
+```ts
+isTransferContainer(bytes: Uint8Array): boolean;
+```
+
+Reads a container's public structure without any secret: purpose, file ID, whether it has a password
+slot, the recovery keys it was sealed for when written (`sealedFor`) and those that still have a slot
+(`recipients`). A `kolo.encrypted` header of another version is `unsupported_version`.
+
+```ts
+inspectContainer(file: Uint8Array): ContainerSummary;
+```
+
+The immutable content header of a container and the prefix bytes every chunk authenticates (public).
+
+```ts
+readContainerHeader(file: Uint8Array): { header: { format: "kolo.encrypted"; format_version: 3; purpose: "backup" | "enrollment" | "receipt" | "exchange"; file_id: string; cipher: "AES-256-GCM"; compression: "deflate"; nonce_prefix: string; chunk_bytes: number; content_bytes: number; recipients: string[]; }; prefix: Uint8Array<...>; };
+```
+
+Random-access bytes of a file whose size is known: a selected file on disk, or an array in memory.
+
+```ts
+export interface ByteReader {
+    readonly size: number;
+    read(offset: number, length: number): Promise<Uint8Array>;
+}
+```
+
+A reader over bytes already in memory.
+
+```ts
+memoryReader(bytes: Uint8Array): ByteReader;
+```
+
+Writes a container (ADR-035) as a stream: the prefix and key slots first, then each 1 MiB record as soon as its
+compressed bytes exist. `content` must yield exactly `contentBytes` bytes. Memory stays a few chunks whatever the size.
+
+```ts
+sealStream(content: AsyncIterable<Uint8Array>, contentBytes: number, purpose: TransferPurpose, fileId: string, keys: string | SealKeys, crypto: TransferCrypto, limits: ContainerLimits = TRANSFER_LIMITS, chunkBytes: number = CONTAINER_CHUNK_BYTES): AsyncGenerator<Uint8Array<ArrayBufferLike>, any, any>;
+```
+
+Deflates, then encrypts into a container (ADR-035) under a fresh file key wrapped for a password and/or recovery keys.
+
+```ts
+encryptTransfer(bytes: Uint8Array, purpose: TransferPurpose, fileId: string, keys: string | SealKeys, crypto: TransferCrypto, limits: ContainerLimits = TRANSFER_LIMITS): Promise<Uint8Array<ArrayBufferLike>>;
+```
+
+Opens a container as a stream of content chunks. Size, both sections, purpose, declared content length, slot parameters
+and record shape are checked before any key derivation. **Chunks are provisional:** the final record, the exact content
+length and the end of the deflate stream are only known at the end, and any failure then throws. A caller may only
+write yielded chunks somewhere private (a staging file) and must discard them if the stream throws.
+
+```ts
+openStream(reader: ByteReader, purpose: TransferPurpose, key: string | OpenKey, crypto: TransferCrypto, limits: ContainerLimits = TRANSFER_LIMITS): AsyncGenerator<Uint8Array<ArrayBufferLike>, any, any>;
+```
+
+Decrypts a whole container in memory. Size, both sections, purpose, declared content length, slot parameters and
+record shape are checked before any key derivation; one slot is unwrapped, then every chunk authenticates before any
+content is returned, and content beyond its authenticated length is refused. Anything that is not a container,
+including the JSON files of releases before ADR-035, is `invalid_file`. A password string is shorthand for `{ password }`.
+
+```ts
+decryptTransfer(file: Uint8Array, purpose: TransferPurpose, key: string | OpenKey, crypto: TransferCrypto, limits: ContainerLimits = TRANSFER_LIMITS): Promise<Uint8Array<ArrayBufferLike>>;
+```
+
+## [packages/core/src/backup/file-kind.ts](../../packages/core/src/backup/file-kind.ts)
+
+What a chosen transfer file is, recognized from its structure before any password or key work.
+
+```ts
+export type TransferFileKind = "backup" | "enrollment" | "exchange" | "receipt" | "invite" | "request";
+```
+
+Recognizes a KOLO transfer file by its public structure: an encrypted container (ADR-035) or a
+plaintext invitation/request. Anything else, including the JSON files of releases before ADR-035,
+is `undefined`. A container of an unknown version is still recognized by purpose, so opening it
+reports `unsupported_version`.
+
+```ts
+transferFileKind(bytes: Uint8Array, crypto: Pick<TransferCrypto, "decodeText">): TransferFileKind;
+```
+
+Carries an encrypted container inside a JSON transport (join mailboxes, ADR-035) as padded base64.
+
+```ts
+transferFileText(bytes: Uint8Array, crypto: Pick<TransferCrypto, "encodeBase64">): string;
+```
+
+Reverses : the text must be strict base64 of a container.
+
+```ts
+transferFileFromText(text: string, crypto: Pick<TransferCrypto, "decodeBase64">): Uint8Array<ArrayBufferLike>;
+```
+
+## [packages/core/src/backup/golden-container.ts](../../packages/core/src/backup/golden-container.ts)
+
+The golden ADR-035 container (fixtures/golden-v3.kolo-backup) as base64, so every runtime, including the mobile
+bundle, can open it in the platform self-check. A test keeps it identical to the fixture file.
+
+```ts
+const GOLDEN_CONTAINER_BASE64: string;
+```
+
+Its password; its recovery key is derived from 32 bytes of 0x42. Test material, not a secret.
+
+```ts
+const GOLDEN_PASSWORD: "golden vector password";
+```
+
+## [packages/core/src/backup/hpke.ts](../../packages/core/src/backup/hpke.ts)
+
+RFC 9180 HPKE, base mode, single-shot, for DHKEM(X25519, HKDF-SHA256) with HKDF-SHA256 and
+AES-256-GCM (KEM 0x0020, KDF 0x0001, AEAD 0x0002), built only from native primitives (ADR-035).
+Key derivation is generic over the AEAD key length so the RFC's AES-128-GCM vectors also check it.
+
+```ts
+export interface HpkePrimitives {
+    hmacSha256(key: Uint8Array, data: Uint8Array): Uint8Array;
+    x25519(privateKey: Uint8Array, publicKey: Uint8Array): Uint8Array;
+    randomHex(bytes: number): string;
+    sealBytes(keyHex: string, nonceHex: string, bytes: Uint8Array, aad: Uint8Array): Promise<Uint8Array>;
+    openBytes(keyHex: string, nonceHex: string, sealed: Uint8Array, aad: Uint8Array): Promise<Uint8Array>;
+}
+```
+
+DER prefixes that wrap a raw 32-byte X25519 key for native key import (PKCS #8 private, SPKI public).
+
+```ts
+const X25519_PKCS8_PREFIX: readonly number[];
+```
+
+DER prefix of an X25519 SubjectPublicKeyInfo.
+
+```ts
+const X25519_SPKI_PREFIX: readonly number[];
+```
+
+Raw X25519 public key of a raw private key.
+
+```ts
+x25519PublicKey(privateKey: Uint8Array, p: Pick<HpkePrimitives, "x25519">): Uint8Array<ArrayBufferLike>;
+```
+
+RFC 9180 §7.1.3 DeriveKeyPair for X25519: a deterministic key pair from at least 32 bytes of input keying material.
+
+```ts
+deriveKeyPair(ikm: Uint8Array, p: HpkePrimitives): { readonly privateKey: Uint8Array<ArrayBufferLike>; readonly publicKey: Uint8Array<ArrayBufferLike>; };
+```
+
+Single-shot `SealBase` (sequence number 0): encrypts `plaintext` to a raw X25519 public key.
+
+```ts
+sealBase(recipient: Uint8Array, info: Uint8Array, aad: Uint8Array, plaintext: Uint8Array, p: HpkePrimitives, ephemeralIkm?: Uint8Array): Promise<{ readonly enc: Uint8Array<ArrayBufferLike>; readonly ciphertext: Uint8Array<ArrayBufferLike>; }>;
+```
+
+Single-shot `OpenBase`; any failure is `authentication_failed`.
+
+```ts
+openBase(enc: Uint8Array, privateKey: Uint8Array, info: Uint8Array, aad: Uint8Array, ciphertext: Uint8Array, p: HpkePrimitives): Promise<Uint8Array<ArrayBufferLike>>;
 ```
 
 ## [packages/core/src/backup/native-crypto.ts](../../packages/core/src/backup/native-crypto.ts)
@@ -6047,7 +6541,7 @@ decryptTransfer(text: string, purpose: EncryptedHeader["purpose"], password: str
 Narrow native AES implementation; adapters must use platform/OpenSSL APIs, never JS cryptographic substitutes.
 
 ```ts
-export interface NativeTransferBackend extends Omit<TransferCrypto, "encrypt" | "decrypt"> {
+export interface NativeTransferBackend extends Omit<TransferCrypto, "encrypt" | "decrypt" | "sealBytes" | "openBytes"> {
     cipher(keyHex: string, nonceHex: string): {
         setAAD(bytes: Uint8Array): unknown;
         update(bytes: Uint8Array): Uint8Array;
@@ -6071,6 +6565,61 @@ Consistent native AES-GCM framing and byte validation across desktop/mobile, wit
 nativeTransferCrypto(native: NativeTransferBackend): TransferCrypto;
 ```
 
+## [packages/core/src/backup/recovery-key.ts](../../packages/core/src/backup/recovery-key.ts)
+
+The shop backup recovery key (ADR-036): 32 random bytes, written once for the owner as 56 Crockford
+base32 symbols (52 for the secret, 4 checksum) in 14 groups of four. Its HPKE key pair opens the
+recipient slots of backups; tills keep only the public half.
+
+```ts
+export interface RecoveryKeyPair {
+    readonly keyId: string;
+    readonly publicKey: Uint8Array;
+    readonly privateKey: Uint8Array;
+}
+```
+
+A recipient a backup is sealed to: the pinned public half of a recovery key.
+
+```ts
+export interface RecoveryRecipient {
+    readonly keyId: string;
+    readonly publicKey: Uint8Array;
+}
+```
+
+A fresh recovery secret from the native random generator.
+
+```ts
+generateRecoverySecret(crypto: Pick<TransferCrypto, "randomHex">): Uint8Array<ArrayBufferLike>;
+```
+
+The recovery key's stable ID: the first 16 bytes, in hex, of SHA-256("kolo.backup-recovery-key.v1\0" ‖ public key).
+
+```ts
+recoveryKeyId(publicKey: Uint8Array, crypto: Pick<TransferCrypto, "sha256Bytes">): Promise<string>;
+```
+
+The recovery key pair of a secret: RFC 9180 DeriveKeyPair, so S is used for nothing else.
+
+```ts
+deriveRecoveryKey(secret: Uint8Array, crypto: TransferCrypto): Promise<RecoveryKeyPair>;
+```
+
+Writes a secret for the owner: `XXXX-XXXX-…`, 14 groups of four Crockford base32 symbols.
+
+```ts
+formatRecoveryKey(secret: Uint8Array, crypto: Pick<TransferCrypto, "sha256Bytes">): Promise<string>;
+```
+
+Reads a typed recovery key: case, spaces and hyphens are ignored and O, I and L read as 0, 1 and 1.
+A wrong length, a non-zero padding bit or a checksum mismatch is `invalid_recovery_key`, before any
+decryption is attempted.
+
+```ts
+parseRecoveryKey(text: string, crypto: Pick<TransferCrypto, "sha256Bytes">): Promise<Uint8Array<ArrayBufferLike>>;
+```
+
 ## [packages/core/src/backup/snapshot.ts](../../packages/core/src/backup/snapshot.ts)
 
 Current journal/legacy coverage derived from this exact snapshot, not a live database's later cursor.
@@ -6079,7 +6628,8 @@ Current journal/legacy coverage derived from this exact snapshot, not a live dat
 snapshotBoundary(tx: Queryable, businessId: string): { audit_watermark: number; applied_count: number; origins: { device_id: string; maximum_sequence: number; next_local_sequence?: number; }[]; legacy: { business_id: string; provenance: "unsigned_v1_snapshot"; outbox_next: number; audit_watermark: number; }[]; };
 ```
 
-Checks the exact shipped SQLite schema before executing any imported schema-triggered mutation.
+Checks the exact shipped SQLite schema before executing any imported schema-triggered mutation, then, once migrated,
+the business consistency invariants; records that disagree fail with `inconsistent_records`.
 
 ```ts
 validateSnapshot(database: Database, manifest: SnapshotManifest, files: SnapshotPort): Promise<void>;
@@ -6088,13 +6638,13 @@ validateSnapshot(database: Database, manifest: SnapshotManifest, files: Snapshot
 Packs a small signed manifest plus raw SQLite bytes, avoiding double-base64 expansion.
 
 ```ts
-encodeSnapshot(signed: SignedSnapshot, bytes: Uint8Array, crypto: TransferCrypto, limits: TransferLimits = STANDARD_TRANSFER_LIMITS): Uint8Array<ArrayBufferLike>;
+encodeSnapshot(signed: SignedSnapshot, bytes: Uint8Array, crypto: TransferCrypto): Uint8Array<ArrayBufferLike>;
 ```
 
 Bounds metadata/image independently before schema parsing or opening SQLite.
 
 ```ts
-decodeSnapshot(bytes: Uint8Array, crypto: TransferCrypto, limits: TransferLimits = STANDARD_TRANSFER_LIMITS): { signed: { manifest: { format: "kolo.snapshot"; format_version: 1; snapshot_id: string; kind: "backup" | "enrollment"; schema_version: number; created_at: string; business: { id: string; name: string; currency: "XAF"; }; ... 7 more ...; target?: { ...; }; }; digest: string; signature: string; }; image: Uint8Array<....;
+decodeSnapshot(bytes: Uint8Array, crypto: TransferCrypto): { signed: { manifest: { format: "kolo.snapshot"; format_version: 1; snapshot_id: string; kind: "backup" | "enrollment"; schema_version: number; created_at: string; business: { id: string; name: string; currency: "XAF"; }; ... 8 more ...; shop_keys?: { ...; }[]; }; digest: string; signature: string; }; image: Uint8Ar...;
 ```
 
 ## [packages/core/src/backup/types.ts](../../packages/core/src/backup/types.ts)
@@ -6105,7 +6655,7 @@ Bounded portable snapshot; native readers enforce this before allocating file co
 const MAX_SNAPSHOT_BYTES: number;
 ```
 
-Maximum encoded encrypted file, including base64 and manifest overhead. Content is deflated before encryption.
+Maximum encrypted file on disk. Content is deflated before encryption.
 
 ```ts
 const MAX_TRANSFER_FILE_BYTES: number;
@@ -6121,8 +6671,21 @@ Stable recovery/transfer failures without customer data, passwords or native exc
 
 ```ts
 class TransferError extends Error {
-  code: "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "scope_mismatch" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled";
+  code: "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "invalid_recovery_key" | "recovery_key_required" | "untrusted_backup" | "scope_mismatch" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "sync_keys_unavailable" | "inconsistent_records";
   constructor(code: TransferError["code"]);
+}
+```
+
+Argon2id cost and output parameters; `secret` and `associatedData` exist for the RFC 9106 test vector.
+
+```ts
+export interface Argon2Params {
+    readonly memoryKiB: number;
+    readonly passes: number;
+    readonly parallelism: number;
+    readonly length: number;
+    readonly secret?: Uint8Array;
+    readonly associatedData?: Uint8Array;
 }
 ```
 
@@ -6138,10 +6701,47 @@ export interface TransferCrypto extends ExchangeCrypto {
         tag: string;
     }>;
     decrypt(keyHex: string, nonceHex: string, ciphertext: string, tagHex: string, aad: string): Promise<Uint8Array>;
+    sealBytes(keyHex: string, nonceHex: string, bytes: Uint8Array, aad: Uint8Array): Promise<Uint8Array>;
+    openBytes(keyHex: string, nonceHex: string, sealed: Uint8Array, aad: Uint8Array): Promise<Uint8Array>;
+    hmacSha256(key: Uint8Array, data: Uint8Array): Uint8Array;
+    x25519(privateKey: Uint8Array, publicKey: Uint8Array): Uint8Array;
+    createSha256(): {
+        update(bytes: Uint8Array): void;
+        digest(): string;
+    };
+    argon2id(password: Uint8Array, salt: Uint8Array, params: Argon2Params): Promise<Uint8Array>;
     encodeText(text: string): Uint8Array;
     decodeText(bytes: Uint8Array): string;
     encodeBase64(bytes: Uint8Array): string;
     decodeBase64(text: string): Uint8Array;
+}
+```
+
+A compacted snapshot image on private storage, read in chunks; `close` deletes it.
+
+```ts
+export interface ImageReader {
+    readonly size: number;
+    read(offset: number, length: number): Promise<Uint8Array>;
+    close(): Promise<void>;
+}
+```
+
+A private staging file being written chunk by chunk; `open` checks its size and opens it, `discard` deletes it.
+
+```ts
+export interface ImageWriter {
+    write(bytes: Uint8Array): Promise<void>;
+    open(): Promise<SnapshotHandle>;
+    discard(): Promise<void>;
+}
+```
+
+Where a streamed transfer file goes: a private temporary file, or memory in tests.
+
+```ts
+export interface ByteSink {
+    write(bytes: Uint8Array): Promise<void>;
 }
 ```
 
@@ -6151,6 +6751,7 @@ Isolated private staging database; activation must durably compare-and-switch th
 export interface SnapshotHandle {
     readonly database: Database;
     bytes(): Promise<Uint8Array>;
+    image(): Promise<ImageReader>;
     discard(): Promise<void>;
     activate(expectedTarget: Database): Promise<Database>;
 }
@@ -6160,26 +6761,21 @@ Platform boundary for SQLite-consistent copies and bounded private staging/activ
 
 ```ts
 export interface SnapshotPort {
-    limits?(): TransferLimits;
     capture(source: Database): Promise<SnapshotHandle>;
     open(bytes: Uint8Array): Promise<SnapshotHandle>;
+    receive(): Promise<ImageWriter>;
     empty(): Promise<SnapshotHandle>;
 }
 ```
 
-Encrypted UTF-8 document ready for a user-selected file destination.
+A file ready for a user-selected destination: an encrypted container (ADR-035) or a
+plaintext UTF-8 JSON invitation/request. Hosts write `bytes` unchanged.
 
 ```ts
 export interface TransferDocument {
     readonly filename: string;
-    readonly text: string;
+    readonly bytes: Uint8Array;
 }
-```
-
-The size profile a snapshot port runs under.
-
-```ts
-limitsOf(files: Pick<SnapshotPort, "limits">): TransferLimits;
 ```
 
 ## [packages/core/src/data/auth/login.ts](../../packages/core/src/data/auth/login.ts)
@@ -6613,6 +7209,17 @@ money the shopkeeper has in their hand.
 recordCustomerPayment(database: Database, payment: CustomerPayment): void;
 ```
 
+The change a customer kept on account at a sale (`KeptChange` in the application operations): the customer
+payments noted with the sale's number at the sale's exact time. Zero when there are none.
+
+```ts
+changeKeptOnAccount(tx: Queryable, businessId: string, sale: {
+    readonly customerId: string | null;
+    readonly number: string;
+    readonly occurredAt: string;
+}): number;
+```
+
 Returns a customer, or undefined if this device does not hold them.
 
 ```ts
@@ -6660,6 +7267,15 @@ never been given one.
 
 ```ts
 wouldExceedCreditLimit(tx: Queryable, businessId: string, customer: Customer, furtherMinor: number): boolean;
+```
+
+## [packages/core/src/data/database/backup-key-migration.ts](../../packages/core/src/data/database/backup-key-migration.ts)
+
+Shop backup recovery keys (ADR-036): the public halves the owner pinned through signed `SHOP_BACKUP_KEY` facts.
+Business data, so snapshots carry it; the secret is never stored anywhere.
+
+```ts
+const BACKUP_KEY_MIGRATION: Migration;
 ```
 
 ## [packages/core/src/data/database/changes.ts](../../packages/core/src/data/database/changes.ts)
@@ -7013,9 +7629,7 @@ openDatabase(options: OpenOptions = {}): Database;
 Native file slots and private SQLite staging, shared by desktop and real-database recovery tests.
 
 ```ts
-nodeWorkspaceFiles(directory: string, options: {
-    readonly limits?: () => TransferLimits;
-} = {}): SnapshotPort & { limits(): TransferLimits; openActive(): Database; activeId(): string; saved(): Promise<readonly { id: string; name: string; }[]>; selectSaved(id: string, target: Database): Promise<...>; close(): void; };
+nodeWorkspaceFiles(directory: string): SnapshotPort & { openActive(): Database; activeId(): string; saved(): Promise<readonly { id: string; name: string; }[]>; selectSaved(id: string, target: Database): Promise<...>; close(): void; };
 ```
 
 ## [packages/core/src/data/database/photos-migration.ts](../../packages/core/src/data/database/photos-migration.ts)
@@ -7710,7 +8324,7 @@ upsertCategory(tx: Queryable, item: Category, deviceId: string): boolean;
 Size limits for product photos.
 
 ```ts
-const PHOTO_LIMITS: { readonly maxBytes: number; readonly maxSide: 512; readonly shopBytes: number; readonly largeShopBytes: number; };
+const PHOTO_LIMITS: { readonly maxBytes: number; readonly maxSide: 512; readonly shopBytes: number; };
 ```
 
 The encodings a photo may be stored in.
@@ -8531,6 +9145,16 @@ period's purchases instead, which is where the goods it bought are.
 
 ```ts
 supplierPaymentsBetween(tx: Queryable, businessId: string, from: string, to: string): Line[];
+```
+
+What one unit of a product costs now under `method`, or undefined when nothing says.
+
+A sale freezes this on its lines at checkout, so the profit it reports and the
+valuation of the stock left behind read the same cost (§8); returns and later
+reports keep the frozen figure.
+
+```ts
+currentUnitCost(tx: Queryable, businessId: string, productId: string, method: CostingMethod = "LATEST_COST"): number;
 ```
 
 What the stock on the shelves is worth (§8, §21).
@@ -9977,7 +10601,9 @@ wants two lines at different prices changes the price on one, which
 
 The price and name are copied from the product **now**, and stay copied: a
 receipt reprinted next year has to show what was charged, and the product
-will have been repriced by then (§41).
+will have been repriced by then (§41). The cost copied here is only a
+preview: completing the sale freezes the cost from the shared costing policy
+(§8), so the editable purchase price never decides a sale's profit.
 
 ```ts
 addProduct(state: CartState, product: Product, ids: {
@@ -10551,6 +11177,18 @@ Positive balances are owed by the customer; negative balances are credit held by
 
 ```ts
 customerSettlement(balanceBeforeMinor: number, onAccountMinor: number): CustomerSettlement;
+```
+
+The change a named customer can leave on their account: cash handed over beyond the cash due, on a sale with nothing
+left owing. Zero when there is nothing to keep: no customer, nothing tendered or too little, or a sale left on account.
+
+```ts
+keepableChange(input: {
+    readonly hasCustomer: boolean;
+    readonly cashDueMinor: number;
+    readonly tenderedMinor: number | undefined;
+    readonly outstandingMinor: number;
+}): number;
 ```
 
 ## [packages/core/src/rules/pricing.ts](../../packages/core/src/rules/pricing.ts)

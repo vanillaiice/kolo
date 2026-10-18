@@ -3,7 +3,7 @@
 export type Role = "admin" | "viewer";
 export interface Me { readonly username: string; readonly role: Role; readonly idleMinutes: number }
 export interface Code { readonly codeId: string; readonly label: string; readonly createdBy: string; readonly createdAt: string; readonly expiresAt: string;
-  readonly state: "unused" | "used" | "expired" | "cancelled"; readonly usedAt: string | null; readonly shopId: string | null; readonly shopName: string | null; readonly includedMonths: number }
+  readonly state: "unused" | "used" | "expired" | "cancelled"; readonly usedAt: string | null; readonly shopId: string | null; readonly shopName: string | null; readonly includedMonths: number; readonly recoveryShopId: string | null }
 export interface Issued { readonly codeId: string; readonly code: string; readonly label: string; readonly expiresAt: string; readonly qr: string }
 export interface Shop { readonly shopId: string; readonly name: string; readonly status: "active" | "suspended" | "removed"; readonly enrolledAt: string;
   readonly removeAfter: string | null; readonly devices: number; readonly lastSeenAt: string | null; readonly facts: number; readonly bytes: number;
@@ -50,6 +50,8 @@ export const api = {
   health: () => call<Health>("GET", "/health"),
   codes: () => call<{ codes: Code[]; canIssue: boolean; publicUrl: string | null }>("GET", "/codes"),
   issue: (label: string, days: number, includedMonths: number) => call<Issued>("POST", "/codes", { label, days, includedMonths }),
+  /** An owner-recovery code for an existing shop whose tills were all lost (ADR-036). */
+  issueRecovery: (shopId: string) => call<Issued>("POST", "/codes", { label: "", days: 1, recoveryShopId: shopId }),
   cancel: (codeId: string) => call<void>("POST", `/codes/${codeId}/cancel`),
   shops: (search: string) => call<{ shops: Shop[]; edition: "selfhost" | "hosted" }>("GET", `/shops?search=${encodeURIComponent(search)}`),
   pay: (shopId: string, months: number, amountMinor: number, method: Method, reference: string) => call<{ paidUntilAfter: string }>("POST", `/shops/${shopId}/payments`, { months, amountMinor, method, reference }),

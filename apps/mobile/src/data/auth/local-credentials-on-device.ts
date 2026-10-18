@@ -5,6 +5,7 @@ import type { ExchangeCrypto } from "@kolo/core/exchange/types";
 import type { SealingCrypto } from "@kolo/core/application/sealed-sync";
 import type { CredentialPort } from "@kolo/core/identity/types";
 import { secretStoreOnDevice } from "./store-on-device.ts";
+import { X25519_PKCS8_PREFIX, X25519_SPKI_PREFIX } from "@kolo/core/backup/hpke";
 
 /** Native asynchronous PBKDF2 and Ed25519; no JS digest or plaintext storage fallback. */
 export const credentialCryptoOnDevice: CredentialCrypto = {
@@ -68,6 +69,10 @@ export const transferCryptoOnDevice = nativeTransferCrypto({
  encodeText:text=>new Uint8Array(Buffer.from(text,"utf8")),decodeText:bytes=>Buffer.from(bytes).toString("utf8"),
  encodeBase64:bytes=>Buffer.from(bytes).toString("base64"),decodeBase64:text=>new Uint8Array(Buffer.from(text,"base64")),
  fromHex:hex=>new Uint8Array(Buffer.from(hex,"hex")),toHex:bytes=>Buffer.from(bytes).toString("hex"),
+ createSha256:()=>{const hash=QuickCrypto.createHash("sha256");return {update:(bytes:Uint8Array)=>{hash.update(bytes);},digest:()=>String(hash.digest("hex"))};},
+hmacSha256:(key,data)=>new Uint8Array(QuickCrypto.createHmac("sha256",key).update(data).digest()),
+ x25519:(privateKey,publicKey)=>{const shared=QuickCrypto.diffieHellman({privateKey:QuickCrypto.createPrivateKey({key:Buffer.from([...X25519_PKCS8_PREFIX,...privateKey]),format:"der",type:"pkcs8"}),publicKey:QuickCrypto.createPublicKey({key:Buffer.from([...X25519_SPKI_PREFIX,...publicKey]),format:"der",type:"spki"})});if(shared===undefined)throw new Error("native agreement unavailable");return new Uint8Array(shared);},
+ argon2id:(password,salt,params)=>new Promise<Uint8Array>((resolve,reject)=>QuickCrypto.argon2("argon2id",{message:password,nonce:salt,memory:params.memoryKiB,passes:params.passes,parallelism:params.parallelism,tagLength:params.length,...(params.secret===undefined?{}:{secret:params.secret}),...(params.associatedData===undefined?{}:{associatedData:params.associatedData})},(error,key)=>error===null?resolve(new Uint8Array(key)):reject(new Error("native derivation failed")))),
  cipher:(key,nonce)=>QuickCrypto.createCipheriv("aes-256-gcm",Buffer.from(key,"hex"),Buffer.from(nonce,"hex"),{authTagLength:16}),
  decipher:(key,nonce)=>QuickCrypto.createDecipheriv("aes-256-gcm",Buffer.from(key,"hex"),Buffer.from(nonce,"hex"),{authTagLength:16}),
 });

@@ -5,7 +5,7 @@
  * The working tree must be clean and the release tag (vX.Y.Z) must
  * point at HEAD and already be on origin, so the pushed commit passed the pre-push check.
  * The draft is created when missing and published once every target is present.
- * A published release is never modified.
+ * A published release is never modified. Each build must pass its packaged or on-device verification before upload.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -17,13 +17,13 @@ const platform = process.argv[2];
 const json = path => JSON.parse(readFileSync(join(root, path), "utf8"));
 const targets = {
   android: { version: () => json("apps/mobile/app.json").expo.version, directory: "release/mobile",
-    build: ["npm", ["run", "build:mobile:android"]], sums: "SHA256SUMS-android.txt", hashed: name => name.endsWith(".apk"),
+    build: ["npm", ["run", "build:mobile:android"]], verify: ["npm", ["run", "verify:android"]], sums: "SHA256SUMS-android.txt", hashed: name => name.endsWith(".apk"),
     uploads: (name, version) => /^KOLO-.+-android-(arm64-v8a|armeabi-v7a|universal)\.apk$/.test(name) && name.startsWith(`KOLO-${version}-android-`) },
   linux: { version: () => json("apps/desktop/package.json").version, directory: "release/desktop",
-    build: ["npm", ["run", "dist:desktop:linux"]], sums: "SHA256SUMS-linux.txt", hashed: name => /\.(AppImage|deb)$/.test(name),
+    build: ["npm", ["run", "dist:desktop:linux"]], verify: ["npm", ["run", "verify:desktop:linux"]], sums: "SHA256SUMS-linux.txt", hashed: name => /\.(AppImage|deb)$/.test(name),
     uploads: (name, version) => name.startsWith(`KOLO-${version}-linux-`) || name === "latest-linux.yml" },
   windows: { version: () => json("apps/desktop/package.json").version, directory: "release/desktop",
-    build: ["npm", ["run", "dist:desktop:win"]], sums: "SHA256SUMS-windows.txt", hashed: name => name.endsWith(".exe"),
+    build: ["npm", ["run", "dist:desktop:win"]], verify: ["npm", ["run", "verify:desktop:win"]], sums: "SHA256SUMS-windows.txt", hashed: name => name.endsWith(".exe"),
     uploads: (name, version) => name.startsWith(`KOLO-${version}-win-`) || name === "latest.yml" },
 };
 const target = targets[platform];
@@ -50,6 +50,9 @@ if (existing.status === 0 && existing.stdout.trim() !== "true") fail(`${tag} is 
 const environment = platform === "android" ? { ANDROID_HOME: process.env.ANDROID_HOME ?? join(process.env.HOME ?? "", "Android/Sdk") }
   : { CSC_IDENTITY_AUTO_DISCOVERY: process.env.CSC_LINK ? "true" : "false" };
 run(target.build[0], target.build[1], { env: environment });
+// Nothing is uploaded until the build passes in its own runtime: the packaged desktop app, or the app on an Android
+// device. Node tests run on another runtime and cannot prove it (scripts/verify-desktop-build.mjs, verify-android.mjs).
+run(target.verify[0], target.verify[1], { env: environment });
 
 const directory = join(root, target.directory);
 const built = readdirSync(directory).filter(name => target.uploads(name, version));

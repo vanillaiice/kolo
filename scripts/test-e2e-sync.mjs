@@ -134,7 +134,7 @@ try {
   step("Both tills are consistent; the headless till's backup verifies");
   const ownerReport = checkIntegrity(ownerDatabase);
   assert.equal(ownerReport.consistent, true, JSON.stringify(ownerReport.issues));
-  const backup = join(directory, "headless.kolo-backup.json");
+  const backup = join(directory, "headless.kolo-backup");
   kolo(["till", "backup", "--state", tillState, "--out", backup]);
   assert.equal(kolo(["backup", "verify", backup]).json.businessName, "E2E shop");
   const tillReport = kolo(["check", "--backup", backup], [0, 1]).json;

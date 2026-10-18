@@ -18,10 +18,10 @@ The wrapper builds the CLI each time. For repeated use, build once and run
 npm run kolo -- report sales --db shop-copy.db --from 2026-10-01 --to 2026-11-01
 npm run kolo -- export products --db shop-copy.db --format csv --out products.csv
 npm run kolo -- check --db shop-copy.db
-npm run kolo -- backup verify shop.kolo-backup.json --password-file /secure/password
-npm run kolo -- backup decrypt shop.kolo-backup.json --password-file /secure/password --out shop-copy.db
-npm run kolo -- demo --out demo.kolo-backup.json
-npm run kolo -- fixture --products 10000 --sales 2000 --out fixture.kolo-backup.json
+npm run kolo -- backup verify shop.kolo-backup --password-file /secure/password
+npm run kolo -- backup decrypt shop.kolo-backup --password-file /secure/password --out shop-copy.db
+npm run kolo -- demo --out demo.kolo-backup
+npm run kolo -- fixture --products 10000 --sales 2000 --out fixture.kolo-backup
 ```
 
 - Use a consistent SQLite copy taken while the app is closed or via SQLite's backup
@@ -62,7 +62,7 @@ npm run kolo -- till connect --state ./automation-till --secret-file /secure/til
 npm run kolo -- till sync --state ./automation-till --secret-file /secure/till-secret
 npm run kolo -- till import products catalogue.json --state ./automation-till --secret-file /secure/till-secret
 npm run kolo -- till report sales --state ./automation-till --secret-file /secure/till-secret --out sales.json
-npm run kolo -- till backup --state ./automation-till --secret-file /secure/till-secret --password-file /secure/password --out shop.kolo-backup.json
+npm run kolo -- till backup --state ./automation-till --secret-file /secure/till-secret --password-file /secure/password --out shop.kolo-backup
 ```
 
 Use `KOLO_TILL_SECRET` or `--secret-file` for the till's local code. Headless backup

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Text, View } from "react-native";
-import { cancelBackupPreview, createBackup, previewBackup, restoreWorkspace, type BackupPreview } from "@kolo/core/application/backup";
+import { cancelBackupPreview, previewBackupFile, restoreWorkspace, writeBackup, type BackupPreview } from "@kolo/core/application/backup";
 import { confirmPairing, createPairingInvite, previewPairingInvite, previewPairingRequest } from "@kolo/core/application/pairing";
 import { exchangeDestinations, exchangeDiagnostics, exportBundle, exportReceipt, importBundle, importReceipt, previewBundle, receivedBatches, type BundlePreview } from "@kolo/core/application/file-exchange";
 import { exchangeStatus } from "@kolo/core/application/event-delivery";
@@ -11,12 +11,14 @@ import { syncFailureKey } from "../../app/failures.ts";
 import { sealingCryptoOnDevice } from "../../data/auth/local-credentials-on-device.ts";
 import { retryDeferred } from "@kolo/core/application/event-application";
 import { ownerRecoveryCode } from "@kolo/core/identity/recovery";
+import { backupRecoveryKeys, confirmBackupRecoveryKey, prepareBackupRecoveryKey, type PendingBackupKey } from "@kolo/core/application/backup-key";
+import { printDocument } from "../../data/output/print-on-device.ts";
 import { validateLocalSecret } from "@kolo/core/identity/credentials";
 import type { TransferDocument } from "@kolo/core/backup/types";
-import { transferCryptoOnDevice as crypto } from "../../data/auth/local-credentials-on-device.ts";
-import { pickTransferFile, saveTransferFile } from "../../data/transfer/files-on-device.ts";
+import { sealingCryptoOnDevice as crypto } from "../../data/auth/local-credentials-on-device.ts";
+import { pickTransferFile, prepareStreamedFile, saveTransferFile, type PickedFile, type PreparedFile as PreparedBackup } from "../../data/transfer/files-on-device.ts";
 import { replaceShop } from "../../data/transfer/replace-shop.ts";
-import { transferFileKind, type TransferFileKind } from "../../data/transfer/file-kind.ts";
+import { transferFileKind, type TransferFileKind } from "@kolo/core/backup/file-kind";
 import { useText } from "../../app/i18n.tsx";
 import { useLeaveGuard, useNav } from "../../app/navigation.tsx";
 import { useRevision, useSession } from "../../app/session.tsx";
@@ -29,14 +31,23 @@ import { PhotoUsage } from "../products/photos.tsx";
 const platform = Platform.OS === "ios" ? "IOS" : "ANDROID";
 
 /** File work shared by the device tasks: pick a recognized file and save prepared documents through system UI. */
-function useFiles(): { pick: (expected: TransferFileKind) => Promise<string | undefined>; save: (document: TransferDocument | undefined) => Promise<boolean> } {
+/** Largest file read whole: journal batches and pairing proofs. Backups are read in pieces instead. */
+const SMALL_FILE_BYTES = 10 * 1024 * 1024;
+function useFiles(): { pick: (expected: TransferFileKind) => Promise<Uint8Array | undefined>; pickLarge: (expected: TransferFileKind) => Promise<PickedFile | undefined>; save: (document: TransferDocument | undefined) => Promise<boolean> } {
   const session = useSession();
+  const pickLarge = async (expected: TransferFileKind): Promise<PickedFile | undefined> => {
+    const file = await session.systemUi(() => pickTransferFile());
+    if (file === undefined) return undefined;
+    try { if (transferFileKind(await file.read(0, Math.min(file.size, 128 * 1024)), crypto) !== expected) throw new FormProblem("wrongFileKind"); }
+    catch (error) { await file.close(); throw error; }
+    return file;
+  };
   return {
+    pickLarge,
     pick: async expected => {
-      const text = await session.systemUi(() => pickTransferFile());
-      if (text === undefined) return undefined;
-      if (transferFileKind(text) !== expected) throw new FormProblem("wrongFileKind");
-      return text;
+      const file = await pickLarge(expected);
+      if (file === undefined) return undefined;
+      try { return await file.bytes(SMALL_FILE_BYTES); } finally { await file.close(); }
     },
     save: async document => document === undefined ? false : session.systemUi(() => saveTransferFile(document)),
   };
@@ -68,6 +79,7 @@ export function DevicesScreen(): React.JSX.Element {
     <RowGroup title={t("backupTitle")}>
       <ListRow title={t("createBackup")} subtitle={t("createBackupHelp")} onPress={() => nav.push("backupCreate")} />
       <ListRow title={t("restoreBackup")} subtitle={t("restoreBackupHelp")} onPress={() => nav.push("backupRestore")} />
+      <ListRow title={t("backupKeyTitle")} subtitle={t("backupKeyHelp")} onPress={() => nav.push("backupKey")} />
       <ListRow title={t("viewRecoveryKey")} onPress={() => nav.push("recoveryKey")} />
     </RowGroup>
     <RowGroup title={t("pairDevices")}>
@@ -84,26 +96,36 @@ export function DevicesScreen(): React.JSX.Element {
 
 /** Encrypted backup of the whole shop, with or without photos. */
 export function BackupCreateScreen(): React.JSX.Element {
-  const { t } = useText(), s = useStyles(), nav = useNav(), { context, files } = useSession(), action = useAction(), io = useFiles();
-  const [password, setPassword] = useState(""), [confirmation, setConfirmation] = useState(""), [photos, setPhotos] = useState(true), [document, setDocument] = useState<TransferDocument>();
-  const save = (doc: TransferDocument | undefined): Promise<void> => action.runAsync(async () => io.save(doc), saved => action.show({ tone: saved ? "success" : "warning", key: saved ? "backupSaved" : "notSaved" }));
+  const { t } = useText(), s = useStyles(), nav = useNav(), { context, files } = useSession(), action = useAction();
+  const [password, setPassword] = useState(""), [confirmation, setConfirmation] = useState(""), [photos, setPhotos] = useState(true), [prepared, setPrepared] = useState<PreparedBackup>();
+  const hasKey = useMemo(() => { try { return backupRecoveryKeys(context).length > 0; } catch { return false; } }, [context]);
+  const session = useSession(), held = useRef<PreparedBackup | undefined>(undefined);
+  useEffect(() => () => held.current?.discard(), []);
+  const done = (saved: boolean): void => action.show({ tone: saved ? "success" : "warning", key: saved ? "backupSaved" : "notSaved" });
+  // The backup streams into the app's private cache (ADR-035); saving copies it out, and a closed folder picker keeps it for another try.
+  const save = (file: PreparedBackup): Promise<void> => action.runAsync(async () => { const saved = await session.systemUi(() => file.save()); if (saved) { held.current = undefined; setPrepared(undefined); } return saved; }, done);
   return <Screen title={t("createBackup")} onBack={nav.back} footer={<>{action.notice}
     <Button label={t("createEncryptedBackup")} busy={action.busy} disabled={password === ""} onPress={() => { void action.runAsync(async () => {
       if (password !== confirmation) throw new FormProblem("passwordsMismatch");
-      const doc = await createBackup(context, password, files, crypto, { includePhotos: photos });
-      setPassword(""); setConfirmation(""); setDocument(doc); return io.save(doc);
-    }, saved => action.show({ tone: saved ? "success" : "warning", key: saved ? "backupSaved" : "notSaved" })); }} /></>}>
+      held.current?.discard(); held.current = undefined; setPrepared(undefined);
+      const file = await prepareStreamedFile(async sink => (await writeBackup(context, password, files, crypto, sink, { includePhotos: photos })).filename);
+      held.current = file; setPassword(""); setConfirmation(""); setPrepared(file);
+      const saved = await session.systemUi(() => file.save()); if (saved) { held.current = undefined; setPrepared(undefined); } return saved;
+    }, done); }} /></>}>
     <Section><Text style={s.muted}>{t("backupPasswordRule")}</Text>
       <Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" /><Field label={t("confirmPassword")} value={confirmation} onChange={setConfirmation} kind="secret" />
-      <Toggle label={t("includePhotos")} value={photos} onChange={setPhotos} hint={t("includePhotosHelp")} /><PhotoUsage /></Section>
-    <PreparedFile document={document} busy={action.busy} onSave={() => { void save(document); }} />
+      <Toggle label={t("includePhotos")} value={photos} onChange={setPhotos} hint={t("includePhotosHelp")} /><PhotoUsage />
+      {hasKey && <Text style={s.muted}>{t("backupAlsoKey")}</Text>}</Section>
+    {prepared !== undefined && <Section><Text selectable style={s.muted}>{t("readyFilename", { filename: prepared.filename })}</Text><Button label={t("saveReadyFile")} busy={action.busy} onPress={() => { void save(prepared); }} /></Section>}
   </Screen>;
 }
 
 /** Owner restore over this shop: check the file, then typed names and a new code; the restored shop opens locked. */
 export function BackupRestoreScreen(): React.JSX.Element {
   const { t, language } = useText(), s = useStyles(), nav = useNav(), session = useSession(), { context, files, ports, slots, businessName } = session, action = useAction(), io = useFiles();
-  const [text, setText] = useState<string>(), [password, setPassword] = useState(""), [preview, setPreview] = useState<BackupPreview>();
+  const [file, setFile] = useState<PickedFile>(), [password, setPassword] = useState(""), [preview, setPreview] = useState<BackupPreview>(), [withKey, setWithKey] = useState(false);
+  const picked = useRef<PickedFile | undefined>(undefined);
+  useEffect(() => () => { void picked.current?.close(); }, []);
   const [typed, setTyped] = useState(""), [label, setLabel] = useState(() => t("defaultTill")), [secret, setSecret] = useState(""), [confirmation, setConfirmation] = useState(""), [confirming, setConfirming] = useState(false);
   const staged = useRef<BackupPreview | undefined>(undefined);
   useEffect(() => () => { if (staged.current !== undefined) void cancelBackupPreview(staged.current); }, []);
@@ -128,11 +150,12 @@ export function BackupRestoreScreen(): React.JSX.Element {
     <Notice tone="warning" text={t("replaceWarning", { current: businessName })} />
     {working !== undefined && <Working text={t(working)} />}
     <Section title={t("stepFile")}>
-      <Button label={text === undefined ? t("pickFile") : t("pickAnotherFile")} variant="secondary" disabled={action.busy} onPress={() => { void action.runAsync(async () => { await showing("workingReadFile"); const picked = await io.pick("backup"); if (picked !== undefined) { setText(picked); setPreview(undefined); } }); }} />
-      {text !== undefined && <><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
+      <Button label={file === undefined ? t("pickFile") : t("pickAnotherFile")} variant="secondary" disabled={action.busy} onPress={() => { void action.runAsync(async () => { await showing("workingReadFile"); const next = await io.pickLarge("backup"); if (next !== undefined) { await picked.current?.close(); picked.current = next; setFile(next); setPreview(undefined); } }); }} />
+      {file !== undefined && <><Field label={withKey ? t("recoveryKeyField") : t("filePassword")} value={password} onChange={setPassword} kind={withKey ? "text" : "secret"} />
+        <Toggle label={t("useRecoveryKey")} value={withKey} onChange={value => { setWithKey(value); setPassword(""); }} />
         <Button label={t("checkBackup")} disabled={action.busy || password === ""} onPress={() => { void action.runAsync(async () => {
           if (staged.current !== undefined) { await cancelBackupPreview(staged.current); staged.current = undefined; }
-          await showing("workingCheckBackup"); const checked = await previewBackup(text, password, files, crypto); staged.current = checked; setPreview(checked); setPassword("");
+          await showing("workingCheckBackup"); const checked = await previewBackupFile(file, withKey ? { recoveryKey: password } : password, files, crypto); staged.current = checked; setPreview(checked); setPassword("");
         }); }} /></>}
       <Text style={s.muted}>{t("importLimitsHelp")}</Text>
     </Section>
@@ -196,7 +219,7 @@ function AddTillByCode({ allowStaff }: { readonly allowStaff: boolean }): React.
 export function AddTillScreen(): React.JSX.Element {
   const { t } = useText(), s = useStyles(), { colors } = useTheme(), nav = useNav(), { context, files } = useSession(), action = useAction(), io = useFiles();
   const [allowStaff, setAllowStaff] = useState(false), [fingerprint, setFingerprint] = useState<string>(), [document, setDocument] = useState<TransferDocument>();
-  const [request, setRequest] = useState<{ text: string; view: Awaited<ReturnType<typeof previewPairingRequest>> }>(), [code, setCode] = useState(""), [password, setPassword] = useState(""), [confirmation, setConfirmation] = useState("");
+  const [request, setRequest] = useState<{ file: Uint8Array; view: Awaited<ReturnType<typeof previewPairingRequest>> }>(), [code, setCode] = useState(""), [password, setPassword] = useState(""), [confirmation, setConfirmation] = useState("");
   const saved = (ok: boolean): void => action.show({ tone: ok ? "success" : "warning", key: ok ? "fileSaved" : "notSaved" });
   const [byFiles, setByFiles] = useState(false);
   return <Screen title={t("addTill")} onBack={nav.back} footer={action.notice}>
@@ -207,13 +230,13 @@ export function AddTillScreen(): React.JSX.Element {
     <Toggle label={t("pairByFiles")} value={byFiles} onChange={setByFiles} />
     {byFiles && <><Section title={t("stepInvite")}>
       <Button label={t("createInvite")} busy={action.busy} onPress={() => { void action.runAsync(async () => {
-        const doc = await createPairingInvite(context, crypto, allowStaff); setDocument(doc); setFingerprint((await previewPairingInvite(doc.text, crypto)).fingerprint); return io.save(doc);
+        const doc = await createPairingInvite(context, crypto, allowStaff); setDocument(doc); setFingerprint((await previewPairingInvite(doc.bytes, crypto)).fingerprint); return io.save(doc);
       }, saved); }} />
       {fingerprint !== undefined && <><Text style={s.muted}>{t("compareFingerprintHelp")}</Text><Text selectable style={[s.mono, { fontSize: 18, color: colors.text }]}>{fingerprint}</Text></>}
     </Section>
     <Section title={t("stepRequest")}>
       <Button label={t("checkRequest")} variant="secondary" busy={action.busy} onPress={() => { void action.runAsync(async () => {
-        const text = await io.pick("request"); if (text === undefined) return; setRequest({ text, view: await previewPairingRequest(text, crypto) });
+        const file = await io.pick("request"); if (file === undefined) return; setRequest({ file, view: await previewPairingRequest(file, crypto) });
       }); }} />
       {request !== undefined && <>
         <Facts items={[[t("deviceName"), request.view.deviceLabel], [t("shopName"), request.view.businessName], [t("pairingCodeLabel"), request.view.verificationCode, "strong"]]} />
@@ -221,7 +244,7 @@ export function AddTillScreen(): React.JSX.Element {
         <Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" hint={t("enrollmentPasswordHelp")} /><Field label={t("confirmPassword")} value={confirmation} onChange={setConfirmation} kind="secret" />
         <Button label={t("approvePairing")} busy={action.busy} disabled={code.trim() === "" || password === ""} onPress={() => { void action.runAsync(async () => {
           if (password !== confirmation) throw new FormProblem("passwordsMismatch");
-          const doc = await confirmPairing(context, request.text, code.trim(), password, files, crypto); setDocument(doc); setPassword(""); setConfirmation(""); return io.save(doc);
+          const doc = await confirmPairing(context, request.file, code.trim(), password, files, crypto); setDocument(doc); setPassword(""); setConfirmation(""); return io.save(doc);
         }, saved); }} />
       </>}
     </Section>
@@ -250,15 +273,15 @@ export function ExchangeSendScreen(): React.JSX.Element {
 /** Receive changes: preview counts (duplicates, waiting dependencies, review) before the durable import. */
 export function ExchangeReceiveScreen(): React.JSX.Element {
   const { t } = useText(), s = useStyles(), nav = useNav(), { context } = useSession(), action = useAction(), io = useFiles();
-  const [text, setText] = useState<string>(), [password, setPassword] = useState(""), [bundle, setBundle] = useState<BundlePreview>(), [processed, setProcessed] = useState<number>();
+  const [file, setFile] = useState<Uint8Array>(), [password, setPassword] = useState(""), [bundle, setBundle] = useState<BundlePreview>(), [processed, setProcessed] = useState<number>();
   useLeaveGuard(bundle !== undefined && processed === undefined);
   const counts = bundle === undefined ? undefined : { total: bundle.events.length, duplicates: bundle.events.filter(e => e.assessment === "duplicate").length,
     deferred: bundle.events.filter(e => e.assessment === "deferred").length, review: bundle.events.filter(e => e.assessment === "review").length };
   return <Screen title={t("receiveChanges")} onBack={nav.back} footer={action.notice}>
     <Section title={t("stepFile")}>
-      <Button label={text === undefined ? t("pickFile") : t("pickAnotherFile")} variant="secondary" busy={action.busy} onPress={() => { void action.runAsync(async () => { const picked = await io.pick("exchange"); if (picked !== undefined) { setText(picked); setBundle(undefined); setProcessed(undefined); } }); }} />
-      {text !== undefined && <><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
-        <Button label={t("previewEvents")} busy={action.busy} disabled={password === ""} onPress={() => { void action.runAsync(async () => { setBundle(await previewBundle(context, text, password, crypto)); }); }} /></>}
+      <Button label={file === undefined ? t("pickFile") : t("pickAnotherFile")} variant="secondary" busy={action.busy} onPress={() => { void action.runAsync(async () => { const picked = await io.pick("exchange"); if (picked !== undefined) { setFile(picked); setBundle(undefined); setProcessed(undefined); } }); }} />
+      {file !== undefined && <><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
+        <Button label={t("previewEvents")} busy={action.busy} disabled={password === ""} onPress={() => { void action.runAsync(async () => { setBundle(await previewBundle(context, file, password, crypto)); }); }} /></>}
     </Section>
     {counts !== undefined && <Section title={t("preview")}>
       <Text style={s.body}>{t("eventPreviewSummary", counts)}</Text>
@@ -287,7 +310,7 @@ export function ExchangeConfirmScreen(): React.JSX.Element {
     {peers.length > 0 && <Section title={t("importReceipt")}>
       <Segmented label={t("destinationDevice")} value={chosen} onChange={setDestination} options={peers.map(peer => ({ id: peer.id, label: peer.label }))} />
       <Button label={t("pickReceiptFile")} variant="secondary" busy={action.busy} disabled={password === "" || chosen === undefined} onPress={() => { void action.runAsync(async () => {
-        const text = await io.pick("receipt"); if (text === undefined) return undefined; return importReceipt(context, chosen!, text, password, crypto);
+        const file = await io.pick("receipt"); if (file === undefined) return undefined; return importReceipt(context, chosen!, file, password, crypto);
       }, count => { if (count !== undefined) action.show({ tone: "success", key: "receiptsRecorded", values: { count } }); }); }} />
     </Section>}
   </Screen>;
@@ -311,6 +334,44 @@ export function ExchangeStatusScreen(): React.JSX.Element {
 }
 
 /** The owner's recovery key, shown only after the current code. */
+/**
+ * The shop's backup recovery key (ADR-036): after the owner code, the 14 groups are shown once with a printable sheet,
+ * then pinned when three of them are typed back. Leaving the screen before that forgets the key.
+ */
+export function BackupKeyScreen(): React.JSX.Element {
+  const { t, language } = useText(), s = useStyles(), nav = useNav(), { context, businessName } = useSession(), action = useAction();
+  const [secret, setSecret] = useState(""), [pending, setPending] = useState<PendingBackupKey>(), [step, setStep] = useState<"show" | "confirm">("show"), [groups, setGroups] = useState(["", "", ""]), [version, setVersion] = useState(0);
+  const keys = useMemo(() => { try { return backupRecoveryKeys(context); } catch { return []; } }, [context, version]);
+  useEffect(() => () => setPending(undefined), []);
+  const current = keys.find(key => key.current), today = formatDate(new Date().toISOString(), language);
+  const escape = (text: string): string => text.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+  const print = (key: PendingBackupKey): Promise<void> => printDocument(`<html><body style="font-family:sans-serif;padding:24px"><h1 style="font-size:20px">${escape(t("backupKeySheet"))}</h1>
+    <ol style="font-family:monospace;font-size:22px;font-weight:bold;letter-spacing:3px;columns:2">${key.text.split("-").map(group => `<li>${group}</li>`).join("")}</ol>
+    <p>${escape(t("backupKeySheetHelp", { shop: businessName, date: today, id: key.keyId.slice(0, 8) }))}</p></body></html>`);
+  if (pending !== undefined && step === "show") return <Screen title={t("backupKeyTitle")} onBack={() => setPending(undefined)} footer={<>{action.notice}
+    <Button label={t("backupKeyPrint")} variant="secondary" busy={action.busy} onPress={() => { void action.runAsync(() => print(pending)); }} />
+    <Button label={t("backupKeyWritten")} onPress={() => setStep("confirm")} /></>}>
+    <Notice tone="warning" text={t("backupKeyShowOnce")} />
+    <Section>{pending.text.split("-").map((group, index) => <Text key={index} selectable style={[s.mono, { fontSize: 22, lineHeight: 34, letterSpacing: 3 }]}>{`${String(index + 1).padStart(2, " ")}  ${group}`}</Text>)}</Section>
+  </Screen>;
+  if (pending !== undefined) return <Screen title={t("backupKeyTitle")} onBack={() => setStep("show")} footer={<>{action.notice}
+    <Button label={t("backupKeyWritten")} busy={action.busy} disabled={groups.some(group => group.trim() === "")} onPress={() => { void action.runAsync(async () => {
+      await confirmBackupRecoveryKey(context, pending, groups, crypto); setPending(undefined); setStep("show"); setVersion(value => value + 1);
+    }, () => action.show({ tone: "success", key: "backupKeyDone" })); }} /></>}>
+    <Section><Text style={s.muted}>{t("backupKeyConfirm")}</Text>
+      {pending.confirm.map((index, i) => <Field key={index} label={t("backupKeyGroup", { index: index + 1 })} value={groups[i]!} onChange={value => setGroups(list => list.map((item, j) => j === i ? value : item))} />)}</Section>
+  </Screen>;
+  return <Screen title={t("backupKeyTitle")} onBack={nav.back} footer={<>{action.notice}
+    <Button label={current === undefined ? t("backupKeyCreate") : t("backupKeyRotate")} busy={action.busy} disabled={secret === ""} onPress={() => { void action.runAsync(async () => {
+      const key = await prepareBackupRecoveryKey(context, secret, crypto); setSecret(""); setGroups(["", "", ""]); setStep("show"); setPending(key);
+    }); }} /></>}>
+    <Section><Text style={s.body}>{t("backupKeyHelp")}</Text>
+      <Text style={s.muted}>{current === undefined ? t("backupKeyNone") : t("backupKeyCurrent", { id: current.keyId.slice(0, 8), date: formatDate(current.createdAt, language) })}</Text>
+      {keys.length > 1 && <Text style={s.muted}>{t("backupKeyOlder", { count: keys.length - 1 })}</Text>}
+      <Field label={t("currentSecret")} value={secret} onChange={setSecret} kind="secret" /></Section>
+  </Screen>;
+}
+
 export function RecoveryKeyScreen(): React.JSX.Element {
   const { t } = useText(), s = useStyles(), nav = useNav(), { context } = useSession(), action = useAction(), [secret, setSecret] = useState(""), [key, setKey] = useState<string | null>();
   useEffect(() => () => setKey(undefined), []);

@@ -3,7 +3,8 @@ import { signedSnapshotSchema, type SnapshotManifest, type SignedSnapshot } from
 import type { Database, Queryable } from "../data/database/driver.ts";
 import { MIGRATIONS, LATEST_VERSION, migrate, schemaVersion } from "../data/database/migrations.ts";
 import { memberPermissions } from "../identity/internal-authority.ts";
-import { STANDARD_TRANSFER_LIMITS, TransferError, type SnapshotPort, type TransferCrypto, type TransferLimits } from "./types.ts";
+import { checkIntegrity } from "../data/database/integrity.ts";
+import { MAX_SNAPSHOT_BYTES, TransferError, type SnapshotPort, type TransferCrypto } from "./types.ts";
 
 /** Current journal/legacy coverage derived from this exact snapshot, not a live database's later cursor. */
 export function snapshotBoundary(tx:Queryable,businessId:string):SnapshotManifest["boundary"]{
@@ -25,7 +26,10 @@ export function sanitizeSnapshot(database:Database,sourceDeviceId:string):void{
  });
 }
 
-/** Checks the exact shipped SQLite schema before executing any imported schema-triggered mutation. */
+/**
+ * Checks the exact shipped SQLite schema before executing any imported schema-triggered mutation, then, once migrated,
+ * the business consistency invariants; records that disagree fail with `inconsistent_records`.
+ */
 export async function validateSnapshot(database:Database,manifest:SnapshotManifest,files:SnapshotPort):Promise<void>{
  if(manifest.schema_version>LATEST_VERSION||manifest.schema_version<17)throw new TransferError("unsupported_version");
  const reference=await files.empty();
@@ -56,19 +60,22 @@ export async function validateSnapshot(database:Database,manifest:SnapshotManife
  const origin=database.get(`SELECT t.public_key,d.active FROM trusted_exchange_devices t JOIN devices d ON d.id=t.device_id AND d.business_id=t.business_id WHERE t.business_id=? AND t.device_id=?`,[manifest.business.id,manifest.source_device_id]);
  if(origin?.["public_key"]!==manifest.source_public_key)throw new TransferError("invalid_snapshot");
  migrate(database);
+ // Signatures and SQLite integrity prove the file is authentic and well formed, not that its books agree: run the same
+ // business invariants as `kolo check`. Quarantined or stuck sync work is an attention state and restores normally.
+ if(!checkIntegrity(database).consistent)throw new TransferError("inconsistent_records");
 }
 
 /** Packs a small signed manifest plus raw SQLite bytes, avoiding double-base64 expansion. */
-export function encodeSnapshot(signed:SignedSnapshot,bytes:Uint8Array,crypto:TransferCrypto,limits:TransferLimits=STANDARD_TRANSFER_LIMITS):Uint8Array{
+export function encodeSnapshot(signed:SignedSnapshot,bytes:Uint8Array,crypto:TransferCrypto):Uint8Array{
  const metadata=crypto.encodeText(canonicalJson(signed)),result=new Uint8Array(4+metadata.length+bytes.length);
- if(metadata.length>1024*1024||bytes.length>limits.snapshotBytes)throw new TransferError("too_large");
+ if(metadata.length>1024*1024||bytes.length>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");
  new DataView(result.buffer).setUint32(0,metadata.length,false);result.set(metadata,4);result.set(bytes,4+metadata.length);return result;
 }
 /** Bounds metadata/image independently before schema parsing or opening SQLite. */
-export function decodeSnapshot(bytes:Uint8Array,crypto:TransferCrypto,limits:TransferLimits=STANDARD_TRANSFER_LIMITS):{signed:SignedSnapshot;image:Uint8Array}{
+export function decodeSnapshot(bytes:Uint8Array,crypto:TransferCrypto):{signed:SignedSnapshot;image:Uint8Array}{
  if(bytes.byteLength<104)throw new TransferError("invalid_snapshot");
  const length=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(0,false);
- if(length<1||length>1024*1024||length+104>bytes.byteLength||bytes.byteLength-4-length>limits.snapshotBytes)throw new TransferError("invalid_snapshot");
+ if(length<1||length>1024*1024||length+104>bytes.byteLength||bytes.byteLength-4-length>MAX_SNAPSHOT_BYTES)throw new TransferError("invalid_snapshot");
  let input:unknown;try{input=JSON.parse(crypto.decodeText(bytes.subarray(4,4+length)));canonicalJson(input);}catch{throw new TransferError("invalid_snapshot");}
  const parsed=signedSnapshotSchema.safeParse(input);if(!parsed.success)throw new TransferError("invalid_snapshot");
  return {signed:parsed.data,image:bytes.slice(4+length)};

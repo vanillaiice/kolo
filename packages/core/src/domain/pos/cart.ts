@@ -94,7 +94,9 @@ export function isComplete(view: CartView): boolean {
  *
  * The price and name are copied from the product **now**, and stay copied: a
  * receipt reprinted next year has to show what was charged, and the product
- * will have been repriced by then (§41).
+ * will have been repriced by then (§41). The cost copied here is only a
+ * preview: completing the sale freezes the cost from the shared costing policy
+ * (§8), so the editable purchase price never decides a sale's profit.
  */
 export function addProduct(
   state: CartState,

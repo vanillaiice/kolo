@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Migrator } from "kysely/migration";
 import { setExchangeDeviceActive } from "@kolo/core/application/exchange";
-import { connectServer, disconnectServer, pendingShopServer, serverConnections, SyncTransportError } from "@kolo/core/application/server-sync";
+import { connectServer, disconnectServer, pendingShopServer, serverConnections, synchronizeServer, SyncTransportError } from "@kolo/core/application/server-sync";
 import { createJournalBatch, importJournalBatch } from "@kolo/core/application/event-delivery";
 import { createSyncBatch, shopKeys } from "@kolo/core/application/sealed-sync";
 import { stockOf } from "@kolo/core/data/inventory/movements";
@@ -80,6 +80,24 @@ it("a till without a shop key keeps its facts until the owner grants one, then d
   assert.equal(second.locked, 0); assert.ok(second.pushed > 0);
   await sync(a, target);
   assert.equal(count(a, "sales"), 1);
+});
+
+it("a new till reaches its key grant ahead of a sealed backlog larger than its page budget", { skip }, async () => {
+  const target = await started(), a = await owner(), p = product(a), b = await paired(a, "Till B");
+  await connect(a, target); await sync(a, target);
+  const numbers = ["V-0001", "V-0002", "V-0003", "V-0004", "V-0005"]; for (const number of numbers) sale(a, p, number);
+  await sync(a, target); await connect(b, target);
+  const small = () => synchronizeServer(b.context, b.destination!, target.transport, crypto, { batchSize: 2, maxPages: 1 });
+  await small(); // B announces its encryption key; nothing of A's opens yet.
+  await sync(a, target); // A grants the shop key, after the whole sealed backlog.
+  assert.ok(Number((await query(target, `SELECT count(*)::int AS n FROM journal WHERE sealed IS NOT NULL AND origin_device_id=$1`, [a.install.deviceId]))[0].n) > 2, "the backlog exceeds one small page");
+  // Each tiny pass reads two facts: the shop's few clear facts come first, so the grant arrives in a bounded number of
+  // passes however long the sealed backlog is (before, every pass re-read the same locked prefix and never got there).
+  for (let pass = 0; pass < 4 && (await shopKeys(b.context, crypto)).length === 0; pass++) await small();
+  assert.equal((await shopKeys(b.context, crypto)).length, 1, "the grant came before the backlog");
+  for (let pass = 0; pass < 10 && count(b, "sales") < numbers.length; pass++) await small();
+  assert.equal(count(b, "sales"), numbers.length, "the backlog then drains with the same small budget");
+  assert.equal(stockOf(b.db, b.install.businessId, p).onHandThousandths, -5000);
 });
 
 it("lost push responses and replayed batches never duplicate facts, and stored facts are append-only", { skip }, async () => {

@@ -293,6 +293,20 @@ function validatePayment(payment: CustomerPayment): void {
   }
 }
 
+/**
+ * The change a customer kept on account at a sale (`KeptChange` in the application operations): the customer
+ * payments noted with the sale's number at the sale's exact time. Zero when there are none.
+ */
+export function changeKeptOnAccount(tx: Queryable, businessId: string, sale: { readonly customerId: string | null; readonly number: string; readonly occurredAt: string }): number {
+  if (sale.customerId === null) return 0;
+  const row = tx.get(
+    `SELECT coalesce(-sum(amount_minor), 0) AS kept FROM customer_transactions
+      WHERE business_id = ? AND customer_id = ? AND type = 'PAYMENT' AND occurred_at = ? AND reason = ?`,
+    [businessId, sale.customerId, sale.occurredAt, sale.number],
+  );
+  return sqlInteger(row?.["kept"] ?? 0);
+}
+
 /** Returns a customer, or undefined if this device does not hold them. */
 export function customerOf(tx: Queryable, businessId: string, id: string): Customer | undefined {
   const row = tx.get(`SELECT * FROM customers WHERE business_id = ? AND id = ?`, [businessId, id]);

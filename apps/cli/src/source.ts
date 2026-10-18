@@ -1,26 +1,36 @@
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nodeWorkspaceFiles, openDatabase } from "@kolo/core/data/database/node-sqlite";
 import type { Database } from "@kolo/core/data/database/driver";
-import { previewBackup, cancelBackupPreview, type BackupPreview } from "@kolo/core/application/backup";
-import { LARGE_TRANSFER_LIMITS, type SnapshotHandle } from "@kolo/core/backup/types";
+import { previewBackupFile, cancelBackupPreview, type BackupPreview } from "@kolo/core/application/backup";
+import { MAX_TRANSFER_FILE_BYTES, type SnapshotHandle } from "@kolo/core/backup/types";
 import { transferCrypto } from "./crypto.ts";
 
-export async function withBackup<T>(path: string, password: string, work: (preview: BackupPreview, handle: SnapshotHandle) => Promise<T>): Promise<T> {
-  if (statSync(path).size > LARGE_TRANSFER_LIMITS.fileBytes) throw new Error("Backup exceeds the supported size limit");
+export async function withBackup<T>(path: string, password: string | { readonly recoveryKey: string }, work: (preview: BackupPreview, handle: SnapshotHandle) => Promise<T>): Promise<T> {
+  if (statSync(path).size > MAX_TRANSFER_FILE_BYTES) throw new Error("Backup exceeds the supported size limit");
   const directory = mkdtempSync(join(tmpdir(), "kolo-cli-"));
-  const files = nodeWorkspaceFiles(directory, { limits: () => LARGE_TRANSFER_LIMITS });
+  const files = nodeWorkspaceFiles(directory);
   let candidate: SnapshotHandle | undefined;
   let preview: BackupPreview | undefined;
+  // The backup is read in pieces and decrypted into private staging (ADR-035), never held whole in memory.
+  const file = await open(path, "r");
   try {
-    preview = await previewBackup(readFileSync(path, "utf8"), password, {
+    const size = (await file.stat()).size;
+    const reader = { size, async read(offset: number, length: number): Promise<Uint8Array> {
+      const buffer = new Uint8Array(Math.max(0, Math.min(length, size - offset))); let at = 0;
+      while (at < buffer.byteLength) { const { bytesRead } = await file.read(buffer, at, buffer.byteLength - at, offset + at); if (bytesRead === 0) break; at += bytesRead; }
+      return buffer.subarray(0, at);
+    } };
+    preview = await previewBackupFile(reader, password, {
       ...files,
-      async open(bytes) { candidate = await files.open(bytes); return candidate; },
+      async receive() { const writer = await files.receive(); return { ...writer, async open() { candidate = await writer.open(); return candidate; } }; },
     }, transferCrypto);
     if (!candidate) throw new Error("Missing backup candidate");
     return await work(preview, candidate);
   } finally {
+    await file.close();
     if (preview) await cancelBackupPreview(preview);
     else if (candidate) await candidate.discard();
     files.close();

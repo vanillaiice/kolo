@@ -1,7 +1,8 @@
-import { createHash, createCipheriv, createDecipheriv, randomBytes, pbkdf2, verify, sign, generateKeyPairSync, timingSafeEqual, diffieHellman, createPrivateKey, createPublicKey, hkdf, createHmac } from "node:crypto";
+import { createHash, createCipheriv, createDecipheriv, randomBytes, pbkdf2, verify, sign, generateKeyPairSync, timingSafeEqual, diffieHellman, createPrivateKey, createPublicKey, hkdf, createHmac, argon2 } from "node:crypto";
 import { nativeTransferCrypto } from "@kolo/core/backup/native-crypto";
 import type { CredentialCrypto } from "@kolo/core/identity/credentials";
 import type { SealingCrypto } from "@kolo/core/application/sealed-sync";
+import { X25519_PKCS8_PREFIX, X25519_SPKI_PREFIX } from "@kolo/core/backup/hpke";
 
 const derive: CredentialCrypto["derive"] = (password, salt, iterations) => new Promise((resolve, reject) => {
   pbkdf2(password, Buffer.from(salt, "hex"), iterations, 32, "sha256", (error, bytes) => {
@@ -20,6 +21,10 @@ export const transferCrypto = nativeTransferCrypto({
   decodeBase64: text => new Uint8Array(Buffer.from(text, "base64")),
   fromHex: hex => new Uint8Array(Buffer.from(hex, "hex")),
   toHex: bytes => Buffer.from(bytes).toString("hex"),
+createSha256:()=>{const hash=createHash("sha256");return {update:(bytes:Uint8Array)=>{hash.update(bytes);},digest:()=>hash.digest("hex")};},
+hmacSha256:(key,data)=>new Uint8Array(createHmac("sha256",key).update(data).digest()),
+ x25519:(privateKey,publicKey)=>new Uint8Array(diffieHellman({privateKey:createPrivateKey({key:Buffer.from([...X25519_PKCS8_PREFIX,...privateKey]),format:"der",type:"pkcs8"}),publicKey:createPublicKey({key:Buffer.from([...X25519_SPKI_PREFIX,...publicKey]),format:"der",type:"spki"})})),
+ argon2id:(password,salt,params)=>new Promise<Uint8Array>((resolve,reject)=>argon2("argon2id",{message:password,nonce:salt,memory:params.memoryKiB,passes:params.passes,parallelism:params.parallelism,tagLength:params.length,...(params.secret===undefined?{}:{secret:params.secret}),...(params.associatedData===undefined?{}:{associatedData:params.associatedData})},(error,key)=>error===null?resolve(new Uint8Array(key)):reject(new Error("native derivation failed")))),
   cipher: (key, nonce) => createCipheriv("aes-256-gcm", Buffer.from(key, "hex"), Buffer.from(nonce, "hex"), { authTagLength: 16 }),
   decipher: (key, nonce) => createDecipheriv("aes-256-gcm", Buffer.from(key, "hex"), Buffer.from(nonce, "hex"), { authTagLength: 16 }),
 });

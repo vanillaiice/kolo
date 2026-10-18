@@ -22,7 +22,7 @@ async function nodes() {
   await pause();
   adb(["shell", "uiautomator", "dump", dumpPath]);
   const xml = adb(["exec-out", "cat", dumpPath]);
-  if (!xml.includes('package="cm.kolo.app"')) throw new Error("KOLO must be open and unlocked on the demo phone.");
+  if (!xml.includes('package="xyz.hblabs.kolo"')) throw new Error("KOLO must be open and unlocked on the demo phone.");
   return [...xml.matchAll(/<node\s+([^>]+)>/g)].map(match => Object.fromEntries(
     [...match[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(([, key, value]) => [key, decode(value)]),
   ));

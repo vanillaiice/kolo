@@ -7,7 +7,7 @@ import { CustomersScreen, PersonFormScreen, PersonScreen, SettleScreen, Statemen
 import { AccountFormScreen, AccountScreen, AccountsScreen, CashCountScreen, MoneyScreen } from "../finance/finance.tsx";
 import { AnalyticsScreen, ReportScreen, ReportsScreen } from "../reports/reports.tsx";
 import { StaffMemberScreen, StaffNewScreen, StaffScreen } from "../staff/staff.tsx";
-import { AddTillScreen, BackupCreateScreen, BackupRestoreScreen, DevicesScreen, ExchangeConfirmScreen, ExchangeReceiveScreen, ExchangeSendScreen, ExchangeStatusScreen, RecoveryKeyScreen } from "../devices/devices.tsx";
+import { AddTillScreen, BackupCreateScreen, BackupRestoreScreen, DevicesScreen, ExchangeConfirmScreen, ExchangeReceiveScreen, ExchangeSendScreen, ExchangeStatusScreen, RecoveryKeyScreen, BackupKeyScreen } from "../devices/devices.tsx";
 import { ServerSyncScreen } from "../devices/server-sync.tsx";
 import { AboutScreen, MoreScreen, ResetScreen, SettingsScreen } from "../more/more.tsx";
 import { AlertsScreen } from "../more/alerts.tsx";
@@ -25,7 +25,7 @@ export const SCREENS: Record<RouteName, ComponentType> = {
   reports: ReportsScreen, report: ReportScreen, analytics: AnalyticsScreen,
   staff: StaffScreen, staffMember: StaffMemberScreen, staffNew: StaffNewScreen,
   devices: DevicesScreen, backupCreate: BackupCreateScreen, backupRestore: BackupRestoreScreen, addTill: AddTillScreen, exchangeSend: ExchangeSendScreen,
-  exchangeReceive: ExchangeReceiveScreen, exchangeConfirm: ExchangeConfirmScreen, exchangeStatus: ExchangeStatusScreen, recoveryKey: RecoveryKeyScreen, serverSync: ServerSyncScreen,
+  exchangeReceive: ExchangeReceiveScreen, exchangeConfirm: ExchangeConfirmScreen, exchangeStatus: ExchangeStatusScreen, recoveryKey: RecoveryKeyScreen, backupKey: BackupKeyScreen, serverSync: ServerSyncScreen,
   settings: SettingsScreen, about: AboutScreen, reset: ResetScreen,
   alerts: AlertsScreen, journal: JournalScreen, shopTax: ShopTaxScreen, shopTerms: ShopTermsScreen, partyTerms: PartyTermsScreen, productTax: ProductTaxScreen,
 };

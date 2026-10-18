@@ -7,20 +7,22 @@ import { withBackup, withCopy } from "./source.ts";
 import { check, csv, exportRows, exportTables, report, reportNames, shop, type ExportTable, type ReportName } from "./inspection.ts";
 import { generateFixture } from "./fixture.ts";
 import { runTill } from "./till.ts";
-import { backupPassword, DEVELOPMENT_BACKUP_PASSWORD } from "./secrets.ts";
+import { backupPassword, backupSecret, DEVELOPMENT_BACKUP_PASSWORD } from "./secrets.ts";
 
 export const help = `kolo — offline inspection and isolated dev tooling
 
   kolo report <${reportNames.join("|")}> --db copy.db [--from ISO --to ISO]
   kolo export <table> --db copy.db [--format json|csv] [--out file]
   kolo check --db copy.db [--stuck-hours 24]
-  kolo backup <verify|inspect> backup.json
-  kolo backup decrypt backup.json --out copy.db
-  kolo demo --out demo.kolo-backup.json [--products 50 --sales 500 --days 90]
-  kolo fixture --out fixture.kolo-backup.json [--products 10000 --sales 2000]
+  kolo backup <verify|inspect> shop.kolo-backup
+  kolo backup decrypt shop.kolo-backup --out copy.db
+  kolo demo --out demo.kolo-backup [--products 50 --sales 500 --days 90]
+  kolo fixture --out fixture.kolo-backup [--products 10000 --sales 2000]
   kolo till --help  (separately paired headless till)
 
 Report, export and check also accept --backup file instead of --db.
+Backups open with --password-file (or KOLO_BACKUP_PASSWORD), or with the shop's backup recovery
+key from --recovery-key-file (or KOLO_BACKUP_RECOVERY_KEY).
 Use --business ID for multi-shop copies. Periods are UTC, from inclusive,
 to exclusive; defaults cover all history. Output defaults to JSON on stdout.
 Tables: ${exportTables.join(", ")}
@@ -53,16 +55,16 @@ export async function run(args: string[], env: NodeJS.ProcessEnv = process.env, 
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
     help: { type: "boolean", short: "h" }, db: { type: "string" }, backup: { type: "string" }, business: { type: "string" },
     from: { type: "string" }, to: { type: "string" }, format: { type: "string" }, out: { type: "string" },
-    "password-file": { type: "string" }, "stuck-hours": { type: "string" }, products: { type: "string" }, sales: { type: "string" },
+    "password-file": { type: "string" }, "recovery-key-file": { type: "string" }, "stuck-hours": { type: "string" }, products: { type: "string" }, sales: { type: "string" },
     days: { type: "string" }, seed: { type: "string" }, name: { type: "string" },
   } });
   if (values.help || positionals.length === 0) { stdout(help); return 0; }
   const [command, subject, file] = positionals;
   const allowed: Record<string, string[]> = {
-    report: ["db", "backup", "business", "from", "to", "out", "password-file"],
-    export: ["db", "backup", "business", "format", "out", "password-file"],
-    check: ["db", "backup", "out", "password-file", "stuck-hours"],
-    backup: ["out", "password-file"],
+    report: ["db", "backup", "business", "from", "to", "out", "password-file", "recovery-key-file"],
+    export: ["db", "backup", "business", "format", "out", "password-file", "recovery-key-file"],
+    check: ["db", "backup", "out", "password-file", "recovery-key-file", "stuck-hours"],
+    backup: ["out", "password-file", "recovery-key-file"],
     demo: ["out", "password-file", "products", "sales", "days", "seed", "name"],
     fixture: ["out", "password-file", "products", "sales", "days", "seed", "name"],
   };
@@ -72,7 +74,7 @@ export async function run(args: string[], env: NodeJS.ProcessEnv = process.env, 
   if (command === "backup") {
     if (positionals.length !== 3 || !file || !["verify", "inspect", "decrypt"].includes(subject!)) throw new Error("Use kolo backup verify|inspect|decrypt file");
     if (subject === "decrypt" && !values.out) throw new Error("backup decrypt requires --out");
-    await withBackup(file, backupPassword(values["password-file"], env), async (preview, handle) => {
+    await withBackup(file, backupSecret(values["password-file"], values["recovery-key-file"], env), async (preview, handle) => {
       if (subject === "decrypt") {
         const bytes = await handle.bytes();
         try { output(bytes, values.out, stdout); } finally { bytes.fill(0); }
@@ -88,7 +90,7 @@ export async function run(args: string[], env: NodeJS.ProcessEnv = process.env, 
       days: integer(values.days, 90, "days"), seed: integer(values.seed, 20261009, "seed", 0),
       name: values.name ?? (command === "demo" ? "Demo shop" : "Performance fixture"), password: backupPassword(values["password-file"], env),
     });
-    output(result.text, values.out, stdout);
+    output(result.bytes, values.out, stdout);
     const publicDefault = values["password-file"] === undefined && env["KOLO_BACKUP_PASSWORD"] === undefined;
     stdout(json({ output: resolve(values.out), products: result.products, sales: result.sales, elapsedMs: result.elapsedMs,
       ...(publicDefault ? { developmentBackupPassword: DEVELOPMENT_BACKUP_PASSWORD } : {}) }));
@@ -122,5 +124,5 @@ export async function run(args: string[], env: NodeJS.ProcessEnv = process.env, 
     return 0;
   };
   if (values.db) return withCopy(values.db, inspect);
-  return withBackup(values.backup!, backupPassword(values["password-file"], env), async (_preview, handle) => inspect(handle.database));
+  return withBackup(values.backup!, backupSecret(values["password-file"], values["recovery-key-file"], env), async (_preview, handle) => inspect(handle.database));
 }

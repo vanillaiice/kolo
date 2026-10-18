@@ -8,7 +8,6 @@ import { currentInstallation, unlockWorkspace, lockWorkspace } from "@kolo/core/
 import type { Database } from "@kolo/core/data/database/driver";
 import type { WorkspacePorts, OperationContext } from "@kolo/core/identity/types";
 import type { SecretStore } from "@kolo/core/data/auth/secure-store";
-import { LARGE_TRANSFER_LIMITS } from "@kolo/core/backup/types";
 import { credentialCrypto } from "./crypto.ts";
 
 const marker = "kolo.headless-till.v1\n";
@@ -109,7 +108,7 @@ export class TillState {
           if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Till database files must be regular files owned by this state directory");
         }
       }
-      files = nodeWorkspaceFiles(root, { limits: () => LARGE_TRANSFER_LIMITS }); this.files = files;
+      files = nodeWorkspaceFiles(root); this.files = files;
       database = files.openActive(); this.database = database; migrate(database);
     } catch (error) {
       database?.close(); files?.close(); vault?.close(); closeSync(this.#lock); rmSync(join(this.directory, "process.lock")); throw error;

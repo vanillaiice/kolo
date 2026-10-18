@@ -1,20 +1,36 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import assert from "node:assert/strict";
-import { readBoundedTransferFile } from "./transfer-files.ts";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { nativeTheme, type BrowserWindow } from "electron";
-import type { TransferDocument } from "@kolo/core/backup/types";
+import { existsSync } from "node:fs";
+import { openTransferFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.ts";
+import { copyFile, readFile, writeFile, mkdir } from "node:fs/promises";
+import { nativeTheme, type BrowserWindow, type Dialog, type SaveDialogOptions, type SaveDialogReturnValue } from "electron";
 import type { TransferDialogs } from "./transfer.ts";
 
-/** Fixture dialogs: saved transfer documents stay in memory and "open" returns the latest one. */
-export function smokeDialogs(): TransferDialogs {
-  const saved: TransferDocument[] = [];
+/**
+ * Fixture dialogs: only the OS dialog is replaced. Saves and opens go through the same adapters as the app (a streamed
+ * backup into a private temporary file, synced, then copied into a new file; files read in pieces), into the smoke
+ * directory. "Open" returns the latest saved file, or the last backup from an earlier phase.
+ */
+export function smokeDialogs(outgoing: string): TransferDialogs {
   // A caller-supplied file (KOLO_DESKTOP_SMOKE_OPEN_FILE) stands in for the open dialog's choice.
   const supplied = process.env["KOLO_DESKTOP_SMOKE_OPEN_FILE"];
-  const directory = process.env["KOLO_DESKTOP_SMOKE_DIR"], persisted = directory === undefined ? undefined : join(directory, "last-backup.json");
+  const directory = process.env["KOLO_DESKTOP_SMOKE_DIR"]!, savedDirectory = join(directory, "saved"), persisted = join(directory, "last.kolo-backup");
+  let latest: string | undefined, chosen: string | undefined, count = 0;
+  const showSaveDialog = async (options: SaveDialogOptions): Promise<SaveDialogReturnValue> => {
+    await mkdir(savedDirectory, { recursive: true });
+    chosen = join(savedDirectory, `${++count}-${basename(options.defaultPath!)}`);
+    return { canceled: false, filePath: chosen };
+  };
+  const native = { showSaveDialog } as Pick<Dialog, "showSaveDialog">;
+  const keep = async (saved: boolean): Promise<boolean> => {
+    if (!saved) return false;
+    latest = chosen!; if (latest.endsWith(".kolo-backup")) await copyFile(latest, persisted);
+    return true;
+  };
   return {
-    open: async () => supplied !== undefined ? readBoundedTransferFile(supplied) : saved.at(-1)?.text ?? (persisted !== undefined ? await readFile(persisted, "utf8").catch(() => undefined) : undefined),
-    save: async document => { saved.push(document); if (persisted !== undefined && document.filename.endsWith(".kolo-backup.json")) await writeFile(persisted, document.text); return true; },
+    open: async () => { const path = supplied ?? latest ?? (existsSync(persisted) ? persisted : undefined); return path === undefined ? undefined : openTransferFile(path); },
+    save: async document => keep(await saveDesktopTransferFile(document, native)),
+    saveStream: async write => keep(await saveDesktopTransferStream(write, native, outgoing)),
   };
 }
 /** Disposable actual Electron DOM/IPC/native-vault workflow; invoked only by the explicit smoke flag. */
@@ -473,6 +489,21 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await wait(`${visible('.detail-layout tbody')}.some(element=>element.textContent.includes('Customer credit used') && element.textContent.includes('Received at sale'))`, "statement explains the purchases and prepaid credit");
     await audit("Customer statement with prepaid credit"); await snapshot("statement-customer-credit");
     process.stdout.write("Actual Electron customer credit covers a purchase, offsets the next debt and agrees with historical receipts and statements\n");
+    // A customer who hands over more than the total can leave the change on account.
+    await evaluate(`(async()=>{const {sessionId}=(await window.kolo.getWorkspace()).value;const result=await window.kolo.createCustomer({sessionId,requestId:crypto.randomUUID(),name:'Change customer'});if(!result.ok)throw Error(result.error.code);})()`);
+    await navigate("Till"); await wait("document.querySelector('.product-tile')!==null"); await click(".product-tile");
+    await fill("#customer-search", "Change customer"); await wait("document.querySelector('.customer-results button')!==null"); await click(".customer-results button");
+    await wait("document.querySelector('.customer-choice')?.textContent.includes('Change customer') && !document.querySelector('.checkout').disabled");
+    const due = Number(await evaluate<string>("document.querySelector('.payment-row input').value"));
+    assert.ok(due > 0, "the sale is paid in cash");
+    await fill("#cash-received", String(due + 300)); await wait("document.querySelector('#keep-change')!==null && document.querySelector('.change-line')?.textContent.includes('300')", "keeping the change is offered beside the change due");
+    await click("#keep-change"); await wait("document.querySelector('.kept-change-line')?.textContent.includes('300') && !document.querySelector('.change-line')", "the change is shown as kept, not handed back");
+    await audit("Till keeping change as credit"); await snapshot("till-kept-change"); await click(".checkout");
+    await wait("document.querySelector('.receipt-kept-change')?.textContent.includes('300')", "the receipt shows the change kept as credit");
+    await audit("Receipt with change kept as credit"); await snapshot("receipt-kept-change");
+    const kept = await evaluate<number>(`(async()=>{const {sessionId}=(await window.kolo.getWorkspace()).value;const found=(await window.kolo.listCustomers({sessionId,term:'Change customer'})).value.items[0];return (await window.kolo.getCustomer({sessionId,customerId:found.id})).value.outstandingMinor;})()`);
+    assert.equal(kept, -300, "the customer holds the change as an advance");
+    process.stdout.write("Actual Electron till keeps a customer's change on account and prints it on the receipt\n");
   } else if (phase === "restore-file") {
     // Fresh installation restores a supplied backup from the entry screen, as a new shop PC would.
     const password = process.env["KOLO_DESKTOP_SMOKE_OPEN_PASSWORD"], shop = process.env["KOLO_DESKTOP_SMOKE_OPEN_SHOP"];

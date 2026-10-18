@@ -57,8 +57,13 @@ jobs:
         run: |
           if [ -z "$CSC_LINK" ]; then export CSC_IDENTITY_AUTO_DISCOVERY=false; fi
           npx electron-builder --config apps/desktop/electron-builder.json ${{ matrix.args }} --x64 --publish never
-      - if: matrix.platform == 'windows'
-        run: npm run smoke:desktop:packaged
+      - name: Allow Electron's sandbox and a virtual display (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get install -y xvfb
+      # Every artifact passes in its own packaged runtime: self-check, then the real-UI workflow (scripts/verify-desktop-build.mjs).
+      - run: npm run verify:desktop:${{ matrix.platform == 'windows' && 'win' || 'linux' }}
       - name: Hash artifacts
         shell: bash
         run: |

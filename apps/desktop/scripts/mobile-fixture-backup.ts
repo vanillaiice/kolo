@@ -75,12 +75,12 @@ try {
   value(await app.saveBackup({ sessionId, password: BACKUP_PASSWORD }), "backup");
   const document = saved[saved.length - 1]!;
   mkdirSync(outputDirectory, { recursive: true });
-  writeFileSync(join(outputDirectory, document.filename), document.text);
+  writeFileSync(join(outputDirectory, document.filename), document.bytes);
   writeFileSync(join(outputDirectory, "README.txt"), [
     "kolo mobile performance fixture", "", `Backup file: ${document.filename}`, `Backup password: ${BACKUP_PASSWORD}`, "",
     `${PRODUCTS + 1} products, ${MOVEMENTS + 1} opening movements, ${STATEMENT_SALES} credit sales to "Long statement".`,
     "Restoring replaces the shop on the device; choose a new owner code while restoring.", "",
   ].join("\n"));
-  process.stdout.write(`Wrote ${join(outputDirectory, document.filename)} (${(document.text.length / 1048576).toFixed(1)} MiB)\n`);
+  process.stdout.write(`Wrote ${join(outputDirectory, document.filename)} (${(document.bytes.byteLength / 1048576).toFixed(1)} MiB)\n`);
   await app.dispose(); database.close();
 } finally { rmSync(workDirectory, { recursive: true, force: true }); }

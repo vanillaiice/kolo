@@ -61,7 +61,7 @@ export function ReceiptScreen(): React.JSX.Element {
   const { value: saved, failed } = useRecord<Receipt>(() => receipt(session.context, saleId), [session.context, saleId, revision, attempt]);
   if (saved === undefined) return <Screen title={t("receipt")} onBack={nav.back}>{failed ? <Notice tone="error" text={t("loadFailed")} action={<Button label={t("retry")} variant="secondary" onPress={() => setAttempt(n => n + 1)} />} /> : <EmptyState title={t("notFound")} />}</Screen>;
   const labels: ReceiptLabels = { receipt: t("receipt"), customer: t("customer"), discount: t("discountLabel"), total: t("total"), paid: t("paid"), due: t("due"), returned: t("returned"),
-    date: formatDate(saved.occurredAt, language), footer: t("receiptFooter"), taxIncluded: t("taxIncluded"), taxNumber: t("taxNumber") };
+    date: formatDate(saved.occurredAt, language), footer: t("receiptFooter"), taxIncluded: t("taxIncluded"), taxNumber: t("taxNumber"), changeKept: t("changeKeptLabel") };
   const output = (work: () => Promise<void>): void => { void action.runAsync(() => session.systemUi(work)); };
   return <Screen title={`${t("receipt")} ${shortReceiptNumber(saved.number)}`} onBack={fresh === true ? undefined : nav.back} footer={fresh === true ? <Button label={t("newSale")} onPress={() => nav.popTo("sell")} /> : undefined}>
     {fresh === true && <Notice tone="success" text={t("saleSaved")} />}
@@ -73,6 +73,7 @@ export function ReceiptScreen(): React.JSX.Element {
         <Text style={s.muted}>{formatQuantity(line.quantity)} × {formatMoney(line.unitPriceMinor)}</Text></View>)}
       <Facts items={[...(saved.discountMinor > 0 ? [[t("discountLabel"), `− ${formatMoney(saved.discountMinor)}`] as const] : []), [t("total"), formatMoney(saved.totalMinor), "strong"],
         ...saved.payments.map(payment => [payment.name, formatMoney(payment.amountMinor)] as const),
+        ...(saved.changeKeptMinor === undefined ? [] : [[t("changeKeptLabel"), formatMoney(saved.changeKeptMinor)] as const]),
         ...(saved.outstandingMinor > 0 ? [[saved.customerName === undefined ? t("due") : t("owedBy", { name: saved.customerName }), formatMoney(saved.outstandingMinor), "danger"] as const] : []),
         ...(saved.returnedMinor > 0 ? [[t("returned"), formatMoney(saved.returnedMinor)] as const] : []),
         ...(saved.tax?.groups.map(group => [`${t("taxIncluded")} ${saved.tax!.label} ${formatRate(group.rateBasisPoints, language)}`, formatMoney(group.taxMinor)] as const) ?? []),

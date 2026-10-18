@@ -13,7 +13,7 @@ import { pendingShopServer, connectServer, serverConnections, synchronizeServer,
 import { createHttpSyncTransport } from "@kolo/core/application/http-sync-transport";
 import { lookupJoin, requestJoin, finishJoin } from "@kolo/core/application/join";
 import { parseJoinLink, normalizeJoinCode } from "@kolo/contracts/sync";
-import { LARGE_TRANSFER_LIMITS } from "@kolo/core/backup/types";
+import { MAX_TRANSFER_FILE_BYTES } from "@kolo/core/backup/types";
 import * as reports from "@kolo/core/application/reports";
 import type { OperationContext } from "@kolo/core/identity/types";
 import { reportNames, type ReportName } from "./inspection.ts";
@@ -48,9 +48,10 @@ Import JSON: {"id":"unique UUID", "rows":[...]}; see apps/cli/README.md.
 Commands hold one exclusive state lock. Join completion returns pending until
 the owner allows this till; repeat it to poll. Use cron/systemd for schedules.
 `;
-function read(path: string, maximum = LARGE_TRANSFER_LIMITS.fileBytes): string {
+/** A transfer file's exact bytes: a binary container, a legacy JSON file or a plaintext invitation/request. */
+function read(path: string, maximum = MAX_TRANSFER_FILE_BYTES): Uint8Array {
   if (statSync(path).size > maximum) throw new Error("Input exceeds the supported size limit");
-  return readFileSync(path, "utf8");
+  return new Uint8Array(readFileSync(path));
 }
 function secret(file: string | undefined, env: NodeJS.ProcessEnv, key: string): string {
   const result = file !== undefined ? readSecretFile(file) : env[key];
@@ -86,7 +87,7 @@ export async function runTill(args: string[], env: NodeJS.ProcessEnv, stdout: (t
   if (values.help || positionals.length === 0) { stdout(tillHelp); return 0; }
   const [command, action, input] = positionals;
   const emit = (value: unknown): void => { stdout(JSON.stringify(value, null, 2) + "\n"); };
-  const write = (data: string): void => {
+  const write = (data: string | Uint8Array): void => {
     if (!values.out) throw new Error("This command requires --out");
     writeFileSync(values.out, data, { flag: "wx", mode: 0o600 });
   };
@@ -145,9 +146,9 @@ export async function runTill(args: string[], env: NodeJS.ProcessEnv, stdout: (t
     if (command === "status") { emit({ ...currentInstallation(till.database), pairingPending: till.database.get("SELECT id FROM workspace_enrollment WHERE id=1") !== undefined }); return 0; }
     if (key === "pair request") {
       const accepted = await acceptPairingInvite(read(input!, 65536), { confirmedFingerprint: required(values.fingerprint, "--fingerprint"), label: required(values.label, "--label"), platform: "DESKTOP", secret: localSecret() }, till.ports(), transferCrypto);
-      const request = JSON.parse(accepted.document.text) as { request: { installation_id: string } };
+      const request = JSON.parse(transferCrypto.decodeText(accepted.document.bytes)) as { request: { installation_id: string } };
       await till.store.write("kolo.cli.pair", JSON.stringify({ installationId: request.request.installation_id, verificationCode: accepted.verificationCode } satisfies PendingPair));
-      write(accepted.document.text); emit({ request: values.out, verificationCode: accepted.verificationCode }); return 0;
+      write(accepted.document.bytes); emit({ request: values.out, verificationCode: accepted.verificationCode }); return 0;
     }
     if (key === "pair complete") {
       const saved = await till.store.read("kolo.cli.pair"), state = currentInstallation(till.database);
@@ -183,7 +184,7 @@ export async function runTill(args: string[], env: NodeJS.ProcessEnv, stdout: (t
       if (!completed) { emit({ pending: true }); return 0; }
       till.adopt(completed.database); await till.store.forget("kolo.cli.join"); emit({ paired: true, installation: completed.installation }); return 0;
     }
-    if (command === "import") { emit(await importData(till, action!, JSON.parse(read(input!, 16 * 1024 * 1024)), localSecret())); return 0; }
+    if (command === "import") { emit(await importData(till, action!, JSON.parse(transferCrypto.decodeText(read(input!, 16 * 1024 * 1024))), localSecret())); return 0; }
     const context = await till.unlock(localSecret());
     if (command === "connect") {
       let settings = pendingShopServer(context);
@@ -203,7 +204,7 @@ export async function runTill(args: string[], env: NodeJS.ProcessEnv, stdout: (t
     if (command === "exchange") {
       if (action === "export") {
         const document = await exportBundle(context, required(values.destination, "--destination"), password(), transferCrypto);
-        if (document) write(document.text); emit({ exported: Boolean(document), output: document ? values.out : null }); return 0;
+        if (document) write(document.bytes); emit({ exported: Boolean(document), output: document ? values.out : null }); return 0;
       }
       if (action === "preview" || action === "import") {
         const preview = await previewBundle(context, read(input!), password(), transferCrypto);
@@ -213,7 +214,7 @@ export async function runTill(args: string[], env: NodeJS.ProcessEnv, stdout: (t
       }
       if (action === "receipt") {
         const document = await exportReceipt(context, required(values.batch, "--batch"), password(), transferCrypto);
-        if (!document) throw new Error("Unknown completed batch"); write(document.text); emit({ output: values.out }); return 0;
+        if (!document) throw new Error("Unknown completed batch"); write(document.bytes); emit({ output: values.out }); return 0;
       }
       emit({ acknowledged: await importReceipt(context, required(values.destination, "--destination"), read(input!), password(), transferCrypto) }); return 0;
     }
@@ -224,6 +225,6 @@ export async function runTill(args: string[], env: NodeJS.ProcessEnv, stdout: (t
       if (from >= to) throw new Error("--from must be before --to"); result(liveReport(context, action as ReportName, from, to)); return 0;
     }
     while (await sealPendingEvents(context, transferCrypto, 1000) === 1000) { /* Drain before capture. */ }
-    write((await createBackup(context, password(), till.files, transferCrypto)).text); emit({ output: values.out }); return 0;
+    write((await createBackup(context, password(), till.files, sealingCrypto)).bytes); emit({ output: values.out }); return 0;
   } finally { till.close(); }
 }

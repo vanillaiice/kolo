@@ -13,3 +13,4 @@ export async function printDocument(html: string): Promise<void> {
 export async function shareText(message: string): Promise<void> {
   await Share.share({ message });
 }
+

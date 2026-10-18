@@ -111,7 +111,9 @@ export async function connectServer(context: OperationContext, transport: SyncTr
     if (pin !== undefined && pin["public_key"] !== identity.public_key) throw new ExchangeError("fingerprint_mismatch");
     const business = tx.get(`SELECT name FROM businesses WHERE id=?`, [context.businessId])!;
     const device = tx.get(`SELECT label,platform FROM devices WHERE id=? AND business_id=?`, [context.deviceId, context.businessId])!;
-    return { authority: install["owner_id"] === context.userId && own["authority_allowed"] === 1, pinned: pin?.["active"] === 1, ownerId: String(install["owner_id"]),
+    // This device began as a restored backup (not a pairing an authority till approved): the server cannot know it yet.
+    const restored = tx.get(`SELECT 1 FROM local_audit WHERE business_id=? AND device_id=? AND action='WORKSPACE_RESTORED'`, [context.businessId, context.deviceId]) !== undefined;
+    return { authority: install["owner_id"] === context.userId && own["authority_allowed"] === 1, pinned: pin?.["active"] === 1, ownerId: String(install["owner_id"]), restored,
       publicKey: String(install["public_key"]), businessName: String(business["name"]), label: String(device["label"]), platform: String(device["platform"]) };
   });
   let destinationId: string;
@@ -122,17 +124,23 @@ export async function connectServer(context: OperationContext, transport: SyncTr
       server_device_id: identity.server_device_id, business: { id: context.businessId, name: local.businessName }, owner_id: local.ownerId,
       device: { id: context.deviceId, label: local.label, platform: local.platform as "ANDROID" | "IOS" | "DESKTOP", public_key: local.publicKey } };
     const { signature } = await signMessage(context, crypto, enrollmentSigningMessage(claim));
-    let enrolled = true;
+    let enrolled = true, conflict: SyncTransportError | undefined;
     try { await transport.enroll({ claim, signature, ...(input.token === undefined ? {} : { connection_code: input.token }) }); }
     catch (error) {
       // Another authority till of this shop attached it already: join like any till, through the owner's signed trust.
       if (!(error instanceof SyncTransportError) || error.code !== "enrollment_conflict") throw error;
-      enrolled = false;
+      enrolled = false; conflict = error;
     }
     if (enrolled) {
       publishDeviceRoster(context);
       shareServerEndpoint(context, { serverDeviceId: identity.server_device_id, url, fingerprint: identity.fingerprint });
-    } else await bootstrapTrust(context, transport, identity.server_device_id, crypto);
+    } else {
+      // A restored device the server has never seen (a shop restored after losing every till) cannot join through trust no
+      // till has vouched for: report the enrollment conflict, whose remedy is an owner-recovery code (ADR-036). An approved
+      // till keeps `invalid_session`: it waits until the till that approved it syncs.
+      try { await bootstrapTrust(context, transport, identity.server_device_id, crypto); }
+      catch (error) { if (local.restored && error instanceof SyncTransportError && error.code === "invalid_session") throw conflict!; throw error; }
+    }
   } else {
     if (!local.pinned) await bootstrapTrust(context, transport, identity.server_device_id, crypto);
     destinationId = adoptServerDestination(context, identity.server_device_id, new URL(url).host);

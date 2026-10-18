@@ -9,9 +9,9 @@
  *
  * - one photo per product, at most {@link PHOTO_LIMITS.maxBytes} bytes and
  *   {@link PHOTO_LIMITS.maxSide} pixels a side;
- * - at most {@link PHOTO_LIMITS.shopBytes} bytes for the whole shop, so photos
- *   cannot crowd a backup out of its compressed-size budget (ADR-026), since
- *   already-compressed images do not deflate further.
+ * - at most {@link PHOTO_LIMITS.shopBytes} bytes for the whole shop, a quarter
+ *   of the backup size limit (ADR-035), since already-compressed images do not
+ *   deflate further.
  *
  * The digest is the SHA-256 of the bytes: a content address that later
  * device-to-device transfers and server storage can use to fetch only what is
@@ -27,10 +27,8 @@ export const PHOTO_LIMITS = {
   maxBytes: 64 * 1024,
   /** Largest width or height. */
   maxSide: 512,
-  /** Largest total for one shop, about a thousand thumbnails. */
-  shopBytes: 16 * 1024 * 1024,
-  /** Largest total on a device that opted into large transfer files (ADR-027). */
-  largeShopBytes: 256 * 1024 * 1024,
+  /** Largest total for one shop: 4 096 maximum-size photos, usually over ten thousand thumbnails. */
+  shopBytes: 256 * 1024 * 1024,
 } as const;
 
 /** The encodings a photo may be stored in. */

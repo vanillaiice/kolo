@@ -124,6 +124,7 @@ function ShopPage({ t, language, canChange, guard, shopId, onBack }: { t: T; lan
       <div className="table-wrap"><table><thead><tr><th>{t("device")}</th><th>{t("platform")}</th><th>{t("status")}</th><th>{t("lastSeen")}</th><th className="numeric">{t("backlog")}</th></tr></thead>
         <tbody>{data.deviceList.map(device => <tr key={device.deviceId}><td>{device.label}{device.authority && <span className="tag">{t("authority")}</span>}<small><code>{device.deviceId}</code></small></td>
           <td>{device.platform}</td><td>{t(device.active ? "trusted" : "revoked")}</td><td>{date(language, device.lastSeenAt, t)}</td><td className="numeric">{device.backlog}</td></tr>)}</tbody></table></div>
+      {canChange && data.status === "active" && <Recovery t={t} language={language} shopId={data.shopId} guard={guard} />}
       {canChange && <div className="actions-panel">
         {error !== undefined && error !== "" && <p role="alert" className="notice error">{t(error)}</p>}
         {data.status === "active" && <div><button className="secondary" disabled={busy} onClick={() => act("suspend")}>{t("suspend")}</button><p className="hint">{t("suspendHelp")}</p></div>}
@@ -136,6 +137,21 @@ function ShopPage({ t, language, canChange, guard, shopId, onBack }: { t: T; lan
         </form>}
       </div>}
     </>}
+  </section>;
+}
+
+/** An owner-recovery code for this shop, shown once with its QR code (ADR-036). */
+function Recovery({ t, language, shopId, guard }: { t: T; language: Language; shopId: string; guard: (error: unknown) => string }): ReactNode {
+  const [issued, setIssued] = useState<Issued>(), [busy, setBusy] = useState(false), [error, setError] = useState<string>(), [copied, setCopied] = useState(false);
+  const issue = (): void => { setBusy(true); setError(undefined); api.issueRecovery(shopId).then(setIssued, (failure: unknown) => setError(guard(failure))).finally(() => setBusy(false)); };
+  return <section className="panel">
+    <h2>{t("recoveryTitle")}</h2><p className="hint">{t("recoveryHelp")}</p>
+    {issued === undefined ? <button className="secondary" disabled={busy} onClick={issue}>{t(busy ? "issuing" : "issueRecovery")}</button> : <div className="issued-body">
+      <img className="qr" alt="QR" src={`data:image/svg+xml;base64,${btoa(issued.qr)}`} />
+      <div><p className="hint">{t("issuedHelp")} {date(language, issued.expiresAt, t)}.</p><code className="code">{issued.code}</code>
+        <div className="row"><button className="secondary" onClick={() => { navigator.clipboard.writeText(issued.code).then(() => setCopied(true), () => setCopied(false)); }}>{t(copied ? "copied" : "copy")}</button>
+          <button className="primary" onClick={() => setIssued(undefined)}>{t("done")}</button></div></div></div>}
+    {error !== undefined && error !== "" && <p role="alert" className="notice error">{t(error)}</p>}
   </section>;
 }
 
@@ -203,7 +219,7 @@ function Codes({ t, language, canChange, guard }: { t: T; language: Language; ca
     <Failure t={t} code={list.error} retry={list.reload} />
     {list.data === undefined ? <p className="muted">{t("loading")}</p> : list.data.codes.length === 0 ? <p className="empty">{t("noCodes")}</p> :
       <div className="table-wrap"><table><thead><tr><th>{t("label")}</th><th>{t("status")}</th><th>{t("created")}</th><th>{t("expires")}</th><th>{t("usedBy")}</th><th /></tr></thead>
-        <tbody>{list.data.codes.map(code => <tr key={code.codeId}><td>{code.label}<small>{t("by")} {code.createdBy}{code.includedMonths > 0 ? ` · ${code.includedMonths} ${t("months").toLowerCase()}` : ""}</small></td><td><span className={`pill code-${code.state}`}>{t(code.state)}</span></td>
+        <tbody>{list.data.codes.map(code => <tr key={code.codeId}><td>{code.label}<small>{t("by")} {code.createdBy}{code.includedMonths > 0 ? ` · ${code.includedMonths} ${t("months").toLowerCase()}` : ""}{code.recoveryShopId !== null ? ` · ${t("recovery")}` : ""}</small></td><td><span className={`pill code-${code.state}`}>{t(code.state)}</span></td>
           <td>{date(language, code.createdAt, t)}</td><td>{date(language, code.expiresAt, t)}</td><td>{code.shopName ?? "—"}{code.usedAt !== null && <small>{date(language, code.usedAt, t)}</small>}</td>
           <td className="row-actions">{canChange && code.state === "unused" && <button className="text-button" onClick={() => cancel(code)}>{t("cancel")}</button>}</td></tr>)}</tbody></table></div>}
   </section>;

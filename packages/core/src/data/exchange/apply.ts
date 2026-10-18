@@ -85,7 +85,7 @@ export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewe
     if (tx.get(`SELECT id FROM sales WHERE business_id=? AND number=?`,[event.business_id,sale.number]) !== undefined) throw new ExchangeError("conflict");
     for (const line of sale.items) {
       const product = tx.get(`SELECT selling_price_minor FROM products WHERE id=? AND business_id=?`, [line.product_id,event.business_id])!;
-      if (line.unit_price_minor !== product["selling_price_minor"]) require("sales.price_override");
+      if (line.unit_price_minor !== product["selling_price_minor"] && !wasCataloguePrice(tx,event.business_id,line.product_id,line.unit_price_minor)) require("sales.price_override");
     }
   }
   if (event.event_type === "PRODUCT_SAVED") {
@@ -112,6 +112,15 @@ export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewe
   if (applier === undefined) throw new ExchangeError("unsupported_event");
   applier.apply(strictWriter(tx,event.branch_id,recordedAt),{ eventId:event.event_id,businessId:event.business_id,deviceId:event.origin_device_id,userId:event.actor_id,type:event.event_type,payload:event.payload,occurredAt:event.occurred_at,serverSequence:0,state:"deferred",attempts:0,lastError:null });
   claimEntities(tx,event,model);
+}
+
+// A sale's price is catalogue evidence, not an override, when a signed PRODUCT_SAVED this till wrote or applied set it:
+// the till that sold may not yet have seen a later repricing, and the receiver's current price says nothing about then.
+function wasCataloguePrice(tx: Queryable, businessId: string, productId: string, priceMinor: number): boolean {
+  return tx.get(`SELECT 1 AS found FROM event_journal e LEFT JOIN applied_events a ON a.event_id=e.event_id
+    WHERE e.business_id=? AND e.event_type='PRODUCT_SAVED' AND (e.provenance='local' OR a.status='applied')
+      AND json_extract(e.canonical,'$.payload.product.id')=? AND json_extract(e.canonical,'$.payload.product.selling_price_minor')=? LIMIT 1`,
+    [businessId,productId,priceMinor]) !== undefined;
 }
 
 // All SQL here originates in the fixed appliers above. Preserve scoped branch and
@@ -151,6 +160,7 @@ function applyAuthority(tx: Queryable, event: JournalEnvelope): void {
   if (event.event_type === "DEVICE_TRUSTED" || event.event_type === "DEVICE_REVOKED") { applyDeviceTrust(tx,event); return; }
   if (event.event_type === "SHOP_KEY_GRANTED") { applyShopKeyGrant(tx,event); return; }
   if (event.event_type === "SERVER_ENDPOINT_SET" || event.event_type === "SERVER_ENDPOINT_CLEARED") { applyServerEndpoint(tx,event); return; }
+  if (event.event_type === "SHOP_BACKUP_KEY") { applyBackupKey(tx,event); return; }
   if (!("user_id" in payload) || !("revision" in payload)) throw new ExchangeError("unsupported_event");
   const target = tx.get(`SELECT * FROM local_memberships WHERE business_id=? AND user_id=?`,[event.business_id,payload.user_id]);
   if (event.event_type === "MEMBER_CREATED") {
@@ -230,6 +240,15 @@ function applyShopKeyGrant(tx: Queryable, event: JournalEnvelope): void {
   if (old !== undefined) { if (old["epoch"] !== grant.epoch || old["sealed"] !== sealed) throw new ExchangeError("conflict"); return; }
   if (tx.get(`SELECT epoch FROM shop_key_grants WHERE business_id=? AND key_id=? AND epoch<>?`,[event.business_id,grant.key_id,grant.epoch]) !== undefined) throw new ExchangeError("conflict");
   tx.run(`INSERT INTO shop_key_grants(business_id,key_id,epoch,device_id,sealed,event_id) VALUES (?,?,?,?,?,?)`,[event.business_id,grant.key_id,grant.epoch,grant.device_id,sealed,event.event_id]);
+}
+
+// An owner-pinned backup recovery key (ADR-036). Keys accumulate; the same fact may arrive twice, a different one for the same ID is a conflict.
+function applyBackupKey(tx: Queryable, event: JournalEnvelope): void {
+  const key = parseEventPayload("SHOP_BACKUP_KEY",2,event.payload);
+  const old = tx.get(`SELECT version,public_key,created_at FROM backup_recovery_keys WHERE business_id=? AND key_id=?`,[event.business_id,key.key_id]);
+  if (old !== undefined) { if (old["version"] !== key.version || old["public_key"] !== key.public_key || old["created_at"] !== key.created_at) throw new ExchangeError("conflict"); return; }
+  tx.run(`INSERT INTO backup_recovery_keys(business_id,key_id,version,public_key,created_at,device_id,event_id) VALUES (?,?,?,?,?,?,?)`,
+    [event.business_id,key.key_id,key.version,key.public_key,key.created_at,event.origin_device_id,event.event_id]);
 }
 
 // The owner's chosen server address: the higher revision wins; an equal revision must say the same thing.

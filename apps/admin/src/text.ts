@@ -52,6 +52,10 @@ const strings = {
   invalid_label: ["Donnez un nom de 1 à 120 caractères.", "Give a name of 1 to 120 characters."],
   invalid_status_change: ["Ce changement n’est plus possible ; la page a été actualisée.", "That change is no longer possible; the page was refreshed."],
   code_not_cancellable: ["Ce code a déjà servi ou été annulé.", "This code was already used or cancelled."],
+  shop_not_found: ["Boutique introuvable ou retirée.", "Shop not found or removed."], invalid_request: ["Requête invalide.", "Invalid request."],
+  recoveryTitle: ["Code de récupération du propriétaire", "Owner recovery code"],
+  recoveryHelp: ["Seulement si le propriétaire a perdu toutes ses caisses et restauré une sauvegarde sur un nouvel appareil. Vérifiez d’abord son identité par un moyen sûr : ce code rattache un nouvel appareil du propriétaire à cette boutique. Il ne sert qu’une fois, expire en 24 heures et ne donne accès à aucune donnée (elles restent chiffrées).", "Only when the owner lost every till and restored a backup on a new device. Confirm who they are by a trusted channel first: this code attaches a new device of the owner to this shop. It works once, expires in 24 hours and gives access to no data (it stays encrypted)."],
+  issueRecovery: ["Créer un code de récupération", "Issue a recovery code"], recovery: ["récupération", "recovery"],
   public_url_missing: ["Définissez KOLO_PUBLIC_URL sur le serveur pour créer des codes.", "Set KOLO_PUBLIC_URL on the server to create codes."],
   network: ["Le serveur ne répond pas.", "The server is not answering."], internal: ["Une erreur est survenue.", "Something went wrong."],
 } as const;

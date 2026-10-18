@@ -45,12 +45,22 @@ A viewer account (`admin create <name> --role viewer`) can read but not change a
 Issue a code per shop (dashboard, or `… main.js invite --label "Shop" [--months 3]`) and send it to the owner. They
 paste it on their main till; their other tills follow on their own. A code works once and expires (7 days by default).
 
+If an owner loses every till, they restore their latest backup on a new device with the printed backup recovery key
+(or the file password), then connect it with an owner-recovery code: the dashboard's Recovery panel on the shop page,
+or `… main.js invite --recovery-shop <shop id>`. That code attaches the new device to the existing shop once and never
+creates a shop; facts synced after the backup then come back from the server (ADR-036).
+
 ## Backups and restore
 
 ```sh
 infrastructure/backup.sh /secure/place               # database dump + server identity key, both needed
 infrastructure/restore.sh /secure/place/kolo-…dump /secure/place/kolo-…server-key.json
 ```
+
+`restore.sh` changes nothing until both files check out (the key loads the way the server loads it, the dump is a
+`pg_dump` archive), restores into a staging database while the server keeps serving, and only then switches it in.
+The replaced database stays as `kolo_previous_<time>` and the replaced key as `server-key.json.previous-<time>` in the
+identity volume; the script prints the `dropdb` command to run once the restore is confirmed.
 
 Back up daily and keep copies off the machine. The key file is a secret: whoever holds it can impersonate the server
 (but cannot read shop data, which only tills can decrypt). Restoring an older backup is safe: tills keep every fact and

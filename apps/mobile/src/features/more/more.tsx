@@ -13,6 +13,8 @@ import { Button, Confirm, Field, ListRow, Notice, RowGroup, Screen, Section, Tog
 import { FormProblem, useAction } from "../../components/command.tsx";
 import { PhotoUsage } from "../products/photos.tsx";
 import { SystemNotificationsToggle, useUnreadAlerts } from "./alerts.tsx";
+import type { PlatformCheck } from "@kolo/core/application/platform-check";
+import { checkThisDevice } from "../../data/platform-check-on-device.ts";
 
 /** Secondary destinations, each shown only to actors whose permissions open it, in a fixed order. */
 export function MoreScreen(): React.JSX.Element {
@@ -86,8 +88,21 @@ export function AboutScreen(): React.JSX.Element {
       {architecture !== undefined && <Text selectable style={s.muted}>{t("architectureLabel", { architecture })}</Text>}<Text style={s.muted}>kolo · made by hblabs</Text></View>
     <Section title={t("licenseTitle")}><Text style={s.body}>{t("licenseText")}</Text></Section>
     <Section title={t("privacyTitle")}><Text style={s.body}>{t("privacyText")}</Text></Section>
+    <DeviceCheck />
     <Section title={t("openSourceTitle")}>{["React Native · MIT", "Expo · MIT", "React · MIT", "react-native-quick-crypto · MIT", "Zod · MIT", "fflate · MIT"].map(line => <Text key={line} style={s.body}>{line}</Text>)}</Section>
   </Screen>;
+}
+
+/** Runs the platform check on this phone and lists every result, so an installed build can be checked by hand. */
+function DeviceCheck(): React.JSX.Element {
+  const { t } = useText(), s = useStyles(), [busy, setBusy] = useState(false), [result, setResult] = useState<PlatformCheck>();
+  const run = (): void => { setBusy(true); setResult(undefined); void checkThisDevice().then(setResult).finally(() => { setBusy(false); }); };
+  return <Section title={t("deviceCheckTitle")}>
+    <Text style={s.body}>{t("deviceCheckHelp")}</Text>
+    <Button label={t("deviceCheckRun")} variant="secondary" busy={busy} onPress={run} />
+    {result !== undefined && <Notice tone={result.ok ? "success" : "error"} text={t(result.ok ? "deviceCheckPassed" : "deviceCheckFailed")} />}
+    {result?.checks.map(check => <Text key={check.name} selectable style={s.muted}>{`${check.ok ? "✓" : "✗"} ${check.name} · ${check.ms} ms${check.detail === undefined ? "" : ` · ${check.detail}`}`}</Text>)}
+  </Section>;
 }
 
 /**

@@ -108,11 +108,17 @@ desktop has native crypto/active-slot/file-dialog adapters, with renderer work i
 
 AES-256-GCM with fresh nonce/salt and PBKDF2-SHA256/600,000 iterations protects the F2
 signed batches/receipts. File passwords are independent of unlock PINs. Input is bounded
-before allocation/KDF/application: 48 MiB encrypted file, 32 MiB encrypted payload,
-8 MiB batch, 128 MiB SQLite snapshot (standard profile; backups and pairing snapshots may
-use the opt-in large profile, [ADR-027](../adr/ADR-027-large-files-and-product-photos.md)). Content is deflated before encryption (format
-version 2) and inflated only up to its authenticated length; version 1 files remain
-readable ([ADR-026](../adr/ADR-026-compressed-transfer-files.md)). Previews have no business effects and
+before allocation/KDF/application: one limit on every device for backups and pairing snapshots
+(1 GiB SQLite snapshot, about 1 GiB file), 8 MiB per exchange batch or receipt, and 48 MiB of base64
+for an enrollment carried by a join mailbox. Files are
+binary chunked containers (format version 3, [ADR-035](../adr/ADR-035-binary-encrypted-container.md)):
+a magic, a canonical ASCII header, then the deflated content in 1 MiB AES-GCM chunks whose nonces carry
+a counter and a final-chunk flag, so reordered, truncated or extended files fail authentication.
+Content is inflated only up to its authenticated length. The version 1 and 2 JSON files of earlier
+releases ([ADR-026](../adr/ADR-026-compressed-transfer-files.md)) are no longer read. Core APIs take and return file bytes;
+names are `.kolo-backup`, `.kolo-enrollment`, `.kolo-exchange` and `.kolo-receipt`, while plaintext
+invitations and requests keep `.kolo-invite.json`/`.kolo-request.json`. Join mailboxes carry an
+enrollment container as base64 text. Previews have no business effects and
 actual imports recheck authority. Receipts can be regenerated after loss/cancellation;
 exports remain offered until the correct receiver's receipt arrives.
 

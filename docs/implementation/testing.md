@@ -1,17 +1,51 @@
 # Testing and release gates
 
+## Test where it ships (rule since 2026-10-17)
+
+A green Node run proves nothing about a runtime it did not use. On 2026-10-17 every test passed while the packaged
+desktop app could not open any password backup: Node's OpenSSL has Argon2id, Electron's BoringSSL does not. So each
+platform adapter runs in the runtime that ships it, and no build is handed out or uploaded before it passes there.
+
+| Runtime | What ships it | Where its adapters are tested |
+|---|---|---|
+| Node (OpenSSL) | CLI, server | `npm test` (CLI `crypto.test.ts`, server tests) |
+| Electron (BoringSSL, Electron's node:sqlite) | Desktop | `npm test -w @kolo/desktop` runs every desktop test inside Electron (`scripts/test-in-electron.mjs`); `electron-runtime.test.ts` fails if run elsewhere |
+| Packaged desktop (asar, fuses, installer layout) | AppImage, deb, NSIS, portable | `npm run verify:desktop:linux` / `verify:desktop:win` after every build |
+| Hermes + quick-crypto (OpenSSL 3.6) | Android APK | `npm run verify:android` on a phone or emulator after every build |
+
+One shared check, `runPlatformCheck` (`@kolo/core/application/platform-check`), holds the known answers: UTF-8,
+base64, NFC passwords, SHA-256, HMAC, PBKDF2, AES-256-GCM, X25519 (RFC 7748), Ed25519 (RFC 8032), Argon2id, HKDF
+(RFC 5869), ephemeral agreement through PEM keys, the golden ADR-035 backup opened by password and by recovery key, and
+a new backup round trip. Every runtime runs the same list: Node in the CLI tests, Electron in the desktop tests, the
+packaged app through `--self-check` (plus node:sqlite, every migration and the snapshot worker), and Android through
+`kolo://self-check` or More → About → Device check.
+
+- **Desktop builds:** `verify:desktop:linux` runs the packaged app's self-check, then the packaged real-UI workflow
+  smoke, which ends with the CLI verifying the backup the app wrote. It starts Xvfb when there is no display.
+  `verify:desktop:win` does the same on Windows; from Linux it runs the self-check through wine and states that the
+  Windows UI workflow is not verified there.
+- **Android builds:** `verify:android` installs the APK matching the connected device over the existing app (never
+  uninstalling: that would erase the shop), opens `kolo://self-check` and reads the result from logcat.
+- **Releases:** `scripts/release.mjs` runs the platform's verification after building and uploads nothing if it
+  fails. Release CI runs `verify:desktop:linux|win` for both desktop platforms.
+- **Handing out test builds** follows the same rule: build, verify, then share.
+- **Workflow smoke file paths:** the smoke replaces only the OS dialogs. Saves and opens go through the app's real file
+  adapters (streamed temporary file, sync, new destination; reads in pieces).
+
 ## Active commands
 
 | Command | Coverage |
 |---|---|
 | `npm run boundaries` | Shared/platform/server/renderer import constraints |
 | `npm run typecheck` | Builds package declarations then checks all active workspaces |
-| `npm test` | Real SQLite business/core tests, contract failures, server HTTP, desktop persistence |
+| `npm test` | Real SQLite business/core tests, contract failures, server HTTP, desktop persistence (desktop inside Electron's runtime) |
 | `npm run build` | Shared JS/declarations, server emitted JS, Electron main/preload/renderer |
 | `npm run smoke:server` | Build image and test real PostgreSQL readiness in disposable containers |
 | `npm run smoke:desktop:workflow` | Actual Electron DOM setup, OS-vault unlock, barcode/cash sale, persisted receipt and process restart with disposable data |
 | `npm run pack:desktop` / `dist:desktop:win` | Stage production dependencies and build unpacked / NSIS + portable artifacts without publishing |
 | `npm run smoke:desktop:packaged` | Packaged workflow, axe audits, minimize lock, renderer/main termination and persisted checkout |
+| `npm run verify:desktop:linux` / `verify:desktop:win` | Packaged `--self-check`, then the packaged workflow smoke; required after every desktop build |
+| `npm run verify:android` | Installs the APK on a connected device or emulator and reads its `kolo://self-check`; required after every Android build |
 | `npm run benchmark:desktop` | Actual renderer/preload/SQLite timings with 10k products and 100k stock movements |
 | `npm run smoke:desktop` | Actual Electron SQLite/preload/renderer boot using disposable user data |
 | `npm run smoke:credentials` | Actual Electron crypto/OS vault contract in disposable user data; unavailable encryption exits 2 |
@@ -139,7 +173,7 @@ The workspace gate runs locally, not on GitHub: `npm install` sets up a husky `p
 hook (`.husky/pre-push`) that runs `npm run check`, then the Metro export
 (`npm run bundle:mobile`), and refuses the push if either fails. `git push --no-verify`
 skips it; do so only knowingly. On GitHub, Windows acceptance (`desktop.yml`) runs only when started by
-hand (Actions → Run workflow), e.g. before tagging; tag release workflows run as before. CI build/adapter tests do not launch Electron, so its runtime binary is not needed. Add PostgreSQL integration service and packaged/native jobs in their
+hand (Actions → Run workflow), e.g. before tagging; tag release workflows run as before. Desktop tests run inside Electron's runtime (`ELECTRON_RUN_AS_NODE`), so CI needs the Electron binary that `npm ci` downloads. Add PostgreSQL integration service and packaged/native jobs in their
 phases; label unavailable platform evidence in progress rather than claiming CI proves it.
 
 
@@ -170,7 +204,7 @@ The `restore-file` workflow phase restores a supplied backup from a fresh instal
 
 ```sh
 KOLO_DESKTOP_SMOKE_DIR=<empty dir> KOLO_DESKTOP_SMOKE_PHASE=restore-file \
-KOLO_DESKTOP_SMOKE_OPEN_FILE=<backup.json> KOLO_DESKTOP_SMOKE_OPEN_PASSWORD=<password> \
+KOLO_DESKTOP_SMOKE_OPEN_FILE=<file.kolo-backup> KOLO_DESKTOP_SMOKE_OPEN_PASSWORD=<password> \
 KOLO_DESKTOP_SMOKE_OPEN_SHOP="<shop name>" KOLO_DESKTOP_AXE_PATH=node_modules/axe-core/axe.min.js \
   node_modules/.bin/electron apps/desktop --workflow-smoke
 ```

@@ -27,12 +27,12 @@ Accepted ADRs preserve decision history. Changes belong in a superseding ADR.
 | [019](ADR-019-event-exchange-and-destination-delivery.md) | Event exchange and per-destination delivery | Accepted |
 | [020](ADR-020-local-credential-policy.md) | Native local credentials and recovery | Implemented candidate; platform gate pending |
 | [021](ADR-021-signed-journal-and-late-event-policy.md) | Signed journal, destination receipts and late-event policy | Implemented core; native verification pending |
-| [022](ADR-022-encrypted-files-and-approved-snapshots.md) | Encrypted files and approved snapshots | Size limits superseded by ADR-026/027 |
+| [022](ADR-022-encrypted-files-and-approved-snapshots.md) | Encrypted files and approved snapshots | File format and size limits superseded by ADR-035 |
 | [023](ADR-023-partial-returns-and-source-ordering.md) | Partial returns and source ordering | Accepted |
 | [024](ADR-024-licensing-and-paid-unlocks.md) | Licensing and paid cosmetic unlocks | Server license amended to AGPL-3.0-only |
 | [025](ADR-025-fastify-server.md) | Fastify for the optional server | Accepted |
-| [026](ADR-026-compressed-transfer-files.md) | Compressed transfer files and larger snapshots | Accepted |
-| [027](ADR-027-large-files-and-product-photos.md) | Large transfer files and optional product photos | Accepted |
+| [026](ADR-026-compressed-transfer-files.md) | Compressed transfer files and larger snapshots | File format superseded by ADR-035 |
+| [027](ADR-027-large-files-and-product-photos.md) | Large transfer files and optional product photos | Size profiles superseded by ADR-035 |
 | [028](ADR-028-additional-product-categories.md) | Main and additional product categories | Accepted |
 | [029](ADR-029-sync-server-relay.md) | Sync relay, enrollment, sessions and device trust | Accepted |
 | [030](ADR-030-end-to-end-encryption-and-connection-codes.md) | Encrypted sync and single-use connection codes | Accepted |
@@ -40,3 +40,5 @@ Accepted ADRs preserve decision history. Changes belong in a superseding ADR.
 | [032](ADR-032-join-by-code.md) | Adding a till with a short code | Accepted |
 | [033](ADR-033-tax-payment-terms-notifications.md) | Tax, payment terms and local notifications | Accepted |
 | [034](ADR-034-local-network-pairing-and-sync.md) | Direct local-network pairing and synchronization | Accepted |
+| [035](ADR-035-binary-encrypted-container.md) | Encrypted container with key slots | Accepted (device acceptance open) |
+| [036](ADR-036-shop-backup-recovery-key.md) | Shop backup recovery key | Accepted |

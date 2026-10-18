@@ -33,9 +33,13 @@ import { SessionProvider, type Session } from "./session.tsx";
 import { API_BASE_URL } from "./config.ts";
 import { seedDemoShop } from "./dev-seed.ts";
 import { LanguageControl } from "../components/controls.tsx";
+import { clearPreparedFiles } from "../data/transfer/files-on-device.ts";
+import { listenForSelfCheck } from "../data/platform-check-on-device.ts";
 
 // The native launch screen (logo on brand green) stays up until the shop database has opened.
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
+// A backup save interrupted by a closed or killed app leaves its private copy in the cache (ADR-035).
+clearPreparedFiles();
 const hideSplash = (): void => { void SplashScreen.hideAsync().catch(() => undefined); };
 
 type Boot = { state: "opening" } | { state: "failed" } |
@@ -59,6 +63,7 @@ function AppContent(): React.JSX.Element {
   useEffect(() => { if (boot.state !== "opening") hideSplash(); }, [boot.state]);
   // A slow first open (large migration) falls back to the in-app spinner rather than a frozen logo.
   useEffect(() => { const timer = setTimeout(hideSplash, 8000); return () => clearTimeout(timer); }, []);
+  useEffect(() => listenForSelfCheck(), []);
   const [unlocked, setUnlocked] = useState<{ context: OperationContext; generation: number }>();
   const generation = useRef(0);
   const activeDatabase = useRef<Database | undefined>(undefined);

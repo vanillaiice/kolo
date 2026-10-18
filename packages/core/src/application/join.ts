@@ -4,6 +4,7 @@ import type { SignedPairingInvite, SignedPairingRequest } from "@kolo/contracts/
 import type { OperationContext, WorkspacePorts, Installation } from "../identity/types.ts";
 import type { Database } from "../data/database/driver.ts";
 import { TransferError, type SnapshotPort } from "../backup/types.ts";
+import { transferFileFromText, transferFileText } from "../backup/file-kind.ts";
 import { acceptPairingInvite, cancelPairingInvite, completePairing, confirmPairing, createPairingInvite, pairingVerificationCode, previewPairingInvite, previewPairingRequest } from "./pairing.ts";
 import { openSealedWithVault, sealToDevice, type SealingCrypto } from "./sealed-sync.ts";
 import { openServerSession, type SyncTransport } from "./server-sync.ts";
@@ -50,7 +51,7 @@ const passwordAad = (joinId: string): string => `kolo.join-password.v1\u0000${jo
 /** Creates the authenticated join offer without choosing a transport; also used by a desktop's local mailbox. */
 export async function prepareJoinOffer(context: OperationContext, crypto: SealingCrypto,
   input: { readonly url: string; readonly fingerprint: string; readonly authorityAllowed: boolean; readonly expiresAt: string }): Promise<{ start: JoinStart; offer: JoinOffer }> {
-  const document = await createPairingInvite(context, crypto, input.authorityAllowed), invite = JSON.parse(document.text) as SignedPairingInvite;
+  const document = await createPairingInvite(context, crypto, input.authorityAllowed), invite = JSON.parse(crypto.decodeText(document.bytes)) as SignedPairingInvite;
   const code = newCode(crypto), joinId = await joinIdOf(code, crypto);
   return { start: { code, display: formatJoinCode(code), link: formatJoinLink({ ...input, code }), joinId, expiresAt: input.expiresAt, token: "", inviteId: invite.invite.invite_id, authorityAllowed: input.authorityAllowed },
     offer: { join_id: joinId, invite, mac: await mac(code, "invite", invite.digest, crypto) } };
@@ -59,17 +60,18 @@ export async function prepareJoinOffer(context: OperationContext, crypto: Sealin
 /** Verifies that a candidate holds the QR's secret and requests this exact invite, regardless of mailbox transport. */
 export async function inspectJoinCandidate(body: JoinRequestBody, crypto: SealingCrypto, start: JoinStart): Promise<JoinCandidate> {
   if (!equal(body.mac, await mac(start.code, "request", `${body.request.digest}\u0000${body.encryption_public_key}`, crypto))) throw new TransferError("authentication_failed");
-  const requestText = canonicalJson(body.request), preview = await previewPairingRequest(requestText, crypto);
+  const requestText = canonicalJson(body.request), preview = await previewPairingRequest(crypto.encodeText(requestText), crypto);
   if (body.request.request.invite.invite.invite_id !== start.inviteId) throw new TransferError("invalid_pairing");
   return { label: preview.deviceLabel, platform: body.request.request.platform, requestText, encryptionPublicKey: body.encryption_public_key };
 }
 
 /** Builds the approved snapshot and seals its random password to the candidate; the mailbox never receives its plaintext. */
 export async function prepareJoinEnrollment(context: OperationContext, crypto: SealingCrypto, files: SnapshotPort, start: JoinStart, candidate: JoinCandidate): Promise<JoinEnrollment> {
-  const verification = (await previewPairingRequest(candidate.requestText, crypto)).verificationCode, password = crypto.randomHex(32);
-  const enrollment = await confirmPairing(context, candidate.requestText, verification, password, files, crypto);
+  const request = crypto.encodeText(candidate.requestText), verification = (await previewPairingRequest(request, crypto)).verificationCode, password = crypto.randomHex(32);
+  // JSON mailboxes carry the binary container as base64 (ADR-035); the MAC covers the carried text.
+  const enrollment = transferFileText((await confirmPairing(context, request, verification, password, files, crypto)).bytes, crypto);
   const sealed = await sealToDevice(crypto, candidate.encryptionPublicKey, password, passwordAad(start.joinId));
-  return { enrollment: enrollment.text, sealed_password: sealed, mac: await mac(start.code, "enrollment", `${await crypto.sha256(enrollment.text)}\u0000${canonicalJson(sealed)}`, crypto) };
+  return { enrollment, sealed_password: sealed, mac: await mac(start.code, "enrollment", `${await crypto.sha256(enrollment)}\u0000${canonicalJson(sealed)}`, crypto) };
 }
 
 /**
@@ -78,7 +80,7 @@ export async function prepareJoinEnrollment(context: OperationContext, crypto: S
  */
 export async function startJoin(context: OperationContext, transport: SyncTransport, crypto: SealingCrypto,
   input: { readonly serverDeviceId: string; readonly url: string; readonly fingerprint: string; readonly authorityAllowed: boolean }): Promise<JoinStart> {
-  const document = await createPairingInvite(context, crypto, input.authorityAllowed), invite = JSON.parse(document.text) as SignedPairingInvite;
+  const document = await createPairingInvite(context, crypto, input.authorityAllowed), invite = JSON.parse(crypto.decodeText(document.bytes)) as SignedPairingInvite;
   const code = newCode(crypto), joinId = await joinIdOf(code, crypto);
   const token = await openServerSession(context, transport, input.serverDeviceId, crypto);
   try {
@@ -116,7 +118,7 @@ export async function endJoin(context: OperationContext, transport: SyncTranspor
 export async function lookupJoin(transport: SyncTransport, crypto: SealingCrypto, code: string): Promise<JoinInvitation> {
   const offer = await transport.joinRead(await joinIdOf(code, crypto));
   if (!equal(offer.mac, await mac(code, "invite", offer.invite.digest, crypto))) throw new TransferError("authentication_failed");
-  const inviteText = canonicalJson(offer.invite), preview = await previewPairingInvite(inviteText, crypto);
+  const inviteText = canonicalJson(offer.invite), preview = await previewPairingInvite(crypto.encodeText(inviteText), crypto);
   return { businessName: preview.businessName, ownerName: preview.ownerName, authorityAllowed: preview.authorityAllowed, inviteText };
 }
 
@@ -131,12 +133,12 @@ function enrollmentOf(database: Database): { installationId: string; signed?: Si
  */
 export async function requestJoin(code: string, invitation: JoinInvitation, input: { readonly label: string; readonly platform: "ANDROID" | "IOS" | "DESKTOP"; readonly secret: string },
   ports: WorkspacePorts, transport: SyncTransport, crypto: SealingCrypto): Promise<void> {
-  const fingerprint = (await previewPairingInvite(invitation.inviteText, crypto)).fingerprint;
-  const accepted = await acceptPairingInvite(invitation.inviteText, { confirmedFingerprint: fingerprint, label: input.label, platform: input.platform, secret: input.secret }, ports, crypto);
+  const invite = crypto.encodeText(invitation.inviteText), fingerprint = (await previewPairingInvite(invite, crypto)).fingerprint;
+  const accepted = await acceptPairingInvite(invite, { confirmedFingerprint: fingerprint, label: input.label, platform: input.platform, secret: input.secret }, ports, crypto);
   const intent = enrollmentOf(ports.database), native = intent === undefined ? undefined : await ports.credentials.inspect(intent.installationId);
   if (native === undefined || ports.credentials.encryptionKey === undefined) throw new TransferError("authentication_failed");
   const encryptionPublicKey = await ports.credentials.encryptionKey(native.keyReference);
-  const request = JSON.parse(accepted.document.text) as SignedPairingRequest;
+  const request = JSON.parse(crypto.decodeText(accepted.document.bytes)) as SignedPairingRequest;
   const body: JoinRequestBody = { request, encryption_public_key: encryptionPublicKey, mac: await mac(code, "request", `${request.digest}\u0000${encryptionPublicKey}`, crypto) };
   await transport.joinRequest(await joinIdOf(code, crypto), body);
 }
@@ -157,7 +159,7 @@ export async function finishJoin(code: string, ports: WorkspacePorts, files: Sna
   let password: string;
   try { password = await openSealedWithVault(ports, native.keyReference, own, answer.sealed_password, passwordAad(joinId), crypto); }
   catch { throw new TransferError("authentication_failed"); }
-  return completePairing(answer.enrollment, password, await pairingVerificationCode(intent.signed, crypto), ports, files, crypto);
+  return completePairing(transferFileFromText(answer.enrollment, crypto), password, await pairingVerificationCode(intent.signed, crypto), ports, files, crypto);
 }
 
 /** True while this empty device has a join request waiting for the owner, so the app can resume waiting after a restart. */

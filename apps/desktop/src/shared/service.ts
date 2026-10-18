@@ -9,8 +9,10 @@ export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later"
   "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" |
   "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" |
   /** File transfer failures; file contents and paths never cross the bridge. */
-  "invalid_file" | "too_large" | "invalid_password" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" |
+  "invalid_file" | "too_large" | "invalid_password" | "invalid_recovery_key" | "recovery_key_required" | "untrusted_backup" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" |
   "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" |
+  /** A backup could not open every sync key granted to this till; a backup whose records disagree. */
+  "sync_keys_unavailable" | "inconsistent_records" |
   /** Product photo failures: not a WebP/JPEG within limits, or the shop's photo storage is full. */
   "invalid_photo" | "photo_storage_full" |
   /** Sync server failures: unreachable or refusing, a fingerprint that does not match, an address that is not allowed,
@@ -101,6 +103,8 @@ export interface CheckoutRequest extends SessionRequest {
   readonly expectedCustomerBalanceMinor?: number;
   /** Whole-sale discount in francs, taken after the lines; needs sales.discount. */
   readonly discountMinor?: number;
+  /** Change the named customer leaves on account as an advance, recorded with the sale; needs customers.pay. */
+  readonly keptChangeMinor?: number;
   readonly lines: readonly { readonly productId: string; readonly quantity: number; readonly unitPriceMinor: number }[];
 }
 /** Account names and kinds for taking money, never balances. */
@@ -260,9 +264,12 @@ export interface NotificationsView { readonly items: readonly ShopNotification[]
 export type { ShopNotification, NotificationKind } from "@kolo/core/application/notifications";
 import type { ShopNotification } from "@kolo/core/application/notifications";
 /** Platform-neutral UI service. Electron implements it with named preload calls; a future web adapter can replace it. */
+/** A pinned backup recovery key: its ID, version, creation date and whether new backups seal to it. */
+export interface BackupKeyView { readonly keyId: string; readonly version: number; readonly createdAt: string; readonly current: boolean }
+/** A backup recovery key to show once: its 14 groups, its ID and the 0-based groups the owner must type back. */
+export interface PendingBackupKeyView { readonly text: string; readonly keyId: string; readonly confirm: readonly number[] }
 /** Per-computer session behaviour. */
-/** Per-computer preferences. `largeFiles` lifts transfer-file and photo-storage limits for powerful computers. */
-export interface SessionPreferences { readonly rememberSession: boolean; readonly largeFiles: boolean }
+export interface SessionPreferences { readonly rememberSession: boolean }
 /** A product photo ready for an <img>: a data URL (the renderer CSP allows data: images only). */
 export interface PhotoView { readonly digest: string; readonly dataUrl: string }
 /** Photos held by the shop on this computer against the active storage limit. */
@@ -317,12 +324,6 @@ export interface ShopService {
    * disabling forgets any remembered user so the next start is locked.
    */
   setRememberSession(input: SessionRequest & { readonly enabled: boolean }): Promise<Result<SessionPreferences>>;
-  /**
-   * Owner (business.settings) switch for this computer: raises backup/enrollment file limits from the
-   * standard profile (48 MiB files) to the large one (about 500 MiB) and photo storage from 16 to 256 MiB.
-   * Larger files open only on computers with the switch on.
-   */
-  setLargeFiles(input: SessionRequest & { readonly enabled: boolean }): Promise<Result<SessionPreferences>>;
   /**
    * Owner-only computer reset: with the typed shop name and the owner's code, every shop on this computer
    * (with safety copies), its credentials and the remembered session are erased and KOLO reopens empty.
@@ -453,8 +454,17 @@ export interface ShopService {
    * invite. The next openBackup or openInvite uses that file instead of asking again.
    */
   chooseImportFile(): Promise<Result<{ readonly kind: "backup" | "invite" }>>;
-  /** Checks a backup (the file chosen for import, or a newly picked one); nothing is replaced until restoreBackup. */
-  openBackup(input: { readonly password: string }): Promise<Result<BackupFileView>>;
+  /**
+   * Checks a backup (the file chosen for import, or a newly picked one) with its password or with the shop's backup
+   * recovery key (exactly one); nothing is replaced until restoreBackup.
+   */
+  openBackup(input: { readonly password: string } | { readonly recoveryKey: string }): Promise<Result<BackupFileView>>;
+  /** The shop's pinned backup recovery keys (ADR-036), newest first; the first is the one new backups seal to. */
+  backupKeys(input: SessionRequest): Promise<Result<readonly BackupKeyView[]>>;
+  /** Owner only, after a fresh PIN: creates a backup recovery key to show once. It is pinned by confirmBackupKey. */
+  prepareBackupKey(input: SessionRequest & { readonly secret: string }): Promise<Result<PendingBackupKeyView>>;
+  /** Pins the prepared key once the owner typed back the three requested groups of four characters. */
+  confirmBackupKey(input: SessionRequest & { readonly groups: readonly string[] }): Promise<Result<BackupKeyView>>;
   /**
    * Restores the checked backup after its shop name is typed back, with a new code for this computer.
    * An empty computer restores directly. The owner's session replaces the open shop. Signed out, a

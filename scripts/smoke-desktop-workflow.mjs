@@ -36,7 +36,7 @@ async function phase(name) {
  * integrity checks over it and reads the sales report. A broken backup or inconsistent shop fails the smoke.
  */
 function crossCheckBackup() {
-  const backup = join(directory, "last-backup.json"), cli = resolve("apps/cli/dist/main.js");
+  const backup = join(directory, "last.kolo-backup"), cli = resolve("apps/cli/dist/main.js");
   if (!existsSync(backup)) { process.stderr.write("Desktop workflow saved no backup to cross-check\n"); process.exitCode = 1; return; }
   const env = { ...process.env, KOLO_BACKUP_PASSWORD: "correct horse battery" };
   const kolo = args => {

@@ -5,7 +5,7 @@ import { formatMoney, formatQuantityWithUnit } from "@kolo/core/domain/money";
 import { lineTotal, subtotalOf } from "@kolo/core/rules/pricing";
 import { moneyEntry } from "@kolo/core/domain/entry";
 import { sumAmounts } from "@kolo/core/rules/amounts";
-import { customerSettlement } from "@kolo/core/rules/customer-settlement";
+import { customerSettlement, keepableChange } from "@kolo/core/rules/customer-settlement";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { CheckoutRequest, CustomerView, ProductView, ShopService } from "../../shared/service.ts";
 import { ProductThumb } from "./Photo.tsx";
@@ -15,7 +15,7 @@ import { call, ErrorText, Field, Pager, ReadState, Select, useAction, useRead, u
 type DraftLine={readonly product:ProductView;readonly quantityText:string};
 /** A payment row; the first row without typed text takes whatever is left to pay. */
 type DraftPayment={readonly key:string;readonly accountId:string;readonly amountText:string|null};
-/** Keyboard till with split payments and customer credit. Drafts survive navigation; prices, limits and authority are checked again by the host. */
+/** Keyboard till with split payments, customer credit and change kept on account. Drafts survive navigation; prices, limits and authority are checked again by the host. */
 export function Till({service,sessionId,revision,permissions,onReceipt}:{readonly service:ShopService;readonly sessionId:string;readonly revision:number;readonly permissions:readonly Permission[];readonly onReceipt:(id:string)=>void}):React.JSX.Element{
   const {t,language}=useText(),action=useAction();
   const [term,setTerm]=useState(""),[barcode,setBarcode]=useState(""),[cursor,setCursor]=useState<{after:Cursor;revision:number}>();
@@ -23,7 +23,7 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
   const customerRead=useRead(()=>selectedCustomer===undefined?Promise.resolve({ok:true as const,value:null}):service.getCustomer({sessionId,customerId:selectedCustomer.id}),[service,sessionId,selectedCustomer?.id,revision]);
   const customer=customerRead.data?.id===selectedCustomer?.id?customerRead.data??undefined:selectedCustomer;
   const pending=useRef<CheckoutRequest | undefined>(undefined), scanner=useRef<HTMLInputElement>(null), focusScanner=useRef(true);
-  const [onDebt,setOnDebt]=useState(false),[applyCredit,setApplyCredit]=useState(true);
+  const [onDebt,setOnDebt]=useState(false),[applyCredit,setApplyCredit]=useState(true),[keepChange,setKeepChange]=useState(false);
   const [categoryId,setCategoryId]=useState("");
   const groups=useRead(()=>service.listCategories({sessionId,limit:100}),[service,sessionId,revision]);
   // No search and no category lists the whole catalogue; a category keeps products whose main or other category it is.
@@ -49,6 +49,9 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
   let accountImpact:ReturnType<typeof customerSettlement>|undefined;
   try{if(customer!==undefined&&remaining>=0)accountImpact=customerSettlement(customer.outstandingMinor,remaining);}catch{valid=false;}
   let tendered:number|undefined;try{tendered=received.trim()===""?undefined:moneyEntry(received);}catch{valid=false;}
+  // A named customer paid in full in cash may leave the change on account as an advance (customers.pay).
+  let changeMinor=0;try{if(valid&&!onDebt)changeMinor=keepableChange({hasCustomer:customer!==undefined,cashDueMinor:cashPaid,tenderedMinor:tendered,outstandingMinor:remaining});}catch{valid=false;}
+  const canKeepChange=permissions.includes("customers.pay")&&changeMinor>0,keptChangeMinor=canKeepChange&&keepChange?changeMinor:0;
   const blocker=!valid?undefined:remaining<0?"overpaid":remaining>0&&!canCredit?"noCredit":remaining>0&&customer===undefined?"needsCustomer":remaining>availableCredit&&!onDebt?"chooseDebt":tendered!==undefined&&tendered<cashPaid?"receivedShort":undefined;
   const edit=(next:readonly DraftLine[]):void=>{pending.current=undefined;setCart(next);action.setError(undefined);};
   const editRows=(next:readonly DraftPayment[]):void=>{pending.current=undefined;setRows(next);action.setError(undefined);};
@@ -77,13 +80,13 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
   const checkout=async():Promise<void>=>{
     await action.run(async()=>{
       try{pending.current??={sessionId,requestId:crypto.randomUUID(),...(customer===undefined?{}:{customerId:customer.id,expectedCustomerBalanceMinor:customer.outstandingMinor}),
-        ...(discountMinor>0?{discountMinor}:{}),payments:rows.map((row,index)=>({accountId:accountOf(row.accountId)!.id,amountMinor:amounts[index]!})).filter(payment=>payment.amountMinor>0),
+        ...(discountMinor>0?{discountMinor}:{}),...(keptChangeMinor>0?{keptChangeMinor}:{}),payments:rows.map((row,index)=>({accountId:accountOf(row.accountId)!.id,amountMinor:amounts[index]!})).filter(payment=>payment.amountMinor>0),
         lines:cart.map(line=>({productId:line.product.id,quantity:quantityEntry(line.quantityText,line.product.divisible),unitPriceMinor:line.product.sellingPriceMinor}))};}
       catch{return {ok:false,error:{code:"invalid_input"}};}
       const result=await call(()=>service.checkout(pending.current!));
       setUncertain(!result.ok&&result.error.code==="unavailable");
       if(!result.ok&&result.error.code==="request_conflict"){pending.current=undefined;customerRead.retry();}
-      if(result.ok){pending.current=undefined;setCart([]);setBarcode("");setRows([{key:"first",accountId:"",amountText:null}]);setOnDebt(false);setApplyCredit(true);setCustomer(undefined);setReceived("");setDiscount("");onReceipt(result.value.saleId);}return result;
+      if(result.ok){pending.current=undefined;setCart([]);setBarcode("");setRows([{key:"first",accountId:"",amountText:null}]);setOnDebt(false);setApplyCredit(true);setKeepChange(false);setCustomer(undefined);setReceived("");setDiscount("");onReceipt(result.value.saleId);}return result;
     });
   };
   return <section className="workspace-content till-content">
@@ -109,7 +112,7 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
       })}</div>}
       <div className="cart-settlement">{canDiscount&&cart.length>0&&<><div className="settlement-line"><span>{t("subtotal")}</span><strong>{formatMoney(subtotal,language)}</strong></div>
         <Field id="sale-discount" label={t("discount")} value={discount} numeric required={false} disabled={frozen} onChange={value=>{pending.current=undefined;setDiscount(value);action.setError(undefined);}}/></>}<div className="total-line"><span>{t("total")}</span><strong>{valid?formatMoney(total,language):"—"}</strong></div>
-        {canCustomers&&<CustomerChoice service={service} sessionId={sessionId} revision={revision} value={customer} disabled={frozen} onChange={value=>{pending.current=undefined;setCustomer(value);setApplyCredit(true);action.setError(undefined);}}/>}
+        {canCustomers&&<CustomerChoice service={service} sessionId={sessionId} revision={revision} value={customer} disabled={frozen} onChange={value=>{pending.current=undefined;setCustomer(value);setApplyCredit(true);setKeepChange(false);action.setError(undefined);}}/>}
         {canCredit&&canCustomers&&<div className="actions"><button type="button" className={onDebt?"secondary":"primary"} aria-pressed={!onDebt} disabled={frozen} onClick={()=>changeSettlement(false)}>{t("payNow")}</button><button type="button" id="sale-on-debt" className={onDebt?"primary":"secondary"} aria-pressed={onDebt} disabled={frozen} onClick={()=>changeSettlement(true)}>{t("setAsDebt")}</button></div>}
         {availableCredit>0&&!onDebt&&<label className="check"><input type="checkbox" checked={applyCredit} disabled={frozen} onChange={event=>{pending.current=undefined;setApplyCredit(event.target.checked);action.setError(undefined);}}/>{t("useCustomerCredit")} · {formatMoney(availableCredit,language)}</label>}
         <ReadState loading={accounts.loading} error={accounts.error} empty={accounts.data?.items.length===0} emptyText={t("noAccounts")} retry={accounts.retry}>
@@ -127,8 +130,10 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
           {accountImpact.debtAddedMinor>0&&<div className="settlement-line negative"><span>{t("newDebt")}</span><strong>{formatMoney(accountImpact.debtAddedMinor,language)}</strong></div>}
           <div className="settlement-line"><span>{t("balanceAfterSale")}</span><Balance value={accountImpact.balanceAfterMinor}/></div>
         </>:valid&&remaining!==0&&<div className="settlement-line"><span>{t("remaining")}</span><strong>{formatMoney(remaining,language)}</strong></div>}
-        {cashPaid>0&&<Field id="cash-received" label={t("received")} value={received} numeric required={false} disabled={frozen} onChange={setReceived}/>}
-        {valid&&tendered!==undefined&&tendered>=cashPaid&&<div className="settlement-line change-line"><span>{t("change")}</span><strong>{formatMoney(tendered-cashPaid,language)}</strong></div>}
+        {cashPaid>0&&<Field id="cash-received" label={t("received")} value={received} numeric required={false} disabled={frozen} onChange={value=>{pending.current=undefined;setReceived(value);}}/>}
+        {canKeepChange&&<label className="check"><input id="keep-change" type="checkbox" checked={keepChange} disabled={frozen} onChange={event=>{pending.current=undefined;setKeepChange(event.target.checked);action.setError(undefined);}}/>{t("keepChangeAsCredit")}</label>}
+        {keptChangeMinor>0?<div className="settlement-line kept-change-line"><span>{t("changeKept")}</span><strong>{formatMoney(keptChangeMinor,language)}</strong></div>
+          :valid&&tendered!==undefined&&tendered>=cashPaid&&<div className="settlement-line change-line"><span>{t("change")}</span><strong>{formatMoney(tendered-cashPaid,language)}</strong></div>}
         {blocker!==undefined&&cart.length>0&&<p className="hint negative">{t(blocker)}</p>}<ErrorText message={action.error}/>
         {selectedCustomer!==undefined&&<ReadState loading={customerRead.loading} error={customerRead.error} empty={false} emptyText="" retry={customerRead.retry}>{null}</ReadState>}
         <button className="primary full checkout" disabled={action.busy||!valid||cart.length===0||!uncertain&&(blocker!==undefined||accounts.loading||accounts.error!==undefined||accounts.data?.items.length===0||selectedCustomer!==undefined&&(customerRead.loading||customerRead.error!==undefined))} onClick={()=>{void checkout();}}>{action.busy?t("recording"):uncertain?t("retry"):t("completeSale")}<span aria-hidden="true">→</span></button>

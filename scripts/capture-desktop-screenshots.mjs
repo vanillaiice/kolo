@@ -24,7 +24,7 @@ function run(command, args, env = {}) {
 try {
   run("npm", ["run", "build", "-w", "@kolo/desktop"]);
   run("npm", ["run", "demo:desktop", "--", join(work, "demo"), "60"]);
-  const backup = join(work, "demo", readdirSync(join(work, "demo")).find(name => name.endsWith(".kolo-backup.json")));
+  const backup = join(work, "demo", readdirSync(join(work, "demo")).find(name => name.endsWith(".kolo-backup")));
   mkdirSync(profile);
   const env = { KOLO_DESKTOP_SMOKE_DIR: profile, KOLO_DESKTOP_SCREENSHOT_DIR: shots, KOLO_DESKTOP_SMOKE_OPEN_FILE: backup,
     KOLO_DESKTOP_SMOKE_OPEN_PASSWORD: "kolo-demo-2026", KOLO_DESKTOP_SMOKE_OPEN_SHOP: "Alimentation Chez Mama Ngono" };

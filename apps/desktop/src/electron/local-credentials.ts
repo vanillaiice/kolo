@@ -4,11 +4,13 @@ import { pbkdf2, randomBytes, timingSafeEqual, generateKeyPair, randomUUIDv7, si
   createPrivateKey, createPublicKey, createHmac, diffieHellman, generateKeyPairSync, hkdf } from "node:crypto";
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { argon2id as wasmArgon2id } from "hash-wasm";
 import { protectedCredentials, type CredentialCrypto } from "@kolo/core/identity/credentials";
 import type { ExchangeCrypto } from "@kolo/core/exchange/types";
 import type { SealingCrypto } from "@kolo/core/application/sealed-sync";
 import type { CredentialPort } from "@kolo/core/identity/types";
 import type { SecretStore } from "@kolo/core/data/auth/secure-store";
+import { X25519_PKCS8_PREFIX, X25519_SPKI_PREFIX } from "@kolo/core/backup/hpke";
 
 /** Actual Node/OpenSSL implementation of the same native credential policy. */
 export const desktopCredentialCrypto: CredentialCrypto = {
@@ -108,6 +110,15 @@ export const desktopTransferCrypto = nativeTransferCrypto({
  encodeText:text=>new Uint8Array(Buffer.from(text,"utf8")),decodeText:bytes=>Buffer.from(bytes).toString("utf8"),
  encodeBase64:bytes=>Buffer.from(bytes).toString("base64"),decodeBase64:text=>new Uint8Array(Buffer.from(text,"base64")),
  fromHex:hex=>new Uint8Array(Buffer.from(hex,"hex")),toHex:bytes=>Buffer.from(bytes).toString("hex"),
+createSha256:()=>{const hash=createHash("sha256");return {update:(bytes:Uint8Array)=>{hash.update(bytes);},digest:()=>hash.digest("hex")};},
+hmacSha256:(key,data)=>new Uint8Array(createHmac("sha256",key).update(data).digest()),
+ x25519:(privateKey,publicKey)=>new Uint8Array(diffieHellman({privateKey:createPrivateKey({key:Buffer.from([...X25519_PKCS8_PREFIX,...privateKey]),format:"der",type:"pkcs8"}),publicKey:createPublicKey({key:Buffer.from([...X25519_SPKI_PREFIX,...publicKey]),format:"der",type:"spki"})})),
+ // Electron's BoringSSL has no Argon2 (ERR_CRYPTO_ARGON2_NOT_SUPPORTED), so the desktop uses hash-wasm's WebAssembly
+ // build in Node tests and in Electron alike; electron-runtime.test.ts checks it in Electron against an OpenSSL vector.
+ argon2id:async(password,salt,params)=>{
+  if(params.associatedData!==undefined)throw new Error("unsupported derivation input");
+  return wasmArgon2id({password,salt,...(params.secret===undefined?{}:{secret:params.secret}),iterations:params.passes,parallelism:params.parallelism,memorySize:params.memoryKiB,hashLength:params.length,outputType:"binary"});
+ },
  cipher:(key,nonce)=>createCipheriv("aes-256-gcm",Buffer.from(key,"hex"),Buffer.from(nonce,"hex"),{authTagLength:16}),
  decipher:(key,nonce)=>createDecipheriv("aes-256-gcm",Buffer.from(key,"hex"),Buffer.from(nonce,"hex"),{authTagLength:16}),
 });

@@ -31,3 +31,13 @@ test("receipts show the tax included per rate and the shop's tax number, escaped
   assert.ok(html.includes("TVA &lt;x&gt;")); assert.ok(html.includes("M01 &amp; 2")); assert.ok(!html.includes("<x>"));
   assert.ok(!receiptText(saved, "Shop", labels).includes("TVA"));
 });
+
+test("receipts print the change kept on account, escaped, only when the customer kept some", () => {
+  const kept: Receipt = { ...saved, outstandingMinor: 0, changeKeptMinor: 300 };
+  const text = receiptText(kept, "Shop", { ...labels, changeKept: "Change kept <as credit>" });
+  assert.ok(text.includes("Change kept <as credit>: 300"), text);
+  const html = receiptHtml(kept, "Shop", { ...labels, changeKept: "Change kept <as credit>" });
+  assert.ok(html.includes("Change kept &lt;as credit&gt;")); assert.ok(html.includes("300")); assert.ok(!html.includes("<as credit>"));
+  for (const output of [receiptText(saved, "Shop", { ...labels, changeKept: "Change kept" }), receiptHtml(saved, "Shop", { ...labels, changeKept: "Change kept" })])
+    assert.ok(!output.includes("Change kept"));
+});

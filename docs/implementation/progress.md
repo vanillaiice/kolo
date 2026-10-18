@@ -1586,6 +1586,304 @@ background-throttling settings and a bounded frame wait prevent hanging while re
 assertions. Physical Windows firewall/installed-package and Android camera/Wi-Fi acceptance remain open;
 both installed apps need updated builds to use the new local QR protocol.
 
+## 2026-10-17: Binary chunked container, one size limit, no JSON files
+
+The user asked for a more consistent and predictable backup format, then decided (still in beta) to drop
+the two size profiles and the old JSON files. [ADR-035](../adr/ADR-035-binary-encrypted-container.md)
+replaces the JSON/base64 envelope with a binary container (format version 3) for backups, enrollment
+snapshots, exchange bundles and receipts: an 8-byte magic, a canonical printable-ASCII header, then the
+deflated content in 1 MiB AES-256-GCM chunks (STREAM: nonce = 7-byte random prefix, chunk counter, final
+flag; the header is every chunk's additional data). PBKDF2/AES-GCM/password rules, snapshot framing and
+validation are unchanged. SQLCipher (no compression, a different SQLite build per runtime) and age
+(JavaScript crypto, against ADR-022) were considered and rejected.
+
+- **No legacy files.** Version 1/2 JSON files are `invalid_file`, refused before key derivation and not
+  recognized by the file-kind check. Beta users need a new backup from this release; older releases cannot
+  read the new files.
+- **One size limit** on desktop and phone (`TRANSFER_LIMITS`): 1 GiB snapshot, file bound 1 MiB above the
+  content. Exchange bundles/receipts are bounded to one 8 MiB batch; a join-mailbox enrollment to 48 MiB of
+  base64 (`MAX_JOIN_ENROLLMENT_CHARS`). Product photos: 256 MiB per shop. The desktop "large files" switch,
+  its IPC command, `preferences.ts`, `SnapshotPort.limits()`, `limitsOf` and the CLI's large-profile
+  options are gone; a leftover `preferences.json` is ignored.
+- Core APIs take and return file bytes: `TransferDocument.bytes`; `previewBackup`, `completePairing`,
+  `previewBundle`, `importReceipt` and the invite/request functions take `Uint8Array`. `TransferCrypto`
+  gains `sealBytes`/`openBytes`, implemented once in `nativeTransferCrypto`.
+- Names drop `.json` (`.kolo-backup`, `.kolo-enrollment`, `.kolo-exchange`, `.kolo-receipt`); invitations
+  and requests keep theirs. `@kolo/core/backup/file-kind` recognizes files for desktop and mobile (the
+  mobile-only module is gone). Join mailboxes carry an enrollment container as strict base64.
+
+Measured on the 10 000-product fixture (77.4 MiB image): the file shrinks from 16.9 MiB to 12.7 MiB
+(13 chunks); host decryption takes 0.32 s and about 143 MiB over baseline, against about 170 MiB before.
+
+Validation: `encryption.test.ts` checks the format against an independent implementation of the ADR written
+with Node `crypto`/`zlib`, in both directions, across chunk sizes and exact chunk boundaries; a fixed version 3
+file; every single-byte change and every truncation of a multi-chunk file; reordered, duplicated and spliced
+chunks; misplaced final flags; non-canonical, non-ASCII, unknown-field and out-of-range headers (no key
+derivation); file/content limits before key derivation and the single limit's room for incompressible
+content; deflate bombs; seeded random and mutated inputs; a real version 2 file from the previous release
+refused before key derivation; file-kind recognition and the base64 carrier. Integration tests refuse a
+re-wrapped JSON backup (core, desktop import) and a JSON join enrollment through the real server (nothing
+installed, the join can still finish), bound exchange files to one batch, and check the mailbox holds base64
+of a container. Photo tests fill the 256 MiB budget directly and check the next photo is refused.
+Full `npm run check` passed (contracts 12, core 763, desktop 64, mobile 22, server 29, CLI 9, release and
+landing) and `npm run bundle:mobile` passed. Not run: the Electron workflow smoke and the Docker end-to-end
+sync (both updated for the new names). Saving and opening `.kolo-*` files through installed Android/Windows
+pickers, and backups near 1 GiB on real devices, are not yet verified.
+
+### Container revision proposed; backup recovery key (2026-10-17)
+
+Two external reviews approved the container and end-to-end streaming, and asked for envelope encryption
+before unattended backups. [ADR-035](../adr/ADR-035-binary-encrypted-container.md) is now **proposed**
+with key slots: a random per-file key, an Argon2id password slot (NFC-normalized passwords) and an RFC 9180
+HPKE recipient slot, with an immutable prefix as every chunk's additional data and a separately
+length-delimited slot section. [ADR-036](../adr/ADR-036-shop-backup-recovery-key.md) proposes a shop-wide
+backup recovery key, separate from the per-till PIN recovery code (owner's choice): shown once, never
+stored, its public key pinned through an owner-signed `SHOP_BACKUP_KEY` fact. The single-key container
+described above is what the working tree implements; milestone 1 replaces it after the ADRs are reviewed.
+Found while checking: Android auto-backup is not disabled (Expo default), so plaintext staging snapshots
+and possibly the business database can reach the user's cloud device backup; milestone 1 covers it.
+
+### Milestone 1, steps 1–2: primitives and the key-slot container (2026-10-17)
+
+The second review approved ADR-035/036 in principle; its points are folded in (Argon2id parameters per slot within
+bounds, the immutable `recipients` list for detecting removed slots, mandatory manifest checks because HPKE gives no
+authorship, sync-key continuity after losing every till, Android `allowBackup` and device-transfer rules).
+
+- **Primitives.** `TransferCrypto` gains native `hmacSha256`, `x25519` and `argon2id` (Node/OpenSSL on desktop, CLI and
+  server; react-native-quick-crypto on mobile). `@kolo/core/backup/hpke` implements RFC 9180 single-shot base mode
+  (DHKEM-X25519, HKDF-SHA256, AES-256-GCM); X25519 public keys come from the native agreement with the base point, so no
+  key export is needed. Passwords are NFC-normalized; Argon2id 64 MiB/3/1 is provisional pending an Android measurement.
+- **Container.** Content header (prefix, every chunk's additional data) plus a length-delimited key-slot section;
+  a random per-file key; password slots (Argon2id) and recipient slots (HPKE). `encryptTransfer`/`decryptTransfer`
+  still accept a password string; `{ password, recipients }` and `{ recoveryKey }` add the recovery path;
+  `inspectContainer` reads purpose and slots without secrets. New error code `invalid_recovery_key` (desktop/mobile text).
+- **Recovery key encoding.** `@kolo/core/backup/recovery-key`: 32 random bytes as 56 Crockford symbols with a 20-bit
+  checksum, forgiving input (case, spaces, O/I/L), RFC 9180 `DeriveKeyPair`, a pinned key-ID derivation.
+
+Tests: RFC 9180 vectors for both AES-GCM sizes (key pair, encap/decap, key schedule, ciphertext) and the RFC 9106
+Argon2id vector; composed/decomposed accents, Hangul, other scripts and emoji; an independent implementation of the
+new layout in both directions; a regenerated golden file opening with its password and its recovery key; every
+single-byte change (prefix, records and the slot in use refused; another slot never alters content); truncation,
+reordering, splicing, slot transplanting and swapping; canonical/ordered/bounded sections with no key work; adding and
+removing slots without re-encryption; every single-symbol typo and adjacent swap of a recovery key caught. Full
+`npm run check` passed (contracts 12, core 779, desktop 64, mobile 22, server 29, CLI 9) and the mobile bundle built.
+Not yet done in milestone 1: `SHOP_BACKUP_KEY` facts and their migration, key creation/restore screens, backups
+sealed to the pinned key and carrying sync keys, streaming and the desktop worker, Android/iOS backup exclusion,
+the lose-every-till drill and installed-device runs.
+
+### Milestone 1, steps 3–5 (2026-10-17)
+
+Done: `SHOP_BACKUP_KEY` owner fact and migration 30 (`backup_recovery_keys`); `prepareBackupRecoveryKey`/
+`confirmBackupRecoveryKey` (fresh PIN, shown once, three groups typed back, nothing secret stored); backups seal to the
+pinned key and carry the shop data keys in the signed manifest (`createBackup(context, null, …)` makes a
+recovery-key-only backup); `previewBackup` opens with `{ recoveryKey }`; restore re-grants carried keys to the new
+device and opens a new epoch; recovery mode refuses a backup signed by an untrusted till (`untrusted_backup`).
+Server migration `0006_recovery`: operator-issued owner-recovery codes bound to one shop (dashboard shop page and
+`invite --recovery-shop`) attach a restored owner device; the till reports `enrollment_conflict` with that remedy.
+Desktop: recovery key panel (create, print, confirm), restore by recovery key, backups via sealing crypto. Mobile:
+backups via sealing crypto and new error strings. Tests: core `backup-key.test.ts` (7), server `recovery.test.ts`
+(2, including the lose-every-till drill: restore from backup + printed key, recovery code, read a sale synced after
+the backup, trade under epoch 2), desktop recovery-key command flow. Full `npm run check` not yet rerun after these.
+Still open: mobile recovery-key screens and restore-by-key, streaming codec/file ports and the desktop worker,
+Android `allowBackup`/data-extraction rules and iOS exclusion, CLI backups with sealing crypto, ADR status and
+docs (server-api, selfhost, CLAUDE.md migration 30), installed-device runs and freezing Argon2id parameters.
+
+### Milestone 1 complete in code; device acceptance open (2026-10-17)
+
+ADR-035 and ADR-036 are **accepted**. Since the entry above:
+
+- **Streaming end to end.** `writeBackup` streams a backup to a sink and `previewBackupFile` decrypts from a reader into
+  private staging, 1 MiB at a time, yielding to the event loop between chunks. The desktop copies the database with
+  `VACUUM INTO` in a worker thread. Facts written while a backup runs are signed inside the copy. Desktop saves go to a
+  private temporary file (synced, then copied into a newly created destination, never over an existing file, and
+  always removed). The desktop opens backups through one descriptor read in pieces.
+- **Mobile.** Backups stream into the app cache and are copied out through the folder picker; a closed picker keeps
+  the file for another try, and leftovers are cleared at start. Restore reads the picked file in pieces. There are a
+  recovery-key screen (create, write down, confirm) and restore by recovery key on the entry and devices screens.
+  Android `allowBackup="false"` plus data-extraction rules are verified in the generated manifest.
+- **CLI.** Backups use sealing crypto. `--recovery-key-file`/`KOLO_BACKUP_RECOVERY_KEY` open a backup by recovery key.
+  `withBackup` streams the file instead of reading it whole.
+- **Server.** `connectServer` reports `enrollment_conflict` (remedy: owner-recovery code) only for a device that began
+  as a restored backup. A till approved by the owner keeps `invalid_session` until the approving till syncs.
+- **Tests.** The fuzz test now accepts a mutated file that still opens only when it yields the original content (a
+  byte rewritten with its own value, or only the unused slot touched). The exact-boundary search draws several
+  payloads per size over a wider range, so it no longer depends on luck.
+- **Docs.** server-api (recovery codes, `invite --recovery-shop`, migration `0006_recovery`), selfhost (recovering
+  after losing every till), and CLAUDE.md (SQLite 29 immutable and 30 new; server `0001`–`0006`).
+
+Verified: full `npm run check` passed (contracts 12, core 787, CLI 10, desktop 67, mobile 22, server 31, release 2, landing 3),
+`npm run bundle:mobile` built, and `npm run docs:api` regenerated.
+Still open (needs installed builds or hardware):
+- Electron ↔ Android file interop (ADR-035 item 2).
+- Mobile memory and UI stalls on a large backup (item 4).
+- A free-space check before writing (item 5; a full disk already fails safely).
+- Argon2id parameters, provisional until measured on a low-end Android device.
+- quick-crypto DER import and `String.normalize` on Hermes.
+- The packaged Electron workflow smoke and the Docker end-to-end run.
+- iOS backup exclusion, which waits for an iOS build.
+
+### Desktop Argon2id under Electron (2026-10-17)
+
+Found by installed-AppImage testing: Electron 44 ships BoringSSL, which has no Argon2
+(`ERR_CRYPTO_ARGON2_NOT_SUPPORTED`). As a result, the packaged desktop app could neither open nor write a
+password-protected backup, and reported the failure as "wrong password or altered file".
+
+- **Fix.** The desktop adapter now derives Argon2id with hash-wasm 4.12.0, a WebAssembly build, in Node tests and
+  in Electron alike. It matches OpenSSL: about 200 ms against 130 ms native at 64 MiB/3/1.
+- **Errors.** `passwordKey` no longer turns a failed derivation into `authentication_failed`; the failure surfaces
+  as itself.
+- **Test.** `apps/desktop/src/electron/electron-runtime.test.ts` runs the desktop transfer crypto in Electron's own
+  runtime, headless. It checks the Argon2id vector, opens the OpenSSL-written golden file with its password and its
+  recovery key, and round-trips a new file, so a primitive missing from Electron now fails `npm test`.
+- **Packaged build.** The rebuilt AppImage's own code derives the expected key under the same Electron.
+
+Mobile's quick-crypto bundles OpenSSL 3.6.2, which has Argon2; an installed Android run must still confirm it.
+`npm run check` passed: core 787, desktop 68, CLI 10, server 31.
+
+### Test where it ships (2026-10-17)
+
+Review after the Electron Argon2id miss: every test passed on Node while the packaged app failed. The cause was
+structural, not one missing test. Desktop tests ran on Node, the real-Electron workflow smoke was outside every
+routine gate (and broken by the old `last-backup.json` name), release CI smoke-tested packaged Windows but never
+packaged Linux, and local builds and releases (`dist:desktop:*`, `scripts/release.mjs`) uploaded with no packaged
+check at all.
+
+- **Desktop tests run inside Electron.** `npm test -w @kolo/desktop` uses `scripts/test-in-electron.mjs`. Proven by
+  mutation: with the old Argon2 call the backup tests pass on Node (13/13) and fail in Electron (7 of 13).
+- **One platform check, shared by every runtime.** `@kolo/core/application/platform-check` runs known answers for
+  every primitive, the golden backup opened by password and by recovery key, and a round trip. It never throws.
+  - Core tests prove it names each broken primitive and the checks that depend on it (missing Argon2, wrong X25519,
+    HMAC, Ed25519, PBKDF2, HKDF, UTF-8, an identity `String.normalize`).
+  - It runs in the CLI's Node adapters, in Electron (desktop tests), in the packaged app (`--self-check`, plus
+    node:sqlite, every migration and the snapshot worker) and on Android (`kolo://self-check`; More → About → Device
+    check).
+- **Build gates.**
+  - `verify:desktop:linux|win`: packaged self-check, then the packaged real-UI workflow, ending with the CLI
+    verifying the app's backup. Xvfb is used when there is no display; Windows runs through wine from Linux, with
+    the unverified UI workflow stated.
+  - `verify:android`: installs on a connected device without ever uninstalling, then reads logcat.
+  - `scripts/release.mjs` uploads nothing that fails; release CI verifies both desktop platforms.
+  - Verified here: Linux packaged, all 18 checks plus the full workflow and CLI cross-check; Windows packaged
+    through wine, 18 checks.
+- **Smoke realism.** The workflow smoke now saves and opens through the app's real file adapters, with only the OS
+  dialog faked.
+- **Found by the new gates.** `--self-check` hung on Windows: Chromium locks its temporary user data, so the cleanup
+  failed and the app never exited. Cleanup is now best effort. Electron under wine also hangs writing to a pipe, so
+  the verifier logs to a file.
+
+Still open: `verify:android` needs a phone or emulator (none attached here). Release CI's Linux job (AppArmor userns
+and Xvfb setup) has not run yet.
+
+**Android device run (2026-10-17).** `npm run verify:android` on a Samsung Galaxy A04e (SM-A042F, Android 13,
+arm64-v8a, a low-end phone) passed all 17 platform checks on the installed test build. This settles three open items:
+- quick-crypto's DER key imports work (X25519, Ed25519, PEM ephemeral agreement);
+- `String.normalize` works on Hermes (NFC);
+- Argon2id at 64 MiB/3/1 is measured on a low-end device: 830 ms per derivation, 1.0 s to open a password backup,
+  2.4 s for a seal-and-open round trip with both slots.
+
+### Android app ID `xyz.hblabs.kolo` (2026-10-17)
+
+The owner chose to change the Android package from `cm.kolo.app` to `xyz.hblabs.kolo` (the reverse of the product domain
+kolo.hblabs.xyz) before any Play Store release. Phones with KOLO 0.4.1 or earlier keep that app; the next release
+installs beside it, and a shop moves by backup and restore (docs/releasing.md). The desktop ID stays `com.hblabs.kolo`
+because Windows installer upgrades depend on it. `verify-android.mjs` and the screenshot script use the new ID.
+
+## 2026-10-18: Review fixes (costing, replay, sync keys, backup and restore)
+
+Fixes for the seven findings in `review-1.md` and `review-2.md` (2026-10-17):
+
+- **Sale cost.** `completeSale` freezes each line's cost with the valuation's costing policy (`currentUnitCost`,
+  LATEST_COST: latest costed delivery or opening stock, else the purchase price) instead of the editable
+  `purchasePriceMinor` or a caller's cost. Desktop and mobile both go through it; history and returns keep the frozen cost.
+- **Replay after repricing.** A received sale whose price differs from the receiver's current price no longer needs
+  `sales.price_override` when a signed `PRODUCT_SAVED` this till wrote or applied set that price for the product. A
+  price no catalogue fact ever set still needs the override its signer claimed. No time bound is applied, because till
+  clocks disagree.
+- **Key grants ahead of the sealed backlog.** Server pull offers a shop's clear trust/key/address facts before its sealed
+  facts on every pass (cursor `c` phase, partial index in server migration `0007_clear_first`). A new till reaches its
+  grant within a few pages however long the backlog is; the backlog then drains.
+- **Backups carry every key.** `writeBackup` uses `shopKeyCoverage` and fails with `sync_keys_unavailable` when any key
+  granted to the till cannot be opened (vault failure, or a platform without sealing). A shop that never used
+  encrypted sync has no grants and backs up as before.
+- **Restore checks the books.** `validateSnapshot` runs `checkIntegrity` after migrating the staged copy. Corruption
+  findings fail with `inconsistent_records` before activation; attention states (quarantined or stuck sync) are allowed.
+  Backup creation is not blocked.
+- **Desktop exports publish atomically.** Saves write a synced hidden sibling and publish it with a hard link, which
+  never overwrites. Filesystems without hard links (FAT/exFAT) get a `wx` claim, then a rename. A failed copy leaves
+  nothing under the chosen name.
+- **Server restore.** `infrastructure/restore.sh` validates the key (same checks as `loadServerKey`) and the dump before
+  changing anything. It restores into a staging database while the server serves, then switches over. The previous
+  database and key are kept for rollback.
+
+New error texts (French/English) on desktop and mobile: `sync_keys_unavailable`, `inconsistent_records`.
+
+### Verification
+
+- `npm run check` passed: contracts 12, core 794, CLI 11, desktop 68 (inside Electron), mobile 22, server 35, plus the
+  release and landing checks. `npm run bundle:mobile` passed, and `npm run docs:api` was regenerated.
+- New tests use real SQLite or PGlite:
+  - a replay across two tills after a repricing, plus a forged sale that claims no override;
+  - frozen sale costs against the valuation;
+  - a backup made during a vault failure, and on a platform that cannot open grants;
+  - a restore preview of a backup whose books disagree;
+  - an interrupted desktop export;
+  - a key grant ahead of a sealed backlog, with a 2-fact, 1-page budget;
+  - `restore.sh` against a logging stand-in for `docker`, with the key check run in real Node.
+- Two analytics/consistency tests had passed sale-line costs that differed from the product's cost. They now set the
+  cost on the product instead.
+- Docker drill (2026-10-18, isolated compose project `kolo-restore-drill`, PostgreSQL 18, then removed). Steps:
+  back up, add a connection code, then try four bad inputs. A missing dump, an invalid key, a text file and a
+  truncated dump each exited 2 before any change, with the server serving its unchanged database. A valid archive
+  that fails partway through `pg_restore` exited 1: the staging database was dropped and the server never stopped.
+  A real restore over the running deployment brought back the backed-up data with the original key, and kept
+  `kolo_previous_*` (with the newer code) and the previous key. Finally, after `down -v`, a restore onto fresh
+  volumes brought back the data and the original key.
+- `verify:android` on the Samsung Galaxy A04e (arm64-v8a) with an APK built from this tree: all 17 checks passed.
+  The build was not copied into `release/mobile`.
+- `verify:desktop:linux` on an unpacked app packaged from this tree (`pack:desktop`): all 18 self-checks and the
+  full real-UI workflow passed. That covers backup to a file through the new atomic export, restore, import-replace
+  and crash recovery, and the CLI verified the backup the app wrote.
+- `verify:desktop:win` on a Windows unpacked app packaged from this tree: all 18 self-checks passed under wine 11.18.
+  The Windows UI workflow still needs Windows or CI.
+- Exports to FAT32 and exFAT: real loop-mounted filesystems, attached through udisks the way a USB stick is, with the
+  built desktop adapter run in Electron 44's Node. On both, `link` fails with `EPERM`, the claim-and-rename fallback
+  is used, and saving, refusing to overwrite, an interrupted copy and a small save are all correct, with nothing
+  left behind. The local disk takes the hard-link path. A FAT drive on Windows was not tested.
+
+## 2026-10-18: Keep the change as customer credit
+
+A named customer who hands over more cash than the total can leave the change on their account as an advance, in the
+same step as the sale. Example: a 700 sale, 1,000 handed over, 300 kept.
+
+- **Core.** `completeSale(context, cart, keptChange?)` records the change as an ordinary customer payment, under
+  `customers.pay`, in the sale's transaction. The payment goes into one of the sale's cash accounts, noted with the
+  sale number at the sale's time. The sale must name a customer and leave nothing owing; any refusal writes nothing.
+  No contract changes: other tills, old or new, apply the two existing facts (`SALE_COMPLETED`, `CUSTOMER_PAYMENT`).
+- **Shared rule.** `keepableChange` (cash tendered beyond the cash due) is used by both tills.
+- **Receipt.** `Receipt.changeKeptMinor` is found through `changeKeptOnAccount`. Returns refund only what the sale
+  collected; the advance stays the customer's.
+- **Desktop.** "Keep the change as customer credit" appears beside the change due when a customer is chosen and
+  "Cash received" exceeds the cash paid. `checkout` takes `keptChangeMinor`, which is part of retry identity. The
+  receipt prints "Change kept as credit".
+- **Mobile.** A toggle appears in cash settlement with a customer. The draft carries stable IDs for the payment, so
+  a retried tap records it once. The receipt screen, shared text and printed receipt show the kept change.
+
+### Verification
+
+- `npm run check` passed: core 803 (including the new `kept-change.test.ts`, the sync test and `keepableChange`),
+  desktop 69 inside Electron, mobile 23, server 35, contracts 12, CLI 11.
+- `npm run bundle:mobile` passed, and `npm run docs:api` was regenerated.
+- `verify:desktop:linux` on a freshly packaged app passed, including the new real-UI step: the till offers and keeps
+  the change, the receipt shows it, and the customer holds −300.
+- `verify:android` on the Samsung Galaxy A04e (arm64-v8a) with the release APK built from this tree
+  (`apps/mobile/android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`, versionCode 72): all 17 checks
+  passed. A first run without a path had picked the Oct 12 `release/mobile/KOLO-0.4.1-*` file (the APK came from a
+  direct Gradle run, so the copy was never refreshed). That file's package is the old `cm.kolo.app`: it installed as a
+  second app and the self-check ran the `xyz.hblabs.kolo` build already on the phone, yet the script reported success.
+- **Fixes.** Android is now 0.5.0 (versionCode 8), because the app ID changed. `verify-android.mjs` now fails when
+  the `release/mobile` copy is older than Gradle's APK, when the install leaves `xyz.hblabs.kolo` untouched (another
+  app ID), or when the installed version is not `app.json`'s.
+
 ## 2026-10-18: Operation journal (desktop and mobile)
 
 A read-only view of who did what, when and on which device (spec §39), for owners, accountants and anyone the owner
@@ -1616,4 +1914,3 @@ grants `audit.view` (for example a manager who is a shareholder). No schema chan
   test, and journal text coverage. The Electron workflow smoke opens the Journal, finds the day's expense, runs the
   axe audit in light and dark, and narrows to a record.
 - Mobile: localization test that every operation, family and status has French and English text.
-

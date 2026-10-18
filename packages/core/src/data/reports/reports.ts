@@ -679,6 +679,26 @@ const COST_OF: Record<CostingMethod, string> = {
 };
 
 /**
+ * What one unit of a product costs now under `method`, or undefined when nothing says.
+ *
+ * A sale freezes this on its lines at checkout, so the profit it reports and the
+ * valuation of the stock left behind read the same cost (§8); returns and later
+ * reports keep the frozen figure.
+ */
+export function currentUnitCost(
+  tx: Queryable,
+  businessId: string,
+  productId: string,
+  method: CostingMethod = "LATEST_COST",
+): number | undefined {
+  const cost = tx.get(
+    `SELECT ${COST_OF[method]} AS unit_cost FROM products p WHERE p.business_id = ? AND p.id = ?`,
+    [businessId, productId],
+  )?.["unit_cost"];
+  return cost === null || cost === undefined ? undefined : sqlInteger(cost);
+}
+
+/**
  * What the stock on the shelves is worth (§8, §21).
  *
  * Quantity is the sum of the ledger, as everywhere; the cost comes from

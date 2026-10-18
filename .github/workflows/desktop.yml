@@ -24,7 +24,7 @@ jobs:
           node -e "const fs=require('fs');const p='.packaging/desktop/package.json';const d=JSON.parse(fs.readFileSync(p));d.version='0.0.0';fs.writeFileSync(p,JSON.stringify(d));"
           npx electron-builder --config apps/desktop/electron-builder.json --win nsis --x64 --publish never --config.directories.output=release/baseline
       - run: npm run dist:desktop:win
-      - run: npm run smoke:desktop:packaged
+      - run: npm run verify:desktop:win
       - name: Install, upgrade, native-vault and crash acceptance
         shell: pwsh
         run: |

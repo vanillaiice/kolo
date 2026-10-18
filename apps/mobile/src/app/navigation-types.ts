@@ -21,7 +21,7 @@ export interface RouteMap {
   reports: undefined; report: { readonly kind: ReportKind }; analytics: undefined;
   staff: undefined; staffMember: { readonly userId: string }; staffNew: undefined;
   devices: undefined; backupCreate: undefined; backupRestore: undefined; addTill: undefined; exchangeSend: undefined; exchangeReceive: undefined;
-  exchangeConfirm: undefined; exchangeStatus: undefined; recoveryKey: undefined; serverSync: undefined;
+  exchangeConfirm: undefined; exchangeStatus: undefined; recoveryKey: undefined; backupKey: undefined; serverSync: undefined;
   settings: undefined; about: undefined; reset: undefined;
   alerts: undefined; journal: undefined; shopTax: undefined; shopTerms: undefined;
   partyTerms: { readonly kind: "customer" | "supplier"; readonly id: string }; productTax: { readonly productId: string };

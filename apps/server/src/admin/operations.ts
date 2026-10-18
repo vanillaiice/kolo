@@ -17,22 +17,34 @@ export const REMOVAL_GRACE_DAYS = 30;
 export interface IssuedCode { readonly codeId: string; readonly code: string; readonly label: string; readonly expiresAt: string }
 /** A connection code as listed, never with its token. */
 export interface CodeView { readonly codeId: string; readonly label: string; readonly createdBy: string; readonly createdAt: string; readonly expiresAt: string;
-  readonly state: "unused" | "used" | "expired" | "cancelled"; readonly usedAt: string | null; readonly shopId: string | null; readonly shopName: string | null; readonly includedMonths: number }
+  readonly state: "unused" | "used" | "expired" | "cancelled"; readonly usedAt: string | null; readonly shopId: string | null; readonly shopName: string | null; readonly includedMonths: number;
+  /** The shop an owner-recovery code may re-attach a restored owner device to (ADR-036); null for an ordinary code. */
+  readonly recoveryShopId: string | null }
 
 /**
  * Issues a single-use connection code for one shop. The string carries the server's public address, its fingerprint
  * and a 128-bit token, so the owner pastes or scans one thing and never retypes a fingerprint (ADR-030).
+ * With `recoveryShopId` it is an owner-recovery code (ADR-036): it can only attach a restored owner device to that
+ * existing shop after every till was lost, and never creates a shop. Issue one only after confirming the owner.
  */
-export async function issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publicUrl: string, actor: Actor, input: { readonly label: string; readonly days: number; readonly now: Date; readonly includedMonths?: number }): Promise<IssuedCode> {
+export async function issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publicUrl: string, actor: Actor, input: { readonly label: string; readonly days: number; readonly now: Date; readonly includedMonths?: number; readonly recoveryShopId?: string }): Promise<IssuedCode> {
   const includedMonths = input.includedMonths ?? 0;
   if (!Number.isInteger(includedMonths) || includedMonths < 0 || includedMonths > 36) throw new AdminError(400, "invalid_months");
-  const label = String(input.label ?? "").trim();
+  let recovery: { id: string; name: string } | undefined;
+  if (input.recoveryShopId !== undefined) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(input.recoveryShopId) || includedMonths !== 0) throw new AdminError(400, "invalid_request");
+    const shop = await db.selectFrom("shops").select(["business_id", "name", "status"]).where("business_id", "=", input.recoveryShopId).executeTakeFirst();
+    if (shop === undefined || shop.status === "removed") throw new AdminError(404, "shop_not_found");
+    recovery = { id: shop.business_id, name: shop.name };
+  }
+  const label = String((input.label ?? "") || (recovery === undefined ? "" : `Recovery: ${recovery.name}`)).trim().slice(0, 120);
   if (label.length < 1 || label.length > 120) throw new AdminError(400, "invalid_label");
   if (!Number.isInteger(input.days) || input.days < 1 || input.days > 90) throw new AdminError(400, "invalid_expiry");
   const token = randomBytes(16).toString("hex"), codeId = randomUUIDv7(), expiresAt = new Date(input.now.getTime() + input.days * 86_400_000);
   await db.transaction().execute(async tx => {
-    await tx.insertInto("connection_codes").values({ code_id: codeId, token_hash: sha256(token), label, created_by: actor.username, created_at: input.now, expires_at: expiresAt, used_at: null, used_by: null, cancelled_at: null, included_months: includedMonths }).execute();
-    await audit(tx, actor, "code.issue", codeId, actor.address, { label, days: input.days, included_months: includedMonths });
+    await tx.insertInto("connection_codes").values({ code_id: codeId, token_hash: sha256(token), label, created_by: actor.username, created_at: input.now, expires_at: expiresAt, used_at: null, used_by: null, cancelled_at: null,
+      included_months: includedMonths, recovery_business_id: recovery?.id ?? null }).execute();
+    await audit(tx, actor, recovery === undefined ? "code.issue" : "code.issue_recovery", codeId, actor.address, { label, days: input.days, included_months: includedMonths, ...(recovery === undefined ? {} : { shop_id: recovery.id }) });
   });
   return { codeId, label, expiresAt: expiresAt.toISOString(), code: formatConnectionCode({ url: publicUrl, fingerprint: key.fingerprint, token }) };
 }
@@ -40,10 +52,10 @@ export async function issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publ
 /** Recent codes, newest first, with what became of each. */
 export async function listCodes(db: Kysely<ServerDatabase>, now: Date, limit = 200): Promise<readonly CodeView[]> {
   const rows = await db.selectFrom("connection_codes as c").leftJoin("shops as s", "s.business_id", "c.used_by")
-    .select(["c.code_id", "c.label", "c.created_by", "c.created_at", "c.expires_at", "c.used_at", "c.used_by", "c.cancelled_at", "c.included_months", "s.name"]).orderBy("c.created_at", "desc").limit(limit).execute();
+    .select(["c.code_id", "c.label", "c.created_by", "c.created_at", "c.expires_at", "c.used_at", "c.used_by", "c.cancelled_at", "c.included_months", "c.recovery_business_id", "s.name"]).orderBy("c.created_at", "desc").limit(limit).execute();
   return rows.map(row => ({ codeId: row.code_id, label: row.label, createdBy: row.created_by, createdAt: row.created_at.toISOString(), expiresAt: row.expires_at.toISOString(),
     state: row.cancelled_at !== null ? "cancelled" : row.used_at !== null ? "used" : row.expires_at <= now ? "expired" : "unused",
-    usedAt: row.used_at?.toISOString() ?? null, shopId: row.used_by, shopName: row.name ?? null, includedMonths: row.included_months }));
+    usedAt: row.used_at?.toISOString() ?? null, shopId: row.used_by, shopName: row.name ?? null, includedMonths: row.included_months, recoveryShopId: row.recovery_business_id }));
 }
 
 /** Cancels an unused code. A used code has done its job and cannot be cancelled. */

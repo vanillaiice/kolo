@@ -17,7 +17,7 @@ real PostgreSQL and real SQLite client replicas on an ephemeral listener.
 | `GET /api/v2/capabilities` | None | API 2, exchange format 1, `sync` and `enrollment` true when ready |
 | `GET /api/v2/server` | None | Server device ID, public key, 32-hex fingerprint, `enrollment_open` |
 | `POST /api/v2/enrollment/challenges` | Strict rate limit | Single-use 2-minute challenge |
-| `POST /api/v2/enrollment/complete` | Signed claim + single-use `connection_code` | 204; attaches the shop with its IDs and consumes the code in the same transaction. 403 `invalid_connection_code` (unknown, cancelled or missing), `connection_code_used`, `connection_code_expired`, `shop_suspended`/`shop_removed`; 409 `enrollment_conflict`; 401 `invalid_challenge`/`invalid_signature`. Re-enrolling from the enrolling device needs no code. |
+| `POST /api/v2/enrollment/complete` | Signed claim + single-use `connection_code` | 204; attaches the shop with its IDs and consumes the code in the same transaction. 403 `invalid_connection_code` (unknown, cancelled or missing), `connection_code_used`, `connection_code_expired`, `shop_suspended`/`shop_removed`; 409 `enrollment_conflict`; 401 `invalid_challenge`/`invalid_signature`. Re-enrolling from the enrolling device needs no code. An owner-recovery code (`connection_codes.recovery_business_id`, migration `0006_recovery`, ADR-036) instead attaches a new device of the shop's owner to that existing shop once, after a restore on a replacement till; it never creates a shop (403 `invalid_connection_code` when presented for a shop the server does not know, 409 `enrollment_conflict` for a different existing shop). |
 | `POST /api/v2/auth/challenges` | Strict rate limit | Single-use session challenge |
 | `POST /api/v2/auth/sessions` | Signature by an active device key | Bearer token (stored hashed), expiry; 401 `invalid_session` for unknown/revoked keys; 403 `shop_suspended`/`shop_removed` |
 | `DELETE /api/v2/auth/session` | Token | 204, idempotent |
@@ -51,7 +51,7 @@ per request with method, path, status and time, never bodies or headers; `silent
 longer read. The server prints its fingerprint at start.
 
 Commands (`node apps/server/dist/main.js <command>`): `migrate [--discard-plaintext]`, `invite --label <shop> [--days 7] [--months 0]`
-(prints the code and a terminal QR code), `admin create <username> [--role admin|viewer] [--password-stdin]` (prints a
+(prints the code and a terminal QR code), `invite --recovery-shop <shop id> [--days 7]` (an owner-recovery code, below), `admin create <username> [--role admin|viewer] [--password-stdin]` (prints a
 generated password unless one is piped, and the authenticator link and QR code), `admin reset-totp <username>`, `purge`.
 
 ### Join by code (ADR-032)
@@ -62,7 +62,7 @@ generated password unless one is piped, and the authenticator link and QR code),
 | `GET /api/v2/join/:id` | None; strict limit | The offer, or 404 `join_not_found` |
 | `POST /api/v2/join/:id/request` | None; strict limit | `{request, encryption_public_key, mac}` → 204; the same request again is harmless, another is 409 `join_conflict` |
 | `GET /api/v2/join/:id/request` | Owner's token | The request, or 204 while none |
-| `POST /api/v2/join/:id/enrollment` | Owner's token | `{enrollment, sealed_password, mac}` (≤ 48 MiB) → 204 |
+| `POST /api/v2/join/:id/enrollment` | Owner's token | `{enrollment, sealed_password, mac}`; `enrollment` is base64 of the encrypted container (≤ 48 MiB, `MAX_JOIN_ENROLLMENT_CHARS`, ADR-035) → 204 |
 | `GET /api/v2/join/:id/enrollment` | None | The encrypted shop file and sealed password, or 204 while the owner has not answered |
 | `DELETE /api/v2/join/:id` | Owner's token | Refuse or cancel |
 
@@ -126,7 +126,7 @@ on changes. Responses carry a strict CSP, `X-Frame-Options: DENY` and `Cache-Con
 | `POST /admin/api/session` | — | `{username,password,code}`; 6-digit TOTP (unless `KOLO_ADMIN_TOTP=off`), each code once; 401 `invalid_credentials`, 423 `account_locked` (5 failures, 15 minutes); 10 a minute per address |
 | `DELETE /admin/api/session`, `GET /admin/api/me` | any | Sign out; current operator |
 | `GET /admin/api/health` | any | Version, database size, facts (total, last 24 h), active till sessions, shops by status, request/error/rate-limit counters since start, applied migrations |
-| `GET/POST /admin/api/codes`, `POST /admin/api/codes/:id/cancel` | any / admin | List (never tokens); issue `{label, days 1–90, includedMonths 0–36 (hosted)}` → code shown once plus an SVG QR code; cancel an unused code |
+| `GET/POST /admin/api/codes`, `POST /admin/api/codes/:id/cancel` | any / admin | List (never tokens); issue `{label, days 1–90, includedMonths 0–36 (hosted)}` or an owner-recovery code `{label, days, recoveryShopId}` (existing shop, no months; audited `code.issue_recovery`) → code shown once plus an SVG QR code; cancel an unused code |
 | `GET /admin/api/shops?search=`, `GET /admin/api/shops/:id` | any | Name, status, devices, last seen, fact count and bytes; detail adds devices with backlog, conflicts and the current key epoch |
 | `POST /admin/api/shops/:id/{suspend,resume,remove,restore}` | admin | Remove needs `{confirm: <shop id>}` and keeps data restorable for 30 days; the server purges it hourly afterwards |
 | `POST /admin/api/shops/:id/payments` | admin, hosted | `{months 1–36, amountMinor, method, reference?}`; extends paid-until from its end or today; 409 `not_hosted` on self-hosted servers |

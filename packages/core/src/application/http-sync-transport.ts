@@ -1,8 +1,7 @@
 import { bootstrapResponseSchema, challengeSchema, entitlementSchema, joinEnrollmentSchema, joinOfferSchema, joinRequestSchema, pullResponseSchema, pushResponseSchema, receiptResponseSchema, serverIdentitySchema,
   sessionSchema, syncErrorSchema, syncStatusSchema, PULL_MAX_LIMIT } from "@kolo/contracts/sync";
 import { canonicalJson } from "@kolo/contracts/canonical";
-import { MAX_ENCRYPTED_FILE_BYTES } from "@kolo/contracts/transfer";
-import type { JoinEnrollment, JoinRequestBody } from "@kolo/contracts/sync";
+import { MAX_JOIN_ENROLLMENT_CHARS, type JoinEnrollment, type JoinRequestBody } from "@kolo/contracts/sync";
 import { normalizeServerUrl, SyncTransportError, type SyncTransport } from "./server-sync.ts";
 
 /** Any shared contract schema; avoids a direct validation-library dependency in core. */
@@ -24,14 +23,14 @@ export function createHttpSyncTransport(baseUrl: string, options: { readonly fet
     const headers: Record<string, string> = { accept: "application/json" };
     if (token !== undefined) headers["authorization"] = `Bearer ${token}`;
     let payload: string | undefined;
-    if (body !== undefined) { headers["content-type"] = "application/json"; payload = canonicalJson(body, MAX_ENCRYPTED_FILE_BYTES + 64 * 1024); }
+    if (body !== undefined) { headers["content-type"] = "application/json"; payload = canonicalJson(body, MAX_JOIN_ENROLLMENT_CHARS + 64 * 1024); }
     let status: number, text: string;
     try {
       const response = await send(`${root}${path}`, { method, headers, ...(payload === undefined ? {} : { body: payload }), signal: controller.signal });
       status = response.status; text = await response.text();
     } catch { throw new SyncTransportError("network_unavailable", 0, true); }
     finally { clearTimeout(timer); }
-    if (text.length > MAX_ENCRYPTED_FILE_BYTES + 65_536) throw new SyncTransportError("invalid_response", status, true);
+    if (text.length > MAX_JOIN_ENROLLMENT_CHARS + 65_536) throw new SyncTransportError("invalid_response", status, true);
     let value: unknown;
     try { value = text === "" ? undefined : JSON.parse(text); } catch { throw new SyncTransportError("invalid_response", status, true); }
     if (status < 200 || status >= 300) {

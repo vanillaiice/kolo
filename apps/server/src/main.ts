@@ -20,6 +20,7 @@ const usage = `Usage: node dist/main.js [command]
   (none)                         serve sync and, unless KOLO_ADMIN_PORT=off, the operator dashboard
   migrate [--discard-plaintext]  apply schema migrations and exit
   invite --label <shop> [--days 7] [--months 0]   issue a single-use code for one shop (hosted: with paid months)
+  invite --recovery-shop <shop id> [--days 1]     issue an owner-recovery code for an existing shop whose tills were all lost
   admin create <username> [--role admin|viewer] [--password-stdin]
   admin reset-totp <username>    replace an operator's authenticator secret
   purge                          delete shops removed more than 30 days ago
@@ -50,11 +51,12 @@ else if (command === "migrate") {
     }
   });
 } else if (command === "invite") {
-  const label = option("label") ?? fail("Give the shop a name: invite --label \"Shop name\""), days = Number(option("days") ?? "7");
+  const recoveryShop = option("recovery-shop");
+  const label = option("label") ?? (recoveryShop === undefined ? fail("Give the shop a name: invite --label \"Shop name\"") : ""), days = Number(option("days") ?? (recoveryShop === undefined ? "7" : "1"));
   if (config.publicUrl === undefined) fail("Set KOLO_PUBLIC_URL to the address tills use to reach this server");
   const key = loadServerKey(config.keyFile ?? ".kolo-server-key.json");
   const months = config.edition === "hosted" ? Number(option("months") ?? "0") : 0;
-  const issued = await withDatabase(db => issueCode(db, key, config.publicUrl!, CLI_ACTOR, { label, days, now: new Date(), includedMonths: months }));
+  const issued = await withDatabase(db => issueCode(db, key, config.publicUrl!, CLI_ACTOR, { label, days, now: new Date(), includedMonths: recoveryShop === undefined ? months : 0, ...(recoveryShop === undefined ? {} : { recoveryShopId: recoveryShop }) }));
   process.stdout.write(`Connection code for ${issued.label} (single use, expires ${issued.expiresAt}):\n\n${issued.code}\n\n${await QRCode.toString(issued.code, { type: "terminal", small: true })}\n`);
 } else if (command === "admin" && (args[0] === "create" || args[0] === "reset-totp")) {
   const username = args[1] ?? fail(usage);

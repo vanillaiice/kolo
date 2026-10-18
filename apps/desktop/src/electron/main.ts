@@ -1,23 +1,25 @@
 import { app, BrowserWindow, dialog, ipcMain, powerMonitor, safeStorage, nativeTheme, type IpcMainInvokeEvent } from "electron";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "node:crypto";
 import { desktopStatus } from "./database.js";
 import { DesktopApplication } from "./application.js";
 import { desktopSessionMemory } from "./session-memory.js";
 import { desktopHandlers } from "./handlers.js";
 import { isRendererUrl } from "./renderer-origin.js";
-import { localCredentialsOnDesktop, desktopSealingCrypto, desktopTransferCrypto } from "./local-credentials.js";
-import { pickDesktopTransferFile, saveDesktopTransferFile } from "./transfer-files.js";
+import { localCredentialsOnDesktop, desktopSealingCrypto } from "./local-credentials.js";
+import { clearOutgoing, pickDesktopTransferFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.js";
 import type { TransferDialogs } from "./transfer.js";
 import { nodeWorkspaceFiles } from "@kolo/core/data/database/node-sqlite";
-import { devicePreferences } from "./preferences.js";
 import { migrate } from "@kolo/core/data/database/migrations";
 import type { Database } from "@kolo/core/data/database/driver";
 
 const smokeTest = process.argv.includes("--smoke-test");
 const workflowSmoke = process.argv.includes("--workflow-smoke");
+// The packaged build checks its own runtime and exits (scripts/verify-desktop-build.mjs); it never touches shop data.
+const selfCheck = process.argv.includes("--self-check");
 const benchmarkSmoke = process.argv.includes("--benchmark-smoke");
 const bootStart = performance.now();
 nativeTheme.themeSource = "system";
@@ -26,6 +28,8 @@ if (smokeTest || workflowSmoke || benchmarkSmoke) {
   const temporaryDirectory = process.env["KOLO_DESKTOP_SMOKE_DIR"];
   if (temporaryDirectory === undefined) throw new Error("smoke test requires a disposable user-data directory");
   app.setPath("userData", temporaryDirectory);
+} else if (selfCheck) {
+  app.setPath("userData", mkdtempSync(join(tmpdir(), "kolo-self-check-data-")));
 } else {
   // Keep the existing shop location across packaged product-name changes, including
   // clean installs where Electron requires the overridden directory to exist first.
@@ -34,7 +38,18 @@ if (smokeTest || workflowSmoke || benchmarkSmoke) {
   app.setPath("userData", directory);
 }
 
-if (!app.requestSingleInstanceLock()) { app.quit(); } else {
+if (selfCheck) {
+  void app.whenReady().then(async () => {
+    const result = await (await import("./self-check.js")).desktopSelfCheck();
+    process.stdout.write(`KOLO_SELF_CHECK ${JSON.stringify(result)}\n`);
+    // A GUI app's stdout can be lost (Windows, wine): the verifier names a file for the result instead.
+    const output = process.env["KOLO_SELF_CHECK_OUTPUT"];
+    if (output !== undefined) writeFileSync(output, JSON.stringify(result));
+    // Chromium still holds files in its user data on Windows: removing it is best effort and never delays the exit.
+    try { rmSync(app.getPath("userData"), { recursive: true, force: true }); } catch { /* Left in the OS temporary directory. */ }
+    app.exit(result.ok ? 0 : 1);
+  }).catch(() => { app.exit(1); });
+} else if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   let window: BrowserWindow | undefined;
   let database: Database | undefined;
   let fileSlots: ReturnType<typeof nodeWorkspaceFiles> | undefined;
@@ -59,13 +74,14 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
 
   void app.whenReady().then(async () => {
     try {
-      // Per-computer settings live beside, never inside, the business database.
-      const preferences = devicePreferences(join(app.getPath("userData"), "preferences.json"));
-      fileSlots = nodeWorkspaceFiles(app.getPath("userData"), { limits: preferences.limits }); database = fileSlots.openActive(); migrate(database);
+      fileSlots = nodeWorkspaceFiles(app.getPath("userData")); database = fileSlots.openActive(); migrate(database);
       const credentials = localCredentialsOnDesktop(join(app.getPath("userData"), "credentials"), safeStorage);
       const memory = desktopSessionMemory(join(app.getPath("userData"), "session"), safeStorage);
-      const dialogs: TransferDialogs = workflowSmoke ? (await import("./workflow-smoke.js")).smokeDialogs() : {
-        open: () => pickDesktopTransferFile(dialog, preferences.limits().fileBytes), save: document => saveDesktopTransferFile(document, dialog, preferences.limits().fileBytes) };
+      // Backups stream through a private outgoing directory before the owner chooses where to keep them (ADR-035).
+      const outgoing = join(app.getPath("userData"), "outgoing"); clearOutgoing(outgoing);
+      const dialogs: TransferDialogs = workflowSmoke ? (await import("./workflow-smoke.js")).smokeDialogs(outgoing) : {
+        open: () => pickDesktopTransferFile(dialog), save: document => saveDesktopTransferFile(document, dialog),
+        saveStream: write => saveDesktopTransferStream(write, dialog, outgoing) };
       // Restore and pairing activate a new database: a new application serves it, and the old one
       // is disposed after its in-flight command (the activation itself) has answered.
       // Computer reset: after the command answered, retire the application, delete every shop file,
@@ -76,19 +92,19 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
         const data = app.getPath("userData");
         for (const entry of readdirSync(data)) if (/^(kolo\.db|workspace-[0-9a-f-]+\.db|stage-[0-9a-f-]+\.db|workspace-slots\.db)(?:-wal|-shm|-journal)?$/.test(entry)) rmSync(join(data, entry), { force: true });
         for (const directory of ["credentials", "session"]) rmSync(join(data, directory), { recursive: true, force: true });
-        fileSlots = nodeWorkspaceFiles(data, { limits: preferences.limits });
+        fileSlots = nodeWorkspaceFiles(data);
         const fresh = fileSlots.openActive(); migrate(fresh);
         application = await serve(fresh); database = fresh;
         if (window !== undefined && !window.isDestroyed()) window.webContents.send("kolo:changed");
       };
       const serve = async (next: Database): Promise<DesktopApplication> => {
         const created = new DesktopApplication({ database: next, credentials, newId: randomUUIDv7, now: () => new Date().toISOString() }, desktopSealingCrypto,
-          { files: fileSlots!, dialogs, crypto: desktopTransferCrypto, onReset: () => { setImmediate(() => { void resetComputer(); }); }, onActivated: async activated => {
+          { files: fileSlots!, dialogs, crypto: desktopSealingCrypto, onReset: () => { setImmediate(() => { void resetComputer(); }); }, onActivated: async activated => {
             migrate(activated); const previous = application, previousDatabase = database;
             application = await serve(activated); database = activated;
             void previous?.dispose().finally(() => previousDatabase?.close());
             if (window !== undefined && !window.isDestroyed()) window.webContents.send("kolo:changed");
-          } }, memory, preferences);
+          } }, memory);
         await created.initialize();
         created.onChanged(() => { if (!closing && created === application && window !== undefined && !window.isDestroyed() && !window.webContents.isDestroyed() && !window.webContents.mainFrame.isDestroyed()) window.webContents.send("kolo:changed"); });
         return created;

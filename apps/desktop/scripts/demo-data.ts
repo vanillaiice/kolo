@@ -16,6 +16,7 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID, randomUUIDv7
 import { nodeWorkspaceFiles } from "@kolo/core/data/database/node-sqlite";
 import { migrate } from "@kolo/core/data/database/migrations";
 import type { TransferDocument } from "@kolo/core/backup/types";
+import { pickedBytes } from "../src/electron/transfer.ts";
 import { DesktopApplication } from "../src/electron/application.ts";
 import { localCredentialsOnDesktop, desktopExchangeCrypto, desktopTransferCrypto, type NativeSafeStorage } from "../src/electron/local-credentials.ts";
 import type { Result, WorkspaceView } from "../src/shared/service.ts";
@@ -352,7 +353,7 @@ async function main(): Promise<void> {
     value(await app.saveBackup({ sessionId: session, password: BACKUP_PASSWORD }), "backup");
     const document = saved[saved.length - 1]!;
     mkdirSync(outputDirectory, { recursive: true });
-    writeFileSync(join(outputDirectory, document.filename), document.text);
+    writeFileSync(join(outputDirectory, document.filename), document.bytes);
     writeFileSync(join(outputDirectory, "README.txt"), [
       "kolo demo shop: Alimentation Chez Mama Ngono", "",
       `Backup file: ${document.filename}`, `Backup password: ${BACKUP_PASSWORD}`, "",
@@ -377,7 +378,7 @@ async function verifyRestore(document: TransferDocument, expectedSales: number):
     const credentials = localCredentialsOnDesktop(join(directory, "vault"), memoryVault());
     const serve = async (database: ReturnType<typeof slots.openActive>): Promise<DesktopApplication> => {
       const app = new DesktopApplication({ database, credentials, newId: randomUUIDv7, now: () => new Date().toISOString() }, desktopExchangeCrypto,
-        { files: slots, dialogs: { open: async () => document.text, save: async () => false }, crypto: desktopTransferCrypto,
+        { files: slots, dialogs: { open: async () => pickedBytes(document.bytes), save: async () => false }, crypto: desktopTransferCrypto,
           onActivated: async next => { migrate(next); const previous = opened.app; opened.app = await serve(next); opened.database = next; void previous?.dispose(); } });
       await app.initialize(); return app;
     };

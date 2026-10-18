@@ -1,21 +1,23 @@
 import { canonicalJson } from "@kolo/contracts/canonical";
 import { MAX_JOURNAL_BATCH_BYTES, signedPeerReceiptSchema } from "@kolo/contracts/delivery";
 import { TransferError, type TransferCrypto, type TransferDocument } from "../backup/types.ts";
-import { encryptTransfer, decryptTransfer, validateTransferPassword } from "../backup/encryption.ts";
+import { encryptTransfer, decryptTransfer, validateTransferPassword, type ContainerLimits } from "../backup/encryption.ts";
 import { createJournalBatch, verifyJournalBatch, importJournalBatch, createPeerReceipt, acknowledgeDelivery } from "./event-delivery.ts";
 import { authorizedOperation, memberPermissions } from "../identity/internal-authority.ts";
 import { eventModel } from "../data/exchange/model.ts";
 import { bundlePreviews } from "../exchange/internal-files.ts";
 import type { OperationContext } from "../identity/types.ts";
 import type { ImportOutcome } from "./event-delivery.ts";
-async function encryptObject(value:unknown,purpose:"exchange"|"receipt",id:string,password:string,crypto:TransferCrypto):Promise<string>{const bytes=crypto.encodeText(canonicalJson(value,MAX_JOURNAL_BATCH_BYTES));try{return await encryptTransfer(bytes,purpose,id,password,crypto);}finally{bytes.fill(0);}}
+/** Bundles and receipts hold one signed journal batch: refused before key derivation when a file claims more. */
+const BATCH_LIMITS:ContainerLimits=Object.freeze({contentBytes:MAX_JOURNAL_BATCH_BYTES,fileBytes:MAX_JOURNAL_BATCH_BYTES+1024*1024});
+async function encryptObject(value:unknown,purpose:"exchange"|"receipt",id:string,password:string,crypto:TransferCrypto):Promise<Uint8Array>{const bytes=crypto.encodeText(canonicalJson(value,MAX_JOURNAL_BATCH_BYTES));try{return await encryptTransfer(bytes,purpose,id,password,crypto,BATCH_LIMITS);}finally{bytes.fill(0);}}
 /** Read-only import summary. Authority/dependencies are checked again at application time. */
 export interface BundlePreview {readonly batchId:string;readonly businessId:string;readonly senderDeviceId:string;readonly events:readonly {readonly eventId:string;readonly type:string;readonly assessment:"ready"|"duplicate"|"deferred"|"review"|"unsupported"}[];}
 /** Encrypts one bounded signed batch; exported facts are offered until a receiver receipt is imported. */
-export async function exportBundle(context:OperationContext,destinationId:string,password:string,crypto:TransferCrypto,limit=200):Promise<TransferDocument|undefined>{validateTransferPassword(password);const signed=await createJournalBatch(context,destinationId,crypto,limit);if(signed===undefined)return undefined;const text=await encryptObject(signed,"exchange",signed.batch.batch_id,password,crypto);authorizedOperation(context,["business.settings"],()=>undefined);return {filename:`${signed.batch.batch_id}.kolo-exchange.json`,text};}
+export async function exportBundle(context:OperationContext,destinationId:string,password:string,crypto:TransferCrypto,limit=200):Promise<TransferDocument|undefined>{validateTransferPassword(password);const signed=await createJournalBatch(context,destinationId,crypto,limit);if(signed===undefined)return undefined;const bytes=await encryptObject(signed,"exchange",signed.batch.batch_id,password,crypto);authorizedOperation(context,["business.settings"],()=>undefined);return {filename:`${signed.batch.batch_id}.kolo-exchange`,bytes};}
 /** Decrypts bounded bytes and authenticates shop, destination, forwarder and all origins without applying facts. */
-export async function previewBundle(context:OperationContext,text:string,password:string,crypto:TransferCrypto):Promise<BundlePreview>{
- const bytes=await decryptTransfer(text,"exchange",password,crypto);
+export async function previewBundle(context:OperationContext,file:Uint8Array,password:string,crypto:TransferCrypto):Promise<BundlePreview>{
+ const bytes=await decryptTransfer(file,"exchange",password,crypto,BATCH_LIMITS);
  try{
   if(bytes.length>MAX_JOURNAL_BATCH_BYTES)throw new TransferError("too_large");let value:unknown;try{value=JSON.parse(crypto.decodeText(bytes));}catch{throw new TransferError("invalid_file");}
   const signed=await verifyJournalBatch(context,value,crypto);
@@ -37,9 +39,9 @@ export async function previewBundle(context:OperationContext,text:string,passwor
 /** Imports only an opaque authenticated preview and rechecks current trust/authority before any effects. */
 export async function importBundle(context:OperationContext,preview:BundlePreview,crypto:TransferCrypto):Promise<readonly {eventId:string;outcome:ImportOutcome}[]>{const material=bundlePreviews.get(preview);if(material===undefined||material.context!==context)throw new TransferError("confirmation_required");return importJournalBatch(context,material.signed,crypto);}
 /** Regenerates an encrypted durable receipt, including after a lost/cancelled file save. */
-export async function exportReceipt(context:OperationContext,batchId:string,password:string,crypto:TransferCrypto):Promise<TransferDocument|undefined>{validateTransferPassword(password);const signed=await createPeerReceipt(context,batchId,crypto);if(signed===undefined)return undefined;const text=await encryptObject(signed,"receipt",signed.receipt.receipt_id,password,crypto);authorizedOperation(context,["business.settings"],()=>undefined);return {filename:`${signed.receipt.receipt_id}.kolo-receipt.json`,text};}
+export async function exportReceipt(context:OperationContext,batchId:string,password:string,crypto:TransferCrypto):Promise<TransferDocument|undefined>{validateTransferPassword(password);const signed=await createPeerReceipt(context,batchId,crypto);if(signed===undefined)return undefined;const bytes=await encryptObject(signed,"receipt",signed.receipt.receipt_id,password,crypto);authorizedOperation(context,["business.settings"],()=>undefined);return {filename:`${signed.receipt.receipt_id}.kolo-receipt`,bytes};}
 /** Decrypts and applies exact digest acknowledgments to the expected destination only. */
-export async function importReceipt(context:OperationContext,destinationId:string,text:string,password:string,crypto:TransferCrypto):Promise<number>{const bytes=await decryptTransfer(text,"receipt",password,crypto);try{if(bytes.length>MAX_JOURNAL_BATCH_BYTES)throw new TransferError("too_large");let value:unknown;try{value=JSON.parse(crypto.decodeText(bytes));}catch{throw new TransferError("invalid_file");}const parsed=signedPeerReceiptSchema.safeParse(value);if(!parsed.success)throw new TransferError("invalid_file");return acknowledgeDelivery(context,destinationId,parsed.data,crypto);}finally{bytes.fill(0);}}
+export async function importReceipt(context:OperationContext,destinationId:string,file:Uint8Array,password:string,crypto:TransferCrypto):Promise<number>{const bytes=await decryptTransfer(file,"receipt",password,crypto,BATCH_LIMITS);try{if(bytes.length>MAX_JOURNAL_BATCH_BYTES)throw new TransferError("too_large");let value:unknown;try{value=JSON.parse(crypto.decodeText(bytes));}catch{throw new TransferError("invalid_file");}const parsed=signedPeerReceiptSchema.safeParse(value);if(!parsed.success)throw new TransferError("invalid_file");return acknowledgeDelivery(context,destinationId,parsed.data,crypto);}finally{bytes.fill(0);}}
 /** Known peer selection resolved from current SQLite state. */
 export function exchangeDestinations(context:OperationContext):readonly {id:string;label:string;deviceId:string}[]{return authorizedOperation(context,["business.settings"],(_db,tx)=>tx.all(`SELECT x.id,x.label,x.receiver_device_id FROM exchange_destinations x JOIN trusted_exchange_devices t ON t.device_id=x.receiver_device_id AND t.business_id=x.business_id JOIN devices d ON d.id=t.device_id WHERE x.business_id=? AND x.kind='peer' AND x.active=1 AND t.active=1 AND d.active=1 AND x.receiver_device_id<>? ORDER BY x.label,x.id`,[context.businessId,context.deviceId]).map(r=>({id:String(r["id"]),label:String(r["label"]),deviceId:String(r["receiver_device_id"])})));}
 /** Durable imports available for receipt regeneration, newest first. */

@@ -8,6 +8,8 @@ export interface ReceiptLabels {
   readonly returned: string; readonly date: string; readonly footer: string;
   /** "incl." before each tax line, and the tax-number label printed with the shop's registration (ADR-033). */
   readonly taxIncluded?: string | undefined; readonly taxNumber?: string | undefined;
+  /** "Change kept as credit", printed when the customer left the change on account. */
+  readonly changeKept?: string | undefined;
 }
 /** One "incl. TVA 19,25 %" line per rate, then the shop's tax number, when the sale carried tax. */
 function taxLines(saved: Receipt, labels: ReceiptLabels): { readonly lines: readonly [string, string][]; readonly registration?: string } {
@@ -24,6 +26,7 @@ export function receiptText(saved: Receipt, shop: string, labels: ReceiptLabels)
     ...(saved.discountMinor > 0 ? [`${labels.discount}: −${formatMoney(saved.discountMinor)}`] : []), `${labels.total}: ${formatMoney(saved.totalMinor)}`,
     ...((tax => [...tax.lines.map(([left, right]) => `${left}: ${right}`), ...(tax.registration === undefined ? [] : [tax.registration])])(taxLines(saved, labels))),
     ...saved.payments.map(payment => `${payment.name}: ${formatMoney(payment.amountMinor)}`),
+    ...(saved.changeKeptMinor === undefined ? [] : [`${labels.changeKept ?? ""}: ${formatMoney(saved.changeKeptMinor)}`]),
     ...(saved.outstandingMinor > 0 ? [`${labels.due}: ${formatMoney(saved.outstandingMinor)}`] : []),
     ...(saved.returnedMinor > 0 ? [`${labels.returned}: ${formatMoney(saved.returnedMinor)}`] : []), "", labels.footer].join("\n");
 }
@@ -40,6 +43,6 @@ hr{border:0;border-top:1px dashed #000;margin:3mm 0}</style></head><body>
 ${saved.lines.map(line => `<div class="line">${row(line.name, formatMoney(lineTotal(line)))}<div class="sub">${escape(`${formatQuantity(line.quantity)} × ${formatMoney(line.unitPriceMinor)}`)}</div></div>`).join("")}<hr>
 ${saved.discountMinor > 0 ? row(labels.discount, `−${formatMoney(saved.discountMinor)}`) : ""}${row(labels.total, formatMoney(saved.totalMinor), true)}
 ${((tax) => tax.lines.map(([left, right]) => `<div class="sub">${row(left, right)}</div>`).join("") + (tax.registration === undefined ? "" : `<p class="sub">${escape(tax.registration)}</p>`))(taxLines(saved, labels))}
-${saved.payments.map(payment => row(payment.name, formatMoney(payment.amountMinor))).join("")}${saved.outstandingMinor > 0 ? row(labels.due, formatMoney(saved.outstandingMinor)) : ""}
+${saved.payments.map(payment => row(payment.name, formatMoney(payment.amountMinor))).join("")}${saved.changeKeptMinor === undefined ? "" : row(labels.changeKept ?? "", formatMoney(saved.changeKeptMinor))}${saved.outstandingMinor > 0 ? row(labels.due, formatMoney(saved.outstandingMinor)) : ""}
 ${saved.returnedMinor > 0 ? row(labels.returned, formatMoney(saved.returnedMinor)) : ""}<hr><p class="sub">${escape(labels.footer)}</p></body></html>`;
 }

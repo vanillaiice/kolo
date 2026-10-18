@@ -9,6 +9,7 @@ import { SEALED_SYNC_MIGRATION } from "./sealed-sync-migration.ts";
 import { HOSTED_SERVICE_MIGRATION } from "./hosted-service-migration.ts";
 import { TAX_TERMS_MIGRATION } from "./tax-terms-migration.ts";
 import { LOCAL_NETWORK_MIGRATION } from "./local-network-migration.ts";
+import { BACKUP_KEY_MIGRATION } from "./backup-key-migration.ts";
 /**
  * The local schema and how a device gets to it.
  *
@@ -1002,6 +1003,7 @@ export const MIGRATIONS: readonly Migration[] = [
   HOSTED_SERVICE_MIGRATION,
   TAX_TERMS_MIGRATION,
   LOCAL_NETWORK_MIGRATION,
+  BACKUP_KEY_MIGRATION,
 ];
 
 /** The version the code in this build expects. */

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { canonicalJson } from "./canonical.ts";
 import { signedJournalEventSchema } from "./events.ts";
-import { MAX_ENCRYPTED_FILE_BYTES, signedPairingInviteSchema, signedPairingRequestSchema } from "./transfer.ts";
+import { signedPairingInviteSchema, signedPairingRequestSchema } from "./transfer.ts";
 import { MAX_JOURNAL_BATCH_BYTES, signedPeerReceiptSchema } from "./delivery.ts";
 
 const uuid = z.uuid().refine(value => value === value.toLowerCase());
@@ -177,9 +177,13 @@ export function parseJoinLink(text: string): { readonly url: string; readonly fi
 export const joinOfferSchema = z.strictObject({ join_id: hex(64), invite: signedPairingInviteSchema, mac: hex(64) });
 /** The new till's signed request, its X25519 key for the sealed password, both tagged with the code-derived key. */
 export const joinRequestSchema = z.strictObject({ request: signedPairingRequestSchema, encryption_public_key: z.string().min(1).max(1024).refine(value => value.includes("BEGIN PUBLIC KEY")), mac: hex(64) });
-/** The owner's encrypted shop file and its password sealed to the new till's key. */
-/** Joining moves the shop to a phone, so the standard file limit applies (a larger shop pairs by file). */
-export const joinEnrollmentSchema = z.strictObject({ enrollment: z.string().min(1).max(MAX_ENCRYPTED_FILE_BYTES),
+/**
+ * Largest base64 enrollment a join mailbox (hosted server or a desktop's local listener) carries: about
+ * 36 MiB of encrypted container, a few months of a busy shop. A larger shop pairs by file.
+ */
+export const MAX_JOIN_ENROLLMENT_CHARS = 48 * 1024 * 1024;
+/** The owner's encrypted shop file (base64 of its container) and its password sealed to the new till's key. */
+export const joinEnrollmentSchema = z.strictObject({ enrollment: z.string().min(1).max(MAX_JOIN_ENROLLMENT_CHARS),
   sealed_password: z.strictObject({ ephemeral_public_key: z.string().min(1).max(1024), nonce: hex(24), ciphertext: z.string().min(1).max(256), tag: hex(32) }), mac: hex(64) });
 export const joinStateSchema = z.strictObject({ state: z.enum(["waiting", "requested", "approved"]), expires_at: timestamp });
 export type JoinOffer = z.infer<typeof joinOfferSchema>;

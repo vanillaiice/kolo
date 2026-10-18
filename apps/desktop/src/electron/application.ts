@@ -5,7 +5,7 @@ import type { Permission } from "@kolo/core/identity/permissions";
 import { capabilities, products, scannedProduct, productStock, paymentAccounts, receipt, receipts, categories, stockHistory, customers, statement } from "@kolo/core/application/queries";
 import { saveProduct, adjustStock, completeSale, countStock, saveCategory, saveCustomer, receiveCustomerPayment, setProductCategories } from "@kolo/core/application/operations";
 import { productCategories } from "@kolo/core/application/records";
-import { customerOf, balanceOf, wouldExceedCreditLimit, type Customer } from "@kolo/core/data/customers/customers";
+import { customerOf, balanceOf, changeKeptOnAccount, wouldExceedCreditLimit, type Customer } from "@kolo/core/data/customers/customers";
 import type { Queryable } from "@kolo/core/data/database/driver";
 import { productOf, type Product } from "@kolo/core/data/products/products";
 import { categoryOf, type Category } from "@kolo/core/data/products/categories";
@@ -33,8 +33,8 @@ import type { Database } from "@kolo/core/data/database/driver";
 import { migrate } from "@kolo/core/data/database/migrations";
 import { createHash } from "node:crypto";
 import { photoUsage, productPhoto, productPhotoDigest, removeProductPhoto, setProductPhoto } from "@kolo/core/application/photos";
+import { backupRecoveryKeys, confirmBackupRecoveryKey, prepareBackupRecoveryKey, type PendingBackupKey } from "@kolo/core/application/backup-key";
 import { PhotoError, PHOTO_LIMITS } from "@kolo/core/data/products/photos";
-import { memoryPreferences, type DevicePreferences } from "./preferences.ts";
 import { LocalNetwork } from "./local-network.ts";
 import { LocalSyncScheduler,localPeerConnections,synchronizeLocalPeer } from "@kolo/core/application/local-sync";
 import * as localJoin from "@kolo/core/application/local-join";
@@ -78,7 +78,6 @@ export class DesktopApplication implements ShopService {
   #staged: transfer.StagedFile | undefined;
   private readonly crypto: ExchangeCrypto | undefined;
   readonly #memory: SessionMemory | undefined;
-  readonly #preferences: DevicePreferences;
   readonly #syncTransport: (url: string) => SyncTransport;
   readonly #autoSync: sync.AutoSync | undefined;
   readonly #sealingCrypto: SealingCrypto | undefined;
@@ -87,8 +86,10 @@ export class DesktopApplication implements ShopService {
   readonly #local:LocalNetwork|undefined;
   readonly #localSync:LocalSyncScheduler|undefined;
   #remember = false;
-  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void>; readonly onReset?: () => void }, memory?: SessionMemory, preferences: DevicePreferences = memoryPreferences(), syncTransport: (url: string) => SyncTransport = sync.httpTransport) {
-    this.#transfer = files; this.#memory = memory; this.#preferences = preferences;
+  /** A backup recovery key shown once and not yet confirmed; only this process holds its text, and locking forgets it. */
+  #pendingKey: { readonly sessionId: string; readonly key: PendingBackupKey } | undefined;
+  constructor(ports: WorkspacePorts, crypto?: ExchangeCrypto, files?: transfer.TransferPorts & { readonly onActivated: (database: Database) => Promise<void>; readonly onReset?: () => void }, memory?: SessionMemory, syncTransport: (url: string) => SyncTransport = sync.httpTransport) {
+    this.#transfer = files; this.#memory = memory;
     // Server sync needs the sealing primitives (X25519, HKDF); file exchange needs only signatures.
     this.#sealingCrypto = crypto !== undefined && "hkdf" in crypto && "ephemeralAgreement" in crypto ? crypto as SealingCrypto : undefined;
     this.#syncTransport = syncTransport; this.#autoSync = this.#sealingCrypto === undefined ? undefined : new sync.AutoSync(this.#sealingCrypto, syncTransport);
@@ -215,7 +216,7 @@ export class DesktopApplication implements ShopService {
     return this.#run(async () => { this.#invalidate(); this.#notify(); await this.#store(undefined); return this.#view(); });
   }
   sessionPreferences(input: unknown): Promise<Result<SessionPreferences>> {
-    return this.#run(() => { this.#actor(object(input, ["sessionId"])); return { rememberSession: this.#remember, largeFiles: this.#preferences.largeFiles() }; });
+    return this.#run(() => { this.#actor(object(input, ["sessionId"])); return { rememberSession: this.#remember }; });
   }
   setRememberSession(input: unknown): Promise<Result<SessionPreferences>> {
     return this.#run(() => this.#identity(async () => {
@@ -224,16 +225,8 @@ export class DesktopApplication implements ShopService {
       if (memory === undefined) throw new CommandError("unavailable");
       await memory.setEnabled(enabled); this.#remember = enabled;
       await this.#store(enabled ? rememberMember(context) : undefined, epoch);
-      return { rememberSession: enabled, largeFiles: this.#preferences.largeFiles() };
+      return { rememberSession: enabled };
     }));
-  }
-  /** Owner switch for this computer's transfer-file and photo-storage limits. */
-  setLargeFiles(input: unknown): Promise<Result<SessionPreferences>> {
-    return this.#run(() => {
-      const data = object(input, ["sessionId", "enabled"]); this.#actor(data, ["business.settings"]);
-      this.#preferences.setLargeFiles(boolean(data["enabled"]));
-      return { rememberSession: this.#remember, largeFiles: this.#preferences.largeFiles() };
-    });
   }
   /**
    * Erases this computer's shops after the typed shop name and the owner's code. The session is locked
@@ -307,7 +300,7 @@ export class DesktopApplication implements ShopService {
     return this.#run(async () => {
       const data = object(input, ["sessionId", "productId", "bytes"]), context = this.#actor(data, ["products.edit"]), id = uuid(data["productId"]), bytes = data["bytes"];
       if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > PHOTO_LIMITS.maxBytes) throw new CommandError("invalid_photo");
-      try { await setProductPhoto(context, { productId: id, bytes: new Uint8Array(bytes) }, { sha256Bytes: async value => createHash("sha256").update(value).digest("hex") }, { large: this.#preferences.largeFiles() }); }
+      try { await setProductPhoto(context, { productId: id, bytes: new Uint8Array(bytes) }, { sha256Bytes: async value => createHash("sha256").update(value).digest("hex") }); }
       catch (error) { if (error instanceof PhotoError) throw new CommandError(error.code); throw error; }
       return this.#stored(context, id);
     });
@@ -319,9 +312,9 @@ export class DesktopApplication implements ShopService {
       removeProductPhoto(context, id); return this.#stored(context, id);
     });
   }
-  /** Photo storage against this computer's limit. */
+  /** Photo storage against the shop's limit. */
   photoUsage(input: unknown): ReturnType<ShopService["photoUsage"]> {
-    return this.#run(() => photoUsage(this.#actor(object(input, ["sessionId"]), ["products.view"]), { large: this.#preferences.largeFiles() }));
+    return this.#run(() => photoUsage(this.#actor(object(input, ["sessionId"]), ["products.view"])));
   }
   #stored(context: OperationContext, id: string): ProductView {
     const product = productOf(this.ports.database, context.businessId, id);
@@ -515,13 +508,14 @@ export class DesktopApplication implements ShopService {
     });
   }
   /**
-   * Host-bound atomic sale with split payments and optional customer credit. Matching retries
-   * (same actor, lines, payments and customer) return the original ID; differing content is refused.
+   * Host-bound atomic sale with split payments and optional customer credit. `keptChangeMinor` puts the named
+   * customer's change on their account (into the sale's first cash account, under customers.pay). Matching retries
+   * (same actor, lines, payments, customer and kept change) return the original ID; differing content is refused.
    * The legacy `accountId` form records the exact total in one active cash account.
    */
   checkout(input: unknown): ReturnType<ShopService["checkout"]> {
     return this.#run(() => {
-      const data = object(input, ["sessionId", "requestId", "accountId", "payments", "customerId", "expectedCustomerBalanceMinor", "discountMinor", "lines"]), context = this.#actor(data, ["sales.create", "products.view"]);
+      const data = object(input, ["sessionId", "requestId", "accountId", "payments", "customerId", "expectedCustomerBalanceMinor", "discountMinor", "keptChangeMinor", "lines"]), context = this.#actor(data, ["sales.create", "products.view"]);
       const id = uuid(data["requestId"]), customerId = optional(data["customerId"], uuid), discountMinor = whole(data["discountMinor"] ?? 0);
       const expectedBalance = data["expectedCustomerBalanceMinor"];
       if (expectedBalance !== undefined && (customerId === undefined || typeof expectedBalance !== "number" || !Number.isSafeInteger(expectedBalance))) throw new WorkspaceError("invalid_input");
@@ -539,8 +533,10 @@ export class DesktopApplication implements ShopService {
         if (new Set(payments.map(payment => payment.accountId)).size !== payments.length) throw new WorkspaceError("invalid_input");
       }
       const settled = saleTotals({ lines, payments, customerId, discountMinor });
+      const keptChangeMinor = data["keptChangeMinor"] === undefined ? 0 : whole(data["keptChangeMinor"], 1);
+      if (keptChangeMinor > 0 && (customerId === undefined || legacy)) throw new WorkspaceError("invalid_input");
       return this.ports.database.transaction(tx => {
-        const saved = tx.get(`SELECT business_id,user_id,device_id,discount_minor,customer_id FROM sales WHERE id=?`, [id]);
+        const saved = tx.get(`SELECT business_id,user_id,device_id,discount_minor,customer_id,number,occurred_at FROM sales WHERE id=?`, [id]);
         if (saved !== undefined) {
           if (saved["business_id"] !== context.businessId || saved["user_id"] !== context.userId || saved["device_id"] !== context.deviceId) throw new CommandError("request_conflict");
           // Creation authority is enough to retry one's own command even after
@@ -550,7 +546,8 @@ export class DesktopApplication implements ShopService {
           const sorted = (items: readonly Record<string, unknown>[]): string => JSON.stringify(items.map(item => JSON.stringify(item)).sort());
           if (saved["discount_minor"] !== discountMinor || saved["customer_id"] !== (customerId ?? null) || originalLines.some(line=>line["discount_minor"]!==0) ||
             sorted(originalLines.map(line=>({productId:line["product_id"],quantity:line["quantity"],unitPriceMinor:line["unit_price_minor"]}))) !== sorted(lines) ||
-            sorted(originalPayments.map(payment=>({accountId:payment["account_id"],amountMinor:payment["amount_minor"]}))) !== sorted(payments)) throw new CommandError("request_conflict");
+            sorted(originalPayments.map(payment=>({accountId:payment["account_id"],amountMinor:payment["amount_minor"]}))) !== sorted(payments) ||
+            changeKeptOnAccount(tx, context.businessId, { customerId: (saved["customer_id"] ?? null) as string | null, number: String(saved["number"]), occurredAt: String(saved["occurred_at"]) }) !== keptChangeMinor) throw new CommandError("request_conflict");
           return { saleId: id };
         }
         if (legacy) { const account = accountOf(tx, context.businessId, uuid(data["accountId"])); if (account?.active !== true || account.kind !== "CASH") throw new WorkspaceError("scope_mismatch"); }
@@ -567,12 +564,16 @@ export class DesktopApplication implements ShopService {
           const product = productOf(tx, context.businessId, line.productId);
           if (product?.active !== true) throw new WorkspaceError("scope_mismatch");
           if (product.sellingPriceMinor !== line.unitPriceMinor) throw new CommandError("price_changed");
-          return { ...line, id: this.ports.newId(), movementId: this.ports.newId(), name: product.name,
-            unitCostMinor: product.purchasePriceMinor, taxRateBasisPoints: product.taxRateBasisPoints };
+          // The core freezes the line's cost from the shared costing policy (§8).
+          return { ...line, id: this.ports.newId(), movementId: this.ports.newId(), name: product.name, taxRateBasisPoints: product.taxRateBasisPoints };
         });
+        // Kept change goes into the drawer the cash went into: the first cash account the sale was paid into.
+        const drawer = keptChangeMinor > 0 ? payments.find(payment => accountOf(tx, context.businessId, payment.accountId)?.kind === "CASH") : undefined;
+        if (keptChangeMinor > 0 && drawer === undefined) throw new WorkspaceError("invalid_input");
         completeSale(context, { id, number: `V-${id}`, occurredAt: at, branchId: unlockedActor(context).branchId, customerId, discountMinor,
           eventId: this.ports.newId(), lines: recordedLines, payments: payments.map(payment => ({ id: this.ports.newId(), ...payment })),
-          ...(settled.outstandingMinor > 0 ? { creditTransactionId: this.ports.newId() } : {}) });
+          ...(settled.outstandingMinor > 0 ? { creditTransactionId: this.ports.newId() } : {}) },
+        drawer === undefined ? undefined : { id: this.ports.newId(), eventId: this.ports.newId(), accountId: drawer.accountId, amountMinor: keptChangeMinor });
         return { saleId: id };
       });
     });
@@ -699,6 +700,36 @@ export class DesktopApplication implements ShopService {
   setStaffPermission(input: unknown): ReturnType<ShopService["setStaffPermission"]> { return this.#run(() => staff.setStaffPermission(this.#host, input)); }
   setStaffActive(input: unknown): ReturnType<ShopService["setStaffActive"]> { return this.#run(() => staff.setStaffActive(this.#host, input)); }
   resetStaffSecret(input: unknown): ReturnType<ShopService["resetStaffSecret"]> { return this.#run(() => this.#identity(() => staff.resetStaffSecret(this.#host, input))); }
+  /** The shop's pinned backup recovery keys (ADR-036), newest first; owner settings access. */
+  backupKeys(input: unknown): ReturnType<ShopService["backupKeys"]> {
+    return this.#run(() => backupRecoveryKeys(this.#actor(object(input, ["sessionId"]), ["business.settings"])).map(key => ({ ...key })));
+  }
+  /** Creates a backup recovery key after a fresh owner PIN and returns it to show once; nothing is pinned yet. */
+  prepareBackupKey(input: unknown): ReturnType<ShopService["prepareBackupKey"]> {
+    return this.#run(async () => {
+      const data = object(input, ["sessionId", "secret"]), context = this.#actor(data, ["business.settings", "users.manage"]), sessionId = String(data["sessionId"]);
+      const key = await transfer.translated(() => prepareBackupRecoveryKey(context, text(data["secret"], 256, false), this.#keyCrypto()));
+      this.#actor(data); this.#pendingKey = { sessionId, key };
+      return { text: key.text, keyId: key.keyId, confirm: [...key.confirm] };
+    });
+  }
+  /** Pins the prepared key once the owner typed back the requested groups, then forgets it; a mistyped group can be retried. */
+  confirmBackupKey(input: unknown): ReturnType<ShopService["confirmBackupKey"]> {
+    return this.#run(async () => {
+      const data = object(input, ["sessionId", "groups"]), context = this.#actor(data, ["business.settings", "users.manage"]), groups = data["groups"], pending = this.#pendingKey;
+      if (!Array.isArray(groups) || groups.length !== 3 || groups.some(group => typeof group !== "string" || group.length > 16)) throw new CommandError("invalid_input");
+      if (pending === undefined || pending.sessionId !== data["sessionId"]) throw new CommandError("confirmation_required");
+      const view = await transfer.translated(() => confirmBackupRecoveryKey(context, pending.key, groups as string[], this.#keyCrypto()));
+      this.#pendingKey = undefined;
+      return { ...view };
+    });
+  }
+  #keyCrypto(): SealingCrypto {
+    const crypto = this.#transfer?.crypto;
+    if (crypto !== undefined && typeof (crypto as Partial<SealingCrypto>).hkdf === "function") return crypto as SealingCrypto;
+    if (this.#sealingCrypto === undefined) throw new CommandError("unavailable");
+    return this.#sealingCrypto;
+  }
   /** Backup, pairing and exchange through native dialogs; see transfer.ts. File work is single-flight. */
   discardFile(): ReturnType<ShopService["discardFile"]> { return this.#run(async () => { await transfer.release(this.#staged); this.#staged = undefined; return null; }); }
   saveBackup(input?: unknown): ReturnType<ShopService["saveBackup"]> { return this.#file(host => transfer.saveBackup(host, input)); }
@@ -829,10 +860,10 @@ export class DesktopApplication implements ShopService {
   }
   #invalidate(advance = true): void {
     if (advance) this.#epoch++;
-    lockWorkspace(this.ports.database); this.#context = undefined; this.#sessionId = undefined; this.#joins.clear();
+    lockWorkspace(this.ports.database); this.#context = undefined; this.#sessionId = undefined; this.#joins.clear(); this.#pendingKey = undefined;
     if(this.#local!==undefined)void this.#track(this.#local.close()).catch(()=>undefined);
     // A checked file is tied to the session that checked it; locking forgets it.
-    if (this.#staged !== undefined && this.#staged.kind !== "invite" && this.#staged.kind !== "backup") { this.#staged = undefined; }
+    if (this.#staged !== undefined && this.#staged.kind !== "invite" && this.#staged.kind !== "backup") { void transfer.release(this.#staged).catch(() => undefined); this.#staged = undefined; }
   }
   /** Reopens a remembered member at start; a stale or unreadable record is forgotten and grants nothing. */
   async #resume(): Promise<void> {

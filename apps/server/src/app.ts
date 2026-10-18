@@ -3,8 +3,7 @@ import rateLimit from "@fastify/rate-limit";
 import { sql, type Kysely } from "kysely";
 import { EXCHANGE_VERSION } from "@kolo/contracts";
 import { MAX_JOURNAL_BATCH_BYTES, signedPeerReceiptSchema } from "@kolo/contracts/delivery";
-import { challengeRequestSchema, enrollmentRequestSchema, joinEnrollmentSchema, joinOfferSchema, joinRequestSchema, sessionRequestSchema, signedSyncBatchSchema, PULL_DEFAULT_LIMIT, SYNC_API_VERSION } from "@kolo/contracts/sync";
-import { MAX_ENCRYPTED_FILE_BYTES } from "@kolo/contracts/transfer";
+import { challengeRequestSchema, enrollmentRequestSchema, joinEnrollmentSchema, MAX_JOIN_ENROLLMENT_CHARS, joinOfferSchema, joinRequestSchema, sessionRequestSchema, signedSyncBatchSchema, PULL_DEFAULT_LIMIT, SYNC_API_VERSION } from "@kolo/contracts/sync";
 import { cancelJoin, createJoin, enrollJoin, joinEnrollmentOf, joinRequestOf, readJoin, requestJoin } from "./sync/join.js";
 import type { ServerConfig } from "./config.js";
 import { openDatabase, schemaCurrent, type ServerDatabase } from "./database.js";
@@ -141,7 +140,7 @@ export async function createApplication(config: ServerConfig, options: Applicati
   application.get("/api/v2/join/:id", { config: strict }, async request => readJoin(await ready(), joinId(request)));
   application.post("/api/v2/join/:id/request", { config: strict }, async (request, reply) => { await requestJoin(await ready(), joinId(request), parse(joinRequestSchema, request.body)); return reply.code(204).send(); });
   application.get("/api/v2/join/:id/request", { config: polling }, async (request, reply) => { const { relay: active, scope: current } = await scope(request); const value = await joinRequestOf(active, current, joinId(request)); return value === null ? reply.code(204).send() : value; });
-  application.post("/api/v2/join/:id/enrollment", { bodyLimit: MAX_ENCRYPTED_FILE_BYTES + 64 * 1024 }, async (request, reply) => { const { relay: active, scope: current } = await transfer(request); await enrollJoin(active, current, joinId(request), parse(joinEnrollmentSchema, request.body)); return reply.code(204).send(); });
+  application.post("/api/v2/join/:id/enrollment", { bodyLimit: MAX_JOIN_ENROLLMENT_CHARS + 64 * 1024 }, async (request, reply) => { const { relay: active, scope: current } = await transfer(request); await enrollJoin(active, current, joinId(request), parse(joinEnrollmentSchema, request.body)); return reply.code(204).send(); });
   application.get("/api/v2/join/:id/enrollment", { config: polling }, async (request, reply) => { const value = await joinEnrollmentOf(await ready(), joinId(request)); return value === null ? reply.code(204).send() : value; });
   application.delete("/api/v2/join/:id", async (request, reply) => { const { relay: active, scope: current } = await scope(request); await cancelJoin(active, current, joinId(request)); return reply.code(204).send(); });
 

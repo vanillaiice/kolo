@@ -23,6 +23,20 @@ export function readSecretFile(path: string): string {
   } finally { buffer.fill(0); closeSync(handle); }
 }
 
+/**
+ * What opens a backup: the backup recovery key from `--recovery-key-file` or `KOLO_BACKUP_RECOVERY_KEY` (ADR-036) when
+ * given, otherwise the password as {@link backupPassword} reads it.
+ */
+export function backupSecret(passwordFile: string | undefined, recoveryKeyFile: string | undefined, env: NodeJS.ProcessEnv): string | { readonly recoveryKey: string } {
+  const key = recoveryKeyFile !== undefined ? readSecretFile(recoveryKeyFile) : env["KOLO_BACKUP_RECOVERY_KEY"];
+  if (key !== undefined) {
+    if (passwordFile !== undefined) throw new Error("Use either --password-file or --recovery-key-file");
+    if (key.trim().length === 0) throw new Error("Backup recovery key is empty");
+    return { recoveryKey: key };
+  }
+  return backupPassword(passwordFile, env);
+}
+
 export function backupPassword(file: string | undefined, env: NodeJS.ProcessEnv): string {
   const value = file !== undefined ? readSecretFile(file) : env["KOLO_BACKUP_PASSWORD"];
   if (value === undefined) return DEVELOPMENT_BACKUP_PASSWORD;

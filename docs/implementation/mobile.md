@@ -45,7 +45,7 @@ or session change is refused (`locked`), and the actor must still be active. Uns
 
 - **Entry:** Create a shop (shop details, then owner access; default till/cash names with an
   optional customization; the recovery key needs an explicit acknowledgement) or Import a file,
-  recognized from its structure (`data/transfer/file-kind.ts`) as a backup or pairing invite.
+  recognized from its structure (`@kolo/core/backup/file-kind`) as a backup or pairing invite.
   A shop on the phone offers unlock, owner recovery and backup import. Replacing a shop names it
   and needs typed confirmation; the restore goes into an empty stage bound to the current slot
   (`SlotControl.alias`), so the active pointer moves only on success. Pending setup, pending

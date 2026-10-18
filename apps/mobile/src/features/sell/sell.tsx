@@ -11,13 +11,14 @@ import { moneyEntry, quantityEntry, quantityInput } from "@kolo/core/domain/entr
 import { formatMoney, formatQuantity } from "@kolo/core/domain/money";
 import { addPayment, addProduct, emptyCart, removeLine, removePayment, setCustomer, setDiscount, setQuantity, toCart, view, type CartState } from "@kolo/core/domain/pos/cart";
 import { lineTotal } from "@kolo/core/rules/pricing";
+import { keepableChange } from "@kolo/core/rules/customer-settlement";
 import { newIdOnDevice } from "../../data/auth/local-credentials-on-device.ts";
 import { useText, type TextKey } from "../../app/i18n.tsx";
 import { useNav } from "../../app/navigation.tsx";
 import { useDraft, usePermissions, useRevision, useSession } from "../../app/session.tsx";
 import { FormProblem, useAction } from "../../components/command.tsx";
 import { spacing, useTheme, WIDE_LAYOUT } from "../../components/theme.ts";
-import { Button, Divider, EmptyState, Field, ListRow, Notice, Picker, RowGroup, Screen, Section, Segmented, useDebounced, usePages, useStyles } from "../../components/ui.tsx";
+import { Button, Divider, EmptyState, Field, ListRow, Notice, Picker, RowGroup, Screen, Section, Segmented, Toggle, useDebounced, usePages, useStyles } from "../../components/ui.tsx";
 import { Thumbnail } from "../products/photos.tsx";
 
 /** How a sale is settled: cash (one account, full amount), split across accounts, or partly on a customer's credit. */
@@ -27,6 +28,10 @@ export interface SellDraft {
   readonly cart: CartState;
   /** Stable identities of this checkout attempt; a repeated tap or retry resolves to the same sale. */
   readonly saleId: string; readonly eventId: string; readonly creditId: string;
+  /** Identities of the customer payment that keeps the change on account, drawn with the sale's. */
+  readonly changeId: string; readonly changeEventId: string;
+  /** The named customer leaves the change on their account as an advance. */
+  readonly keepChange?: boolean | undefined;
   readonly customer?: { readonly id: string; readonly name: string } | undefined;
   /** Display names of payment accounts used in this cart, never balances. */
   readonly accountNames: Readonly<Record<string, string>>;
@@ -36,7 +41,7 @@ export interface SellDraft {
   readonly cashAccount?: { readonly id: string; readonly name: string } | undefined;
 }
 function freshDraft(): SellDraft {
-  return { cart: emptyCart, saleId: newIdOnDevice(), eventId: newIdOnDevice(), creditId: newIdOnDevice(), accountNames: {}, divisible: {}, settlement: "cash" };
+  return { cart: emptyCart, saleId: newIdOnDevice(), eventId: newIdOnDevice(), creditId: newIdOnDevice(), changeId: newIdOnDevice(), changeEventId: newIdOnDevice(), accountNames: {}, divisible: {}, settlement: "cash" };
 }
 /** The session's till draft. */
 export function useSellDraft(): [SellDraft, (update: SellDraft | ((current: SellDraft) => SellDraft)) => void, () => void] {
@@ -200,6 +205,10 @@ export function PaymentScreen(): React.JSX.Element {
   let receivedMinor: number | undefined;
   try { receivedMinor = received.trim() === "" ? undefined : moneyEntry(received); } catch { receivedMinor = undefined; }
   const owing = draft.settlement === "cash" ? 0 : totals.outstandingMinor;
+  // A named customer paying cash in full may leave the change on account as an advance (customers.pay).
+  const keepable = draft.settlement === "cash" && draft.cashAccount !== undefined && permissions.includes("customers.pay")
+    ? keepableChange({ hasCustomer: draft.customer !== undefined, cashDueMinor: totals.totalMinor, tenderedMinor: receivedMinor, outstandingMinor: 0 }) : 0;
+  const keptMinor = draft.keepChange === true ? keepable : 0;
   const ready = draft.cart.lines.length > 0 && (draft.settlement === "cash" ? draft.cashAccount !== undefined || totals.totalMinor === 0
     : draft.settlement === "split" ? totals.outstandingMinor === 0 && totals.problems.length === 0 : draft.customer !== undefined && totals.problems.filter(item => item !== "CREDIT_NEEDS_CUSTOMER").length === 0);
   const addAllocation = (): void => action.run(() => {
@@ -216,7 +225,8 @@ export function PaymentScreen(): React.JSX.Element {
         : draft.cart;
       const now = new Date().toISOString();
       completeSale(context, toCart(cart, { saleId: draft.saleId, businessId: context.businessId, branchId, number: `V-${now.slice(0, 10).replace(/-/g, "")}-${draft.saleId.replace(/-/g, "").slice(-12)}`,
-        userId: context.userId, deviceId: context.deviceId, occurredAt: now, recordedAt: now, eventId: draft.eventId, creditTransactionId: draft.creditId }));
+        userId: context.userId, deviceId: context.deviceId, occurredAt: now, recordedAt: now, eventId: draft.eventId, creditTransactionId: draft.creditId }),
+      keptMinor > 0 ? { id: draft.changeId, eventId: draft.changeEventId, accountId: draft.cashAccount!.id, amountMinor: keptMinor } : undefined);
     }
     return draft.saleId;
   }, saleId => { clearDraft(); nav.popTo("sell"); nav.push("receipt", { saleId, fresh: true }); });
@@ -234,7 +244,9 @@ export function PaymentScreen(): React.JSX.Element {
       <Picker<Account> label={t("account")} value={draft.cashAccount === undefined ? undefined : { id: draft.cashAccount.id, name: draft.cashAccount.name } as Account}
         onChange={value => setDraft(current => ({ ...current, cashAccount: value === undefined ? undefined : { id: value.id, name: value.name } }))} load={page => paymentAccounts(context, page)} revision={revision} />
       <Field label={t("received")} value={received} onChange={setReceived} kind="money" hint={t("receivedHint")} />
-      {receivedMinor !== undefined && receivedMinor >= visibleTotals.totalMinor && <Text style={[s.amount, { color: colors.primary }]}>{t("changeDue", { amount: formatMoney(receivedMinor - visibleTotals.totalMinor) })}</Text>}
+      {keepable > 0 && <Toggle label={t("keepChangeAsCredit", { name: draft.customer!.name })} value={draft.keepChange === true} onChange={value => setDraft(current => ({ ...current, keepChange: value }))} />}
+      {keptMinor > 0 ? <Text style={[s.amount, { color: colors.primary }]}>{t("changeKept", { amount: formatMoney(keptMinor) })}</Text>
+        : receivedMinor !== undefined && receivedMinor >= visibleTotals.totalMinor && <Text style={[s.amount, { color: colors.primary }]}>{t("changeDue", { amount: formatMoney(receivedMinor - visibleTotals.totalMinor) })}</Text>}
       {receivedMinor !== undefined && receivedMinor < visibleTotals.totalMinor && <Notice tone="warning" text={t("receivedShort", { amount: formatMoney(visibleTotals.totalMinor - receivedMinor) })} />}
     </Section>}
     {draft.settlement !== "cash" && <Section title={t("payments")}>

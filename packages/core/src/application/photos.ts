@@ -4,10 +4,6 @@ import { appendLocalAudit, authorizedOperation } from "../identity/internal-auth
 import { WorkspaceError, type OperationContext } from "../identity/types.ts";
 import type { TransferCrypto } from "../backup/types.ts";
 
-function shopLimit(options: { readonly large?: boolean }): number {
-  return options.large === true ? photos.PHOTO_LIMITS.largeShopBytes : photos.PHOTO_LIMITS.shopBytes;
-}
-
 function requireProduct(tx: Queryable, context: OperationContext, productId: string): void {
   if (tx.get(`SELECT id FROM products WHERE business_id = ? AND id = ?`, [context.businessId, productId]) === undefined) throw new WorkspaceError("scope_mismatch");
 }
@@ -15,17 +11,16 @@ function requireProduct(tx: Queryable, context: OperationContext, productId: str
 /**
  * Stores or replaces a product's photo under products.edit. The bytes are checked
  * (WebP or JPEG, size and dimension limits) and hashed before the write; the shop's
- * total is checked inside it against `options.large` (the large-files setting) or the standard
- * limit. Photos are device-local until photo transfer exists:
+ * total is checked inside it against {@link photos.PHOTO_LIMITS.shopBytes}. Photos are device-local until photo transfer exists:
  * no exchange event is journaled, only a local audit entry with the digest.
  */
 export async function setProductPhoto(context: OperationContext, input: { readonly productId: string; readonly bytes: Uint8Array },
-  crypto: Pick<TransferCrypto, "sha256Bytes">, options: { readonly large?: boolean } = {}): Promise<{ digest: string }> {
+  crypto: Pick<TransferCrypto, "sha256Bytes">): Promise<{ digest: string }> {
   photos.inspectPhoto(input.bytes);
   const digest = await crypto.sha256Bytes(input.bytes);
   return authorizedOperation(context, ["products.edit"], (_database, tx, ports, revision) => {
     requireProduct(tx, context, input.productId);
-    photos.writeProductPhoto(tx, { businessId: context.businessId, productId: input.productId, digest, bytes: input.bytes, at: ports.now(), deviceId: context.deviceId }, shopLimit(options));
+    photos.writeProductPhoto(tx, { businessId: context.businessId, productId: input.productId, digest, bytes: input.bytes, at: ports.now(), deviceId: context.deviceId });
     appendLocalAudit(tx, context, ports, revision, "PRODUCT_PHOTO_SET", input.productId, { digest });
     return { digest };
   });
@@ -66,7 +61,7 @@ export function productPhotoDigests(context: OperationContext, productIds: reado
   });
 }
 
-/** How many photos the shop holds against its storage limit (standard or large), under products.view. */
-export function photoUsage(context: OperationContext, options: { readonly large?: boolean } = {}): ReturnType<typeof photos.photoUsage> {
-  return authorizedOperation(context, ["products.view"], (_database, tx) => photos.photoUsage(tx, context.businessId, shopLimit(options)));
+/** How many photos the shop holds against its storage limit, under products.view. */
+export function photoUsage(context: OperationContext): ReturnType<typeof photos.photoUsage> {
+  return authorizedOperation(context, ["products.view"], (_database, tx) => photos.photoUsage(tx, context.businessId));
 }

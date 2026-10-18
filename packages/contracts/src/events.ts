@@ -93,6 +93,11 @@ export const EVENT_PAYLOAD_SCHEMAS = {
   /** The owner's choice of sync server, so the shop's other tills can connect without typing. Higher revision wins. */
   SERVER_ENDPOINT_SET: z.strictObject({ server_device_id: uuid, url: z.string().min(8).max(2048), fingerprint: z.string().regex(/^[a-f0-9]{32}$/), revision: positive }),
   SERVER_ENDPOINT_CLEARED: z.strictObject({ server_device_id: uuid, revision: positive }),
+  /**
+   * The owner pins a shop backup recovery key (ADR-036): backups seal to the highest `version`, ties broken by the greater
+   * `key_id`. The ID is derived from the raw X25519 public key; the secret never travels.
+   */
+  SHOP_BACKUP_KEY: z.strictObject({ key_id: z.string().regex(/^[a-f0-9]{32}$/), version: positive, public_key: z.string().regex(/^[a-f0-9]{64}$/), created_at: timestamp }),
 } as const;
 
 /** Current supported event names; unknown signed names/versions can be retained unapplied. */

@@ -10,8 +10,6 @@ import { DesktopApplication } from "./application.ts";
 import { desktopHandlers } from "./handlers.ts";
 import { localCredentialsOnDesktop, desktopExchangeCrypto, desktopSecretStore, type NativeSafeStorage } from "./local-credentials.ts";
 import { desktopSessionMemory } from "./session-memory.ts";
-import { devicePreferences } from "./preferences.ts";
-import { LARGE_TRANSFER_LIMITS, STANDARD_TRANSFER_LIMITS } from "@kolo/core/backup/types";
 import { balanceOfAccount } from "@kolo/core/data/finance/cash";
 import { createLocalMember } from "@kolo/core/identity/members";
 import { grantPermission, unlockWorkspace } from "@kolo/core/identity/workspace";
@@ -354,6 +352,31 @@ it("split and credit checkout records payments per account, leaves the balance o
     assert.equal(f.database.get("SELECT count(*) AS n FROM sales")!["n"],2);
   }finally{await f.dispose();}
 });
+it("a named customer's change is kept on account with the sale, into its cash drawer, and is part of retry identity",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),momo=await wallet(f,workspace),sessionId=value(await f.application.unlock({userId:workspace.members[0]!.id,secret:"654321"})).sessionId!;
+    const item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:10000}))),cash=value(await f.application.listCashAccounts({sessionId})).items[0]!.id;
+    const customer=value(await f.application.createCustomer({sessionId,requestId:randomUUID(),name:"Awa"})),businessId=String(f.database.get("SELECT id FROM businesses")!["id"]);
+    // Awa hands over 1,000 for a 500 sale and leaves the 500 change on her account.
+    const request={sessionId,requestId:randomUUID(),customerId:customer.id,lines:[{productId:item.id,quantity:1000,unitPriceMinor:500}],payments:[{accountId:cash,amountMinor:500}],keptChangeMinor:500};
+    const sale=value(await f.application.checkout(request));
+    const receipt=value(await f.application.getReceipt({sessionId,saleId:sale.saleId}));
+    assert.deepEqual([receipt.totalMinor,receipt.paidMinor,receipt.outstandingMinor,receipt.changeKeptMinor],[500,500,0,500]);
+    assert.equal(value(await f.application.getCustomer({sessionId,customerId:customer.id})).outstandingMinor,-500,"the change is an advance");
+    assert.equal(balanceOfAccount(f.database,businessId,cash).onHandMinor,1000,"the drawer holds everything handed over");
+    assert.deepEqual(value(await f.application.customerStatement({sessionId,customerId:customer.id})).items.map(entry=>[entry.type,entry.amountMinor]),[["PAYMENT",-500]]);
+    assert.equal(value(await f.application.checkout(request)).saleId,sale.saleId,"a matching retry keeps the change once");
+    for(const changed of [{keptChangeMinor:400},{keptChangeMinor:undefined}])failure(await f.application.checkout({...request,...changed}),"request_conflict");
+    assert.equal(value(await f.application.getCustomer({sessionId,customerId:customer.id})).outstandingMinor,-500);
+    // The advance pays for the next sale.
+    const next=value(await f.application.checkout({sessionId,requestId:randomUUID(),customerId:customer.id,expectedCustomerBalanceMinor:-500,lines:[{productId:item.id,quantity:1000,unitPriceMinor:500}],payments:[]}));
+    assert.equal(value(await f.application.getReceipt({sessionId,saleId:next.saleId})).customerAccount?.creditAppliedMinor,500);
+    // Not change: no customer, no cash, a sale left on credit, or not a whole positive amount. Nothing is written.
+    for(const bad of [{customerId:undefined},{payments:[{accountId:momo,amountMinor:500}]},{payments:[{accountId:cash,amountMinor:300}]},{keptChangeMinor:0},{keptChangeMinor:1.5},{keptChangeMinor:-1},{keptChangeMinor:"500"}])
+      failure(await f.application.checkout({...request,requestId:randomUUID(),...bad}),"invalid_input");
+    assert.equal(f.database.get("SELECT count(*) AS n FROM sales")!["n"],2);assert.equal(value(await f.application.getCustomer({sessionId,customerId:customer.id})).outstandingMinor,0);
+  }finally{await f.dispose();}
+});
 it("credit needs permission and respects the limit unless overridden; nothing is written when refused",async()=>{
   const f=fixture();try{
     const workspace=await owner(f),sessionId=workspace.sessionId!,item=value(await f.application.createProduct(product(sessionId,{divisible:false,openingThousandths:10000})));
@@ -611,34 +634,16 @@ it("product photos are stored, listed by digest, served as data URLs and checked
     for(const bad of [webp(600,600),new Uint8Array(70_000),"not bytes",[1,2,3],new Uint8Array([0x89,0x50,0x4e,0x47])])failure(await f.application.setProductPhoto({sessionId,productId:item.id,bytes:bad as Uint8Array}),"invalid_photo");
     failure(await f.application.setProductPhoto({sessionId,productId:randomUUIDv7(),bytes}),"scope_mismatch");
     failure(await f.application.setProductPhoto({sessionId,productId:item.id,bytes,extra:1} as never),"invalid_input");
-    assert.deepEqual(value(await f.application.photoUsage({sessionId})),{photos:1,bytes:200,limitBytes:16*1024*1024});
+    assert.deepEqual(value(await f.application.photoUsage({sessionId})),{photos:1,bytes:200,limitBytes:256*1024*1024});
     const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
     const cashierId=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"876543"});
     const cashier=value(await f.application.unlock({userId:cashierId,secret:"876543"})).sessionId!;
     assert.equal(value(await f.application.productPhoto({sessionId:cashier,productId:item.id}))?.digest,saved.photo);
     failure(await f.application.setProductPhoto({sessionId:cashier,productId:item.id,bytes}),"permission_denied");
     failure(await f.application.removeProductPhoto({sessionId:cashier,productId:item.id}),"permission_denied");
-    failure(await f.application.setLargeFiles({sessionId:cashier,enabled:true}),"permission_denied");
     const again=value(await f.application.unlock({userId:workspace.members[0]!.id,secret:"654321"})).sessionId!;
     assert.equal(value(await f.application.removeProductPhoto({sessionId:again,productId:item.id})).photo,undefined);
   }finally{await f.dispose();}
-});
-it("the large-files switch is owner-only, persists per computer and raises the photo storage limit",async()=>{
-  const f=fixture(),path=join(f.directory,"preferences.json"),preferences=devicePreferences(path);
-  await f.application.dispose();
-  const application=new DesktopApplication(f.ports,desktopExchangeCrypto,undefined,undefined,preferences);
-  try{
-    await application.initialize();
-    const setup=value(await application.createShop({businessName:"Shop",ownerName:"Owner",deviceLabel:"PC",cashAccountName:"Cash",secret:"654321"}));
-    const sessionId=value(await application.unlock({userId:setup.members[0]!.id,secret:"654321"})).sessionId!;
-    assert.equal(value(await application.sessionPreferences({sessionId})).largeFiles,false);assert.equal(preferences.limits(),STANDARD_TRANSFER_LIMITS);
-    assert.equal(value(await application.setLargeFiles({sessionId,enabled:true})).largeFiles,true);
-    assert.equal(preferences.limits(),LARGE_TRANSFER_LIMITS);assert.equal(value(await application.photoUsage({sessionId})).limitBytes,256*1024*1024);
-    assert.equal(devicePreferences(path).largeFiles(),true,"persisted for the next start");
-    failure(await application.setLargeFiles({sessionId,enabled:"yes"}),"invalid_input");
-    value(await application.setLargeFiles({sessionId,enabled:false}));assert.equal(devicePreferences(path).largeFiles(),false);
-    writeFileSync(path,"{damaged");assert.equal(devicePreferences(path).largeFiles(),false,"a damaged file reads as the default");
-  }finally{await application.dispose();f.database.close();rmSync(f.directory,{recursive:true,force:true});}
 });
 it("analytics reads one period with permission-scoped sections and refuses malformed requests",async()=>{
   const f=fixture();try{
@@ -751,7 +756,7 @@ it("a remembered user reopens after restart and stepping away, until Lock, recov
     let app=await r.start();
     const setup=value(await app.createShop({businessName:"Shop",ownerName:"Owner",deviceLabel:"PC",cashAccountName:"Cash",secret:"654321"}));
     const ownerId=setup.members[0]!.id,first=value(await app.unlock({userId:ownerId,secret:"654321"}));
-    assert.deepEqual(value(await app.sessionPreferences({sessionId:first.sessionId!})),{rememberSession:true,largeFiles:false});
+    assert.deepEqual(value(await app.sessionPreferences({sessionId:first.sessionId!})),{rememberSession:true});
     app=await r.start();let view=value(await app.getWorkspace());
     assert.equal(view.state,"unlocked");assert.equal(view.actor?.isOwner,true);assert.notEqual(view.sessionId,first.sessionId);
     failure(await app.listProducts({sessionId:first.sessionId!}),"locked");
@@ -762,7 +767,7 @@ it("a remembered user reopens after restart and stepping away, until Lock, recov
     assert.equal(await r.memory.read(),undefined);
     // Turned off: stepping away locks again and unlocking is not remembered.
     view=value(await app.unlock({userId:ownerId,secret:"654321"}));
-    assert.deepEqual(value(await app.setRememberSession({sessionId:view.sessionId!,enabled:false})),{rememberSession:false,largeFiles:false});
+    assert.deepEqual(value(await app.setRememberSession({sessionId:view.sessionId!,enabled:false})),{rememberSession:false});
     assert.equal(await r.memory.read(),undefined);
     await app.autoLock("away");assert.equal(value(await app.getWorkspace()).state,"locked");
     view=value(await app.unlock({userId:ownerId,secret:"654321"}));
@@ -805,10 +810,10 @@ it("the stay-signed-in command needs the current session, a boolean and host sto
     failure(await app.setRememberSession({sessionId,enabled:"no"}),"invalid_input");
     failure(await app.setRememberSession({sessionId,enabled:false,extra:1}),"invalid_input");
     failure(await app.sessionPreferences({sessionId:randomUUIDv7()}),"locked");
-    assert.deepEqual(value(await app.sessionPreferences({sessionId})),{rememberSession:true,largeFiles:false});
+    assert.deepEqual(value(await app.sessionPreferences({sessionId})),{rememberSession:true});
     const other=(await owner(f)).sessionId!;
     failure(await f.application.setRememberSession({sessionId:other,enabled:true}),"unavailable");
-    assert.deepEqual(value(await f.application.sessionPreferences({sessionId:other})),{rememberSession:false,largeFiles:false});
+    assert.deepEqual(value(await f.application.sessionPreferences({sessionId:other})),{rememberSession:false});
   }finally{await r.dispose();await f.dispose();}
 });
 it("session memory keeps the remembered user encrypted, defaults on and treats damaged records as absent",async()=>{

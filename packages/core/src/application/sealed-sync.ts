@@ -76,20 +76,31 @@ async function wrapKey(crypto: SealingCrypto, recipientPublicKey: string, keyHex
 
 /** Every shop key granted to this device that it can open. A grant it cannot open is skipped, never fatal. */
 export async function shopKeys(context: OperationContext, crypto: SealingCrypto): Promise<readonly ShopKey[]> {
+  return (await shopKeyCoverage(context, crypto)).keys;
+}
+
+/**
+ * The shop keys this device opens, and how many keys granted to it it could not open with `crypto` (none on a platform
+ * without sealing). A device's encryption key never changes, so a missing key is a vault or storage failure; a backup
+ * must not carry fewer keys than were granted (ADR-036). A shop that never used encrypted sync has no grants.
+ */
+export async function shopKeyCoverage(context: OperationContext, crypto: SealingCrypto | undefined): Promise<{ readonly keys: readonly ShopKey[]; readonly missing: number }> {
   const { ports, reference } = installation(context);
   const { rows, own } = authorizedOperation(context, ["business.settings"], (_database, tx) => ({
     rows: tx.all(`SELECT key_id,epoch,sealed FROM shop_key_grants WHERE business_id=? AND device_id=? ORDER BY epoch,key_id`, [context.businessId, context.deviceId]),
     own: tx.get(`SELECT public_key FROM device_encryption_keys WHERE business_id=? AND device_id=?`, [context.businessId, context.deviceId])?.["public_key"] }));
-  if (rows.length === 0 || typeof own !== "string" || ports.credentials.agree === undefined) return [];
+  const granted = new Set(rows.map(row => String(row["key_id"]))).size;
+  if (rows.length === 0 || crypto === undefined || typeof own !== "string" || ports.credentials.agree === undefined) return { keys: [], missing: granted };
   const keys: ShopKey[] = [];
   for (const row of rows) {
     const keyId = String(row["key_id"]), epoch = Number(row["epoch"]);
+    if (keys.some(key => key.keyId === keyId)) continue;
     try {
       const key = await openSealedWithVault(ports, reference, own, JSON.parse(String(row["sealed"])) as SealedKey, sealedKeyAad(context.businessId, keyId, epoch, context.deviceId), crypto);
       keys.push(Object.freeze({ keyId, epoch, key }));
     } catch { /* A grant sealed to an older key of this device, or damaged; other keys still work. */ }
   }
-  return keys;
+  return { keys, missing: granted - keys.length };
 }
 
 /** The key new facts are sealed with: highest epoch, then highest key ID so two owner devices agree. */

@@ -22,7 +22,7 @@ test("French and English messages have matching interpolation fields and all per
 });
 
 test("interpolated device names, keys and counts are literal and survive changing language", () => {
-  const filename = "Boutique {count} $& $` $' .kolo-backup.json";
+  const filename = "Boutique {count} $& $` $' .kolo-backup";
   assert.equal(translate("en", "readyFilename", { filename }), `File ready: ${filename}`);
   assert.equal(translate("fr", "readyFilename", { filename }), `Fichier prêt : ${filename}`);
   assert.equal(translate("en", "eventsApplied", { count: 0 }), "0 events applied.");

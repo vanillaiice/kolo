@@ -1,6 +1,8 @@
 # ADR-022: Encrypted files and owner-approved snapshots
 
 Date: 2026-10-06. Status: implemented F3 core/mobile; Android/Windows native acceptance pending.
+The JSON file envelope, size limits and file names below are superseded by
+[ADR-035](ADR-035-binary-encrypted-container.md); those files are no longer read.
 Extends [ADR-019](ADR-019-event-exchange-and-destination-delivery.md) and
 [ADR-021](ADR-021-signed-journal-and-late-event-policy.md).
 

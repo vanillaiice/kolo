@@ -101,8 +101,10 @@ export async function createAdminApplication(options: AdminOptions): Promise<Fas
   app.post("/admin/api/codes", async request => {
     const { actor } = await signedIn(request, "admin");
     if (options.publicUrl === undefined) throw new AdminError(409, "public_url_missing");
-    const input = body(request), issued = await issueCode(db, options.key, options.publicUrl, actor, { label: String(input["label"] ?? ""), days: Number(input["days"] ?? 7), now: now(),
-      includedMonths: edition.edition === "hosted" ? Number(input["includedMonths"] ?? 0) : 0 });
+    const input = body(request), recovery = input["recoveryShopId"];
+    if (recovery !== undefined && typeof recovery !== "string") throw new AdminError(400, "invalid_request");
+    const issued = await issueCode(db, options.key, options.publicUrl, actor, { label: String(input["label"] ?? ""), days: Number(input["days"] ?? 7), now: now(),
+      includedMonths: edition.edition === "hosted" && recovery === undefined ? Number(input["includedMonths"] ?? 0) : 0, ...(recovery === undefined ? {} : { recoveryShopId: recovery }) });
     return { ...issued, qr: await QRCode.toString(issued.code, { type: "svg", errorCorrectionLevel: "M", margin: 1 }) };
   });
   app.post("/admin/api/codes/:id/cancel", async (request, reply) => { const { actor } = await signedIn(request, "admin"); await cancelCode(db, actor, idParam(request), now()); return reply.code(204).send(); });

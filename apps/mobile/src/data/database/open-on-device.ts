@@ -1,9 +1,9 @@
 import { defaultDatabaseDirectory, openDatabaseSync } from "expo-sqlite";
-import { Directory, File } from "expo-file-system";
+import { Directory, File, FileMode } from "expo-file-system";
 import type { Database } from "@kolo/core/data/database/driver";
 import { openNativeDatabase } from "@kolo/core/data/database/expo-sqlite";
 import { migrate, type MigrationResult } from "@kolo/core/data/database/migrations";
-import { MAX_SNAPSHOT_BYTES, TransferError, type SnapshotHandle, type SnapshotPort } from "@kolo/core/backup/types";
+import { MAX_SNAPSHOT_BYTES, TransferError, type ImageReader, type ImageWriter, type SnapshotHandle, type SnapshotPort } from "@kolo/core/backup/types";
 import { newIdOnDevice } from "../auth/local-credentials-on-device.ts";
 import { sqlitePreferences, type PreferenceStorage } from "./preferences.ts";
 import { localSecretKeys } from "@kolo/core/identity/device-reset";
@@ -61,6 +61,17 @@ export function openOnDevice():{readonly database:Database;readonly migration:Mi
   let closed=false,activated=false;
   return {database:db,
    async bytes(){if(closed)throw new TransferError("invalid_snapshot");const copy=allocate();try{db.run("VACUUM INTO ?",[path(copy)]);const owned=file(copy);if(owned.size>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");return owned.bytesSync();}finally{remove(copy);}},
+   /** The compacted image as a private file read through one handle, a chunk at a time (ADR-035). */
+   async image():Promise<ImageReader>{
+    if(closed)throw new TransferError("invalid_snapshot");const copy=allocate();
+    try{
+     db.run("VACUUM INTO ?",[path(copy)]);const owned=file(copy),size=owned.size;if(size>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");
+     const reader=owned.open(FileMode.ReadOnly);let done=false;
+     return {size,
+      async read(offset,length){if(done)throw new TransferError("invalid_snapshot");reader.offset=offset;return reader.readBytes(Math.max(0,Math.min(length,size-offset)));},
+      async close(){if(done)return;done=true;try{reader.close();}finally{remove(copy);}}};
+    }catch(error){remove(copy);throw error;}
+   },
    async discard(){if(activated)return;if(!closed){db.close();closed=true;}remove(name);},
    async activate(target){
     const binding=bindings.get(target);if(binding===undefined||closed)throw new TransferError("activation_failed");
@@ -77,6 +88,15 @@ export function openOnDevice():{readonly database:Database;readonly migration:Mi
   async capture(source){const name=allocate();try{source.run("VACUUM INTO ?",[path(name)]);if(file(name).size>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");return handle(name,open(name));}catch(error){remove(name);throw error;}},
   async open(bytes){if(bytes.length<100||bytes.length>MAX_SNAPSHOT_BYTES)throw new TransferError("invalid_snapshot");const name=allocate(),owned=file(name);owned.create();owned.write(bytes);try{return handle(name,open(name));}catch{remove(name);throw new TransferError("invalid_snapshot");}},
   async empty(){const name=allocate();return handle(name,open(name));},
+  /** A restored image written straight into a private staging file, a chunk at a time; it opens only once complete. */
+  async receive():Promise<ImageWriter>{
+   const name=allocate(),owned=file(name);owned.create();const writer=owned.open(FileMode.ReadWrite);let size=0,done=false;
+   return {
+    async write(bytes){if(done)throw new TransferError("invalid_snapshot");size+=bytes.byteLength;if(size>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");writer.writeBytes(bytes);},
+    async open(){if(done)throw new TransferError("invalid_snapshot");done=true;writer.close();if(size<100){remove(name);throw new TransferError("invalid_snapshot");}try{return handle(name,open(name));}catch{remove(name);throw new TransferError("invalid_snapshot");}},
+    async discard(){if(!done){done=true;try{writer.close();}catch{/* Already closed. */}}remove(name);},
+   };
+  },
  };
  const slots:SlotControl={alias(stage,current){const binding=bindings.get(current);if(binding===undefined)throw new TransferError("activation_failed");bindings.set(stage,binding);}};
  return {database,migration,files,slots,close:()=>control.close()};

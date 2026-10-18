@@ -1,6 +1,7 @@
 # ADR-026: Compressed transfer files and larger snapshots
 
-**Status:** Accepted, 2026-10-09
+**Status:** Accepted, 2026-10-09. Superseded for the file format by
+[ADR-035](ADR-035-binary-encrypted-container.md): version 2 JSON files are no longer read or written.
 **Supersedes:** the size limits and "no compression" rule in
 [ADR-022](ADR-022-encrypted-files-and-approved-snapshots.md). Its encryption, KDF,
 authentication, validation and approval rules remain.

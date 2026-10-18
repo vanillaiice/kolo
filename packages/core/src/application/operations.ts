@@ -16,6 +16,7 @@ import { moveCash as writeCash, reconcile, type CashMovement, type Reconciliatio
 import { recordExpense as writeExpense, type Expense } from "../data/expenses/expenses.ts";
 import { effectiveTaxRate, taxSettings, writeProductTaxRule, writeTaxSettings, type ProductTaxRule, type TaxSettings } from "../data/products/tax.ts";
 import { writePaymentTerms, type TermsParty } from "../data/finance/terms.ts";
+import { currentUnitCost } from "../data/reports/reports.ts";
 import { appendLocalAudit, authorizedOperation, nextId } from "../identity/internal-authority.ts";
 import { WorkspaceError, type OperationContext, type WorkspacePorts } from "../identity/types.ts";
 import type { Permission } from "../identity/permissions.ts";
@@ -24,16 +25,39 @@ import type { Permission } from "../identity/permissions.ts";
 export type CommandInput<T> = Omit<T, "businessId" | "userId" | "deviceId" | "recordedAt">;
 
 /**
+ * Change a named customer leaves on their account instead of taking it back: cash handed over beyond the sale's
+ * total, kept by the shop as the customer's advance. It is recorded as an ordinary customer payment into one of the
+ * sale's cash accounts, so every till, old or new, applies it the same way.
+ */
+export interface KeptChange {
+  /** The customer payment's ledger entry ID, drawn by the till; a retry reuses it. */
+  readonly id: string;
+  readonly eventId: string;
+  /** A cash account the sale was paid into: the drawer holding the change. */
+  readonly accountId: string;
+  /** The change kept, positive. */
+  readonly amountMinor: number;
+}
+
+/**
  * Records a sale under local authority: sales.create, conditional discount/price
  * override/credit permissions and credit-limit enforcement. All related records
  * must belong to the installation's shop. Effects, v1 outbox and audit commit
  * together; any failure commits nothing. IDs/time of occurrence are caller facts.
+ *
+ * With `keptChange`, the customer's change goes on their account in the same transaction, under customers.pay. The
+ * sale must name a customer, be paid in full, and have been paid into that cash account. The payment's note is the
+ * sale number and its time the sale's, which is how the receipt finds it ({@link changeKeptOnAccount}).
  */
-export function completeSale(context: OperationContext, input: CommandInput<Cart>): SaleTotals {
+export function completeSale(context: OperationContext, input: CommandInput<Cart>, keptChange?: KeptChange): SaleTotals {
   return authorizedOperation(context, ["sales.create"], (database, tx, ports, revision) => {
     const bound = bind(context, input, ports), settings = taxSettings(tx, context.businessId);
     // Each line carries the rate in force now (ADR-033); a caller's rate is ignored and history is never re-rated.
-    const cart = { ...bound, lines: bound.lines.map(line => ({ ...line, taxRateBasisPoints: effectiveTaxRate(tx, context.businessId, line.productId, settings) })) };
+    // The cost is frozen the same way, from the costing policy the valuation uses (§8), not the editable purchase price.
+    const cart = { ...bound, lines: bound.lines.map(({ unitCostMinor: _caller, ...line }) => {
+      const unitCostMinor = currentUnitCost(tx, context.businessId, line.productId);
+      return { ...line, ...(unitCostMinor === undefined ? {} : { unitCostMinor }), taxRateBasisPoints: effectiveTaxRate(tx, context.businessId, line.productId, settings) };
+    }) };
     checkBranch(tx, context, cart.branchId);
     let priceOverride = false;
     for (const line of cart.lines) {
@@ -54,9 +78,20 @@ export function completeSale(context: OperationContext, input: CommandInput<Cart
         required.push("customers.credit_override");
       }
     }
+    if (keptChange !== undefined) {
+      required.push("customers.pay");
+      if (cart.customerId === undefined || totals.outstandingMinor !== 0 || !Number.isSafeInteger(keptChange.amountMinor) || keptChange.amountMinor <= 0 ||
+        keptChange.id === cart.id || keptChange.eventId === cart.eventId || !cart.payments.some(payment => payment.accountId === keptChange.accountId) ||
+        related(tx, context, "financial_accounts", keptChange.accountId)?.["kind"] !== "CASH") throw new WorkspaceError("invalid_input");
+    }
     return authorizedOperation(context, required, () => {
       const result = writeSale(database, cart);
       appendLocalAudit(tx, context, ports, revision, "SALE_COMPLETED", cart.id, { eventId: cart.eventId });
+      if (keptChange !== undefined) {
+        recordCustomerPayment(database, { id: keptChange.id, businessId: cart.businessId, branchId: cart.branchId, customerId: cart.customerId!, accountId: keptChange.accountId,
+          amountMinor: keptChange.amountMinor, note: cart.number, userId: cart.userId, deviceId: cart.deviceId, occurredAt: cart.occurredAt, recordedAt: cart.recordedAt, eventId: keptChange.eventId });
+        appendLocalAudit(tx, context, ports, revision, "CUSTOMER_PAYMENT", keptChange.id, { eventId: keptChange.eventId, saleId: cart.id });
+      }
       return result;
     });
   });

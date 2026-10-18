@@ -14,7 +14,6 @@ import { DesktopApplication } from "./application.ts";
 import { formatConnectionCode } from "@kolo/contracts/sync";
 import { localCredentialsOnDesktop, desktopSealingCrypto, type NativeSafeStorage } from "./local-credentials.ts";
 import { AutoSync } from "./server-sync.ts";
-import { memoryPreferences } from "./preferences.ts";
 import type { Result } from "../shared/service.ts";
 
 function native(): NativeSafeStorage {
@@ -32,7 +31,7 @@ function failing(error: SyncTransportError, calls: string[]): SyncTransport {
 async function fixture(transport: SyncTransport) {
   const directory = mkdtempSync(join(tmpdir(), "kolo-desktop-sync-")), database = openDesktopDatabase(join(directory, "shop.db"));
   const ports: WorkspacePorts = { database, credentials: localCredentialsOnDesktop(join(directory, "vault"), native()), newId: randomUUIDv7, now: () => "2026-10-11T12:00:00.000Z" };
-  const application = new DesktopApplication(ports, desktopSealingCrypto, undefined, undefined, memoryPreferences(), () => transport);
+  const application = new DesktopApplication(ports, desktopSealingCrypto, undefined, undefined, () => transport);
   await application.initialize();
   const setup = value(await application.createShop({ businessName: "Shop", ownerName: "Owner", deviceLabel: "PC", cashAccountName: "Cash", secret: "654321" }));
   const sessionId = value(await application.unlock({ userId: setup.members[0]!.id, secret: "654321" })).sessionId!;

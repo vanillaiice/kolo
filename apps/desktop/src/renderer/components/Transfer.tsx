@@ -1,6 +1,6 @@
 import { AuthPage } from "./AuthPage.tsx";
 import { useEffect, useState } from "react";
-import type { BackupFileView, BundleView, InviteView, JoinCodeView, JoinStatusView, PairingRequestView, ServerPreview, ServerSyncSummary, ServerView, ShopService } from "../../shared/service.ts";
+import type { BackupFileView, BackupKeyView, BundleView, InviteView, JoinCodeView, JoinStatusView, PairingRequestView, ServerPreview, ServerSyncSummary, ServerView, ShopService } from "../../shared/service.ts";
 import QRCode from "qrcode";
 import type { TextKey } from "../text.ts";
 import { ErrorText, Field, ReadState, useAction, useRead, useText } from "./ui.tsx";
@@ -43,14 +43,17 @@ function Restore({service,sessionId,chosen=false,replacing,onDone,onBusy}:{servi
   const {t,language}=useText(),action=useAction();
   useEffect(()=>{onBusy?.(action.busy);},[action.busy,onBusy]);
   const [password,setPassword]=useState(""),[preview,setPreview]=useState<BackupFileView>(),[name,setName]=useState(""),[device,setDevice]=useState(()=>t("defaultTill")),[secret,setSecret]=useState(""),[confirm,setConfirm]=useState("");
-  const check=async():Promise<void>=>{setPreview(undefined);const value=await action.run(()=>service.openBackup({password}));setPassword("");if(value!==undefined)setPreview(value);};
+  const [withKey,setWithKey]=useState(false),[recoveryKey,setRecoveryKey]=useState("");
+  const check=async():Promise<void>=>{setPreview(undefined);const value=await action.run(()=>service.openBackup(withKey?{recoveryKey}:{password}));setPassword("");setRecoveryKey("");if(value!==undefined)setPreview(value);};
   const restore=async():Promise<void>=>{
     if(secret!==confirm){action.setError({code:"codesMismatch"});return;}
     const value=await action.run(()=>service.restoreBackup({...(sessionId===undefined?{}:{sessionId}),...(replacing===undefined?{}:{replace:true}),confirmedName:name,deviceLabel:device,secret}));
     setSecret("");setConfirm("");if(value!==undefined)onDone();
   };
   return <div className="transfer-step">{sessionId===undefined&&<h2>{t(preview===undefined?(chosen?"backupPasswordStep":"backupCheckStep"):(chosen?"backupConfirmChosenStep":"backupConfirmStep"))}</h2>}{sessionId!==undefined&&<p className="hint">{t("restoreReplaceHelp")}</p>}
-    {preview===undefined?<form onSubmit={event=>{event.preventDefault();void check();}}><fieldset disabled={action.busy}><PasswordFields id="restore" value={password} onValue={setPassword}/></fieldset>
+    {preview===undefined?<form onSubmit={event=>{event.preventDefault();void check();}}><fieldset disabled={action.busy}>
+      {withKey?<Field id="restore-recovery-key" label={t("recoveryKeyField")} value={recoveryKey} onChange={setRecoveryKey} maxLength={200}/>:<PasswordFields id="restore" value={password} onValue={setPassword}/>}
+      <label className="check" htmlFor="restore-with-key"><input id="restore-with-key" type="checkbox" checked={withKey} onChange={event=>{setWithKey(event.target.checked);action.setError(undefined);}}/>{t("useRecoveryKey")}</label></fieldset>
       <button className={chosen?"primary":"secondary"} type="submit" disabled={action.busy}>{t(chosen?"openBackupNow":"chooseBackup")}</button></form>
     :<form onSubmit={event=>{event.preventDefault();void restore();}}><div className="file-summary"><strong>{t("backupFrom")} {preview.businessName}</strong><span>{preview.ownerName} · {new Date(preview.createdAt).toLocaleString(language==="fr"?"fr-FR":"en-GB")} · {preview.appliedEvents} {t("savedOperations")}</span></div>
       <fieldset disabled={action.busy}><Field id="restore-name" label={t("typeShopName")} value={name} onChange={setName}/><Field id="restore-device" label={t("deviceName")} value={device} onChange={setDevice}/>
@@ -91,34 +94,69 @@ export function Devices({service,sessionId,revision}:{readonly service:ShopServi
   return <section className="workspace-content">
     <div className="section-heading"><div><p className="eyebrow">{t("devices")}</p><h1>{t("devicesHelp")}</h1></div></div>
     <div className="devices-grid">
-      <div className="panel"><h2>{t("backupTitle")}</h2><SaveBackup service={service} sessionId={sessionId}/></div>
-      <div className="panel"><h2>{t("pairTitle")}</h2><AddTill service={service} sessionId={sessionId} revision={revision}/></div>
+      <div className="panel"><h2>{t("backupTitle")}</h2><SaveBackup service={service} sessionId={sessionId} revision={revision}/></div>
+      <div className="panel"><h2>{t("recoveryKeyTitle")}</h2><RecoveryKey service={service} sessionId={sessionId}/></div>
+      <div className="panel wide"><h2>{t("pairTitle")}</h2><AddTill service={service} sessionId={sessionId} revision={revision}/></div>
       <div className="panel wide"><h2>{t("exchangeTitle")}</h2><Exchange service={service} sessionId={sessionId} revision={revision}/></div>
       <div className="panel wide" id="sync-server-panel"><h2>{t("syncTitle")}</h2><SyncServer service={service} sessionId={sessionId} revision={revision}/></div>
       <div className="panel wide"><h2>{t("restoreTitle")}</h2><Restore service={service} sessionId={sessionId} onDone={()=>undefined}/></div>
     </div>
   </section>;
 }
-function SaveBackup({service,sessionId}:{service:ShopService;sessionId:string}):React.JSX.Element{
+function SaveBackup({service,sessionId,revision}:{service:ShopService;sessionId:string;revision:number}):React.JSX.Element{
   const {t}=useText(),action=useAction(),[password,setPassword]=useState(""),[confirm,setConfirm]=useState(""),[saved,setSaved]=useState<boolean>(),[includePhotos,setIncludePhotos]=useState(true);
+  const keys=useRead(()=>service.backupKeys({sessionId}),[service,sessionId,revision]);
   const submit=async():Promise<void>=>{
     setSaved(undefined);if(password!==confirm){action.setError({code:"passwordsMismatch"});return;}
     const value=await action.run(()=>service.saveBackup({sessionId,password,includePhotos}));setPassword("");setConfirm("");if(value!==undefined)setSaved(value.saved);
   };
   return <form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={action.busy}><PasswordFields id="backup" value={password} confirm={confirm} onValue={setPassword} onConfirm={setConfirm}/>
     <label className="check" htmlFor="backup-photos"><input id="backup-photos" type="checkbox" checked={includePhotos} onChange={event=>setIncludePhotos(event.target.checked)}/>{t("includePhotos")}</label>
-    <p className="hint">{t("includePhotosHelp")}</p></fieldset>
+    <p className="hint">{t("includePhotosHelp")}</p>{(keys.data?.length??0)>0&&<p className="hint">{t("backupAlsoKey")}</p>}</fieldset>
     <ErrorText message={action.error}/><Saved saved={saved}/><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):t("saveBackup")}</button></form>;
+}
+/**
+ * The shop's backup recovery key (ADR-036): create it after the owner code, show the 14 groups once with a printable
+ * sheet, then pin it once three groups are typed back. Earlier keys stay listed for the backups that need them.
+ */
+function RecoveryKey({service,sessionId}:{service:ShopService;sessionId:string}):React.JSX.Element{
+  const {t,language}=useText(),action=useAction(),keys=useRead(()=>service.backupKeys({sessionId}),[service,sessionId]);
+  const [step,setStep]=useState<"idle"|"pin"|"show"|"confirm">("idle"),[pin,setPin]=useState(""),[pending,setPending]=useState<{text:string;keyId:string;confirm:readonly number[]}>(),[groups,setGroups]=useState(["","",""]),[done,setDone]=useState(false);
+  const day=(at:string):string=>new Date(at).toLocaleDateString(language==="fr"?"fr-FR":"en-GB");
+  const current:BackupKeyView|undefined=keys.data?.find(key=>key.current),older=(keys.data?.length??0)-(current===undefined?0:1);
+  const prepare=async():Promise<void>=>{setDone(false);const value=await action.run(()=>service.prepareBackupKey({sessionId,secret:pin}));setPin("");if(value!==undefined){setPending(value);setGroups(["","",""]);setStep("show");}};
+  const confirm=async():Promise<void>=>{const value=await action.run(()=>service.confirmBackupKey({sessionId,groups}));if(value!==undefined){setPending(undefined);setStep("idle");setDone(true);keys.retry();}};
+  if(pending!==undefined&&step==="show")return <div className="transfer-step">
+    <p className="notice error" role="note">{t("recoveryKeyShowOnce")}</p>
+    <div className="recovery-sheet"><h2>{t("recoveryKeySheet")}</h2>
+      <ol className="recovery-groups">{pending.text.split("-").map((group,index)=><li key={index}><span>{index+1}</span><code>{group}</code></li>)}</ol>
+      <p className="hint">{t("recoveryKeyId")} {pending.keyId.slice(0,8)} · {t("recoveryKeyCreated")} {day(new Date().toISOString())}</p><p className="hint">{t("recoveryKeySheetHelp")}</p></div>
+    <div className="row"><button type="button" className="secondary" onClick={()=>window.print()}>{t("recoveryKeyPrint")}</button><button type="button" className="primary" onClick={()=>setStep("confirm")}>{t("recoveryKeyWritten")}</button></div></div>;
+  if(pending!==undefined&&step==="confirm")return <form className="transfer-step" onSubmit={event=>{event.preventDefault();void confirm();}}>
+    <p className="hint">{t("recoveryKeyConfirm")}</p>
+    <fieldset disabled={action.busy}><div className="three-fields">{pending.confirm.map((index,i)=><Field key={index} id={`recovery-group-${index}`} label={`${t("recoveryKeyGroup")} ${index+1}`} value={groups[i]!} maxLength={8}
+      onChange={value=>setGroups(list=>list.map((item,j)=>j===i?value:item))}/>)}</div></fieldset>
+    <ErrorText message={action.error}/>
+    <div className="row"><button type="button" className="text-button" onClick={()=>setStep("show")}>{t("back")}</button><button className="primary" type="submit" disabled={action.busy||groups.some(group=>group.trim()==="")}>{t("recoveryKeyWritten")}</button></div></form>;
+  return <div className="transfer-step"><p className="hint">{t("recoveryKeyHelp")}</p>
+    <ErrorText message={keys.error}/>
+    {keys.data!==undefined&&(current===undefined?<p>{t("recoveryKeyNone")}</p>:<div className="file-summary"><strong>{t("recoveryKeyCurrent")} · {t("recoveryKeyId")} {current.keyId.slice(0,8)}</strong>
+      <span>{t("recoveryKeyCreated")} {day(current.createdAt)}{older>0?` · ${older} ${t("recoveryKeyOlder")}`:""}</span></div>)}
+    {done&&<p role="status" className="notice success">{t("recoveryKeyDone")}</p>}
+    {step==="pin"?<form onSubmit={event=>{event.preventDefault();void prepare();}}><fieldset disabled={action.busy}><Field id="recovery-pin" label={t("recoveryKeyPin")} value={pin} onChange={setPin} secret maxLength={256}/></fieldset>
+      <ErrorText message={action.error}/><button className="primary" type="submit" disabled={action.busy||pin===""}>{t(current===undefined?"recoveryKeyCreate":"recoveryKeyRotate")}</button></form>
+      :<button className="secondary" onClick={()=>{setStep("pin");setDone(false);action.setError(undefined);}}>{t(current===undefined?"recoveryKeyCreate":"recoveryKeyRotate")}</button>}
+  </div>;
 }
 /** Adding a till: by code through the connected server, or by files when there is no server. */
 function AddTill({service,sessionId,revision}:{service:ShopService;sessionId:string;revision:number}):React.JSX.Element{
   const {t}=useText(),state=useRead(()=>service.serverState({sessionId}),[service,sessionId,revision]);
   const [remoteAvailable,setRemoteAvailable]=useState(false);
   useEffect(()=>{if(state.data!==undefined)setRemoteAvailable(state.data.servers.length>0);},[state.data]);
-  return <><JoinByCode service={service} sessionId={sessionId} local/>
+  return <div className="add-till"><JoinByCode service={service} sessionId={sessionId} local/>
     {remoteAvailable&&<details className="support"><summary>{t("joinThroughServer")}</summary><JoinByCode service={service} sessionId={sessionId}/></details>}
     <details className="support"><summary>{t("pairByFiles")}</summary><Pair service={service} sessionId={sessionId}/></details>
-    <LocalNetworkStatus service={service} sessionId={sessionId} revision={revision}/></>;
+    <LocalNetworkStatus service={service} sessionId={sessionId} revision={revision}/></div>;
 }
 /** Empty computer joins by a copied QR link; the peer must still be allowed on the main till. */
 export function JoinLocalComputer({service,onDone,onBack}:{service:ShopService;onDone:()=>void;onBack:()=>void}):React.JSX.Element{

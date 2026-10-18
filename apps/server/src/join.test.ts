@@ -10,7 +10,11 @@ import { closeConsistent } from "@kolo/core/data/database/integrity";
 import type { Database } from "@kolo/core/data/database/driver";
 import { unlockWorkspace } from "@kolo/core/identity/workspace";
 import type { WorkspacePorts } from "@kolo/core/identity/types";
-import { approveJoin, endJoin, finishJoin, joinIdOf, joinPending, lookupJoin, pollJoin, requestJoin, startJoin } from "@kolo/core/application/join";
+import { approveJoin, endJoin, finishJoin, joinIdOf, joinPending, lookupJoin, pollJoin, prepareJoinEnrollment, requestJoin, startJoin } from "@kolo/core/application/join";
+import { decryptTransfer, isTransferContainer } from "@kolo/core/backup/encryption";
+import { transferFileFromText } from "@kolo/core/backup/file-kind";
+import { canonicalJson } from "@kolo/contracts/canonical";
+import { deflateRawSync } from "node:zlib";
 import { connectServer, pendingShopServer, synchronizeServer, SyncTransportError } from "@kolo/core/application/server-sync";
 import { shopKeys } from "@kolo/core/application/sealed-sync";
 import { protectedCredentials } from "@kolo/core/identity/credentials";
@@ -67,7 +71,10 @@ it("a new till joins by code through the server and syncs, with no file, fingerp
   assert.equal(candidate?.label, "Téléphone"); assert.equal(candidate?.platform, "ANDROID");
   await approveJoin(a.context, target.transport, crypto, ownerFiles, start, candidate!);
   await endJoin(a.context, target.transport, start, false);
-  assert.equal((await query(target, `SELECT enrollment FROM join_sessions`))[0].enrollment.includes("Riz parfumé"), false, "the shop file on the server is encrypted");
+  const carried = String((await query(target, `SELECT enrollment FROM join_sessions`))[0].enrollment);
+  assert.equal(carried.includes("Riz parfumé"), false, "the shop file on the server is encrypted");
+  assert.match(carried, /^[A-Za-z0-9+/]+={0,2}$/, "the mailbox carries the binary container as base64");
+  assert.ok(isTransferContainer(transferFileFromText(carried, crypto)));
 
   const joined = await finishJoin(start.code, b.ports, b.files, target.transport, crypto);
   assert.ok(joined !== undefined);
@@ -85,6 +92,32 @@ it("a new till joins by code through the server and syncs, with no file, fingerp
   sale(a, p); await sync(a, target); await synchronizeServer(contextB, destination, target.transport, crypto);
   assert.equal(Number(joined.database.get(`SELECT count(*) AS n FROM sales`)!["n"]), 2, "new sales arrive by sync");
   void count; void paired;
+});
+
+it("a JSON enrollment as releases before ADR-035 sent it is refused and installs nothing", { skip }, async () => {
+  const target = await started(), a = await owner("Boutique ancienne"), p = product(a, "Mil");
+  sale(a, p); await connect(a, target); await sync(a, target);
+  const start = await startJoin(a.context, target.transport, crypto, { serverDeviceId: target.key.deviceId, url: target.url, fingerprint: target.key.fingerprint, authorityAllowed: false });
+  const b = emptyTill(), invitation = await lookupJoin(target.transport, crypto, start.code);
+  await requestJoin(start.code, invitation, { label: "Caisse 2", platform: "DESKTOP", secret: "582914" }, b.ports, target.transport, crypto);
+  const candidate = (await pollJoin(target.transport, crypto, start))!;
+  // Capture the random enrollment password, then re-wrap the same snapshot as releases before ADR-035 wrote it.
+  let secret = "";
+  const capturing = { ...crypto, randomHex: (bytes: number) => { const value = crypto.randomHex(bytes); if (bytes === 32 && secret === "") secret = value; return value; } };
+  const current = await prepareJoinEnrollment(a.context, capturing, workspaceFiles(), start, candidate);
+  const plain = await decryptTransfer(transferFileFromText(current.enrollment, crypto), "enrollment", secret, crypto), compressed = new Uint8Array(deflateRawSync(plain));
+  const header = { format: "kolo.encrypted", format_version: 2, purpose: "enrollment", file_id: randomUUIDv7(), cipher: "AES-256-GCM", kdf: "PBKDF2-SHA256", iterations: 600000,
+    salt: crypto.randomHex(32), nonce: crypto.randomHex(12), compression: "deflate", plaintext_bytes: compressed.byteLength, content_bytes: plain.byteLength };
+  const sealed = await crypto.encrypt(await crypto.derive(secret, header.salt, 600000), header.nonce, compressed, canonicalJson(header));
+  const legacy = canonicalJson({ header, ...sealed }, 64 * 1024 * 1024);
+  // The mailbox MAC as join.ts defines it: HMAC under an HKDF key from the code, over the carried text's digest and the sealed password.
+  const key = await crypto.hkdf(Buffer.from(start.code, "utf8").toString("hex"), "", "kolo.join-mac.v1", 32);
+  const mac = await crypto.hmac(key, `kolo.join.enrollment.v1\u0000${await crypto.sha256(legacy)}\u0000${canonicalJson(current.sealed_password)}`);
+  await target.transport.joinEnroll(start.token, start.joinId, { enrollment: legacy, sealed_password: current.sealed_password, mac });
+  // The MAC is genuine, so only the format check stops it.
+  await assert.rejects(finishJoin(start.code, b.ports, b.files, target.transport, crypto), (error: unknown) => error instanceof Error && "code" in error && error.code === "invalid_file");
+  assert.equal(b.ports.database.get(`SELECT id FROM businesses`), undefined);
+  assert.equal(joinPending(b.ports.database), true, "the till can still finish once the owner sends a current file");
 });
 
 it("a wrong code, a swapped invite, a forged request or a refused join never installs anything", { skip }, async () => {

@@ -28,6 +28,7 @@ export function Receipts({service,sessionId,revision,initialId,canReturn,shopNam
         {detail.data.tax?.groups.map(group=><div className="receipt-line receipt-tax" key={group.rateBasisPoints}><span>{t("taxIncluded")} {detail.data!.tax!.label} {formatRate(group.rateBasisPoints,language)}</span><strong>{formatMoney(group.taxMinor,language)}</strong></div>)}
         {detail.data.tax?.registration!==undefined&&<p className="hint receipt-tax-number">{t("taxNumberShort")} {detail.data.tax.registration}</p>}
         {detail.data.payments.map(payment=><div className="receipt-line" key={payment.id}><span>{t("paid")} · {payment.name}</span><strong>{formatMoney(payment.amountMinor,language)}</strong></div>)}
+        {detail.data.changeKeptMinor!==undefined&&<div className="receipt-line receipt-kept-change"><span>{t("changeKept")}</span><strong>{formatMoney(detail.data.changeKeptMinor,language)}</strong></div>}
         {detail.data.customerAccount!==undefined?<>
           <div className="receipt-line"><span>{t("balanceBeforeSale")}</span><Balance value={detail.data.customerAccount.balanceBeforeMinor}/></div>
           {detail.data.customerAccount.creditAppliedMinor>0&&<div className="receipt-line"><span>{t("creditApplied")}</span><strong>{formatMoney(detail.data.customerAccount.creditAppliedMinor,language)}</strong></div>}

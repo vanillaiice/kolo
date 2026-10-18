@@ -56,8 +56,8 @@ void app.whenReady().then(async () => {
     const actor=await unlockWorkspace({userId:install.ownerId,secret:request.secret},ports(source)),productId=randomUUIDv7(),at=new Date().toISOString();
     saveProduct(actor,{id:productId,name:"Rice",unit:"bag",active:true,divisible:false,sellingPriceMinor:500,currency:"XAF",taxRateBasisPoints:0,minimumStock:0,createdAt:at,updatedAt:at});
     const encrypted=await createBackup(actor,"native portable password",sourceFiles,desktopTransferCrypto);
-    assert.equal(encrypted.text.includes("Native backup validation"),false);
-    const preview=await previewBackup(encrypted.text,"native portable password",targetFiles,desktopTransferCrypto);
+    assert.equal(Buffer.from(encrypted.bytes).includes("Native backup validation"),false);assert.ok(encrypted.filename.endsWith(".kolo-backup"));
+    const preview=await previewBackup(encrypted.bytes,"native portable password",targetFiles,desktopTransferCrypto);
     const restored=await restoreWorkspace(preview,{confirmedBusinessId:install.businessId,deviceLabel:"B",platform:"DESKTOP",secret:request.secret},ports(target));
     assert.notEqual(restored.installation.deviceId,install.deviceId);assert.notEqual(restored.installation.publicKey,install.publicKey);
     const restoredActor=await unlockWorkspace({userId:install.ownerId,secret:request.secret},ports(restored.database));

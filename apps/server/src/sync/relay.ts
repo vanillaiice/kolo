@@ -58,8 +58,9 @@ function requireActiveShop(status: string): void {
 /**
  * Attaches an existing local shop, keeping its IDs. The claim must be signed by the device key it names, and a new
  * shop needs an unused, unexpired, uncancelled single-use connection code, which is consumed in the same transaction.
- * Re-enrolling from the same authority device is idempotent and needs no code, so a lost response is harmless; any
- * other device claiming an enrolled shop is a conflict for the owner to resolve.
+ * Re-enrolling from the same authority device is idempotent and needs no code, so a lost response is harmless. Another
+ * device claiming an enrolled shop is a conflict, unless it brings an owner-recovery code issued for exactly that shop
+ * and names its owner (ADR-036): the restored owner device is then added as an authority device.
  */
 export async function enroll(relay: Relay, input: EnrollmentRequest): Promise<void> {
   const { claim } = input;
@@ -67,17 +68,30 @@ export async function enroll(relay: Relay, input: EnrollmentRequest): Promise<vo
   await relay.db.transaction().execute(async tx => {
     await consumeChallenge(tx, relay, "enrollment", claim, claim.business.id, claim.device.id);
     const shop = await tx.selectFrom("shops").selectAll().where("business_id", "=", claim.business.id).forUpdate().executeTakeFirst();
+    const usable = async () => {
+      if (input.connection_code === undefined) throw new RelayError(403, "invalid_connection_code", false);
+      const found = await tx.selectFrom("connection_codes").selectAll().where("token_hash", "=", sha256(input.connection_code)).forUpdate().executeTakeFirst();
+      if (found === undefined || found.cancelled_at !== null) throw new RelayError(403, "invalid_connection_code", false);
+      if (found.used_at !== null) throw new RelayError(403, "connection_code_used", false);
+      if (found.expires_at <= relay.now()) throw new RelayError(403, "connection_code_expired", false);
+      return found;
+    };
     if (shop !== undefined) {
       const device = await tx.selectFrom("shop_devices").selectAll().where("business_id", "=", claim.business.id).where("device_id", "=", claim.device.id).executeTakeFirst();
-      if (shop.owner_id !== claim.owner_id || device === undefined || !device.active || !device.authority_allowed || device.public_key !== claim.device.public_key) throw new RelayError(409, "enrollment_conflict", false);
+      if (shop.owner_id === claim.owner_id && device !== undefined && device.active && device.authority_allowed && device.public_key === claim.device.public_key) { requireActiveShop(shop.status); return; }
+      // Owner recovery: a new device of the same owner, with a code issued for this shop only.
+      if (device !== undefined || shop.owner_id !== claim.owner_id || input.connection_code === undefined) throw new RelayError(409, "enrollment_conflict", false);
+      const recovery = await usable();
+      if (recovery.recovery_business_id !== claim.business.id) throw new RelayError(409, "enrollment_conflict", false);
       requireActiveShop(shop.status);
+      await tx.insertInto("shop_devices").values({ business_id: claim.business.id, device_id: claim.device.id, public_key: claim.device.public_key,
+        label: claim.device.label, platform: claim.device.platform, authority_allowed: true, active: true, last_seen_at: null }).execute();
+      await tx.updateTable("connection_codes").set({ used_at: relay.now(), used_by: claim.business.id }).where("code_id", "=", recovery.code_id).execute();
       return;
     }
-    if (input.connection_code === undefined) throw new RelayError(403, "invalid_connection_code", false);
-    const code = await tx.selectFrom("connection_codes").selectAll().where("token_hash", "=", sha256(input.connection_code)).forUpdate().executeTakeFirst();
-    if (code === undefined || code.cancelled_at !== null) throw new RelayError(403, "invalid_connection_code", false);
-    if (code.used_at !== null) throw new RelayError(403, "connection_code_used", false);
-    if (code.expires_at <= relay.now()) throw new RelayError(403, "connection_code_expired", false);
+    const code = await usable();
+    // A recovery code re-attaches its own shop and never creates one.
+    if (code.recovery_business_id !== null) throw new RelayError(403, "invalid_connection_code", false);
     await tx.insertInto("shops").values({ business_id: claim.business.id, name: claim.business.name, owner_id: claim.owner_id, enrolled_by: claim.device.id,
       status_changed_at: null, remove_after: null, connection_code_id: code.code_id }).execute();
     await tx.insertInto("shop_devices").values({ business_id: claim.business.id, device_id: claim.device.id, public_key: claim.device.public_key,
@@ -288,29 +302,34 @@ async function markDelivered(tx: Transaction<ServerDatabase>, scope: Scope, even
   await tx.insertInto("deliveries").values({ business_id: scope.businessId, device_id: scope.deviceId, event_id: eventId, state: "stored" }).onConflict(conflict => conflict.doNothing()).execute();
 }
 
-function encodeCursor(scope: Scope, seq: string): string { return Buffer.from(`${scope.deviceId}:${seq}`, "utf8").toString("base64url"); }
-function decodeCursor(scope: Scope, cursor: string | undefined): string {
-  if (cursor === undefined) return "0";
+// A cursor pages within one pass: through the clear facts first (`c` before the sequence), then the sealed ones.
+function encodeCursor(scope: Scope, clear: boolean, seq: string): string { return Buffer.from(`${scope.deviceId}:${clear ? "c" : ""}${seq}`, "utf8").toString("base64url"); }
+function decodeCursor(scope: Scope, cursor: string | undefined): { readonly clear: boolean; readonly after: string } {
+  if (cursor === undefined) return { clear: true, after: "0" };
   const text = /^[A-Za-z0-9_-]{1,200}$/.test(cursor) ? Buffer.from(cursor, "base64url").toString("utf8") : "";
-  const match = /^([0-9a-f-]{36}):(\d{1,19})$/.exec(text);
+  const match = /^([0-9a-f-]{36}):(c?)(\d{1,19})$/.exec(text);
   if (match === null || match[1] !== scope.deviceId) throw new RelayError(400, "invalid_cursor", false);
-  return match[2]!;
+  return { clear: match[2] === "c", after: match[3]! };
 }
 
 /**
- * A bounded, server-signed page of facts this device has not acknowledged, oldest first, with every
- * original proof intact. The cursor only pages within one pass; unacknowledged facts are offered again
- * on the next pass from the start, so a fact skipped by the device is never lost behind a cursor.
+ * A bounded, server-signed page of facts this device has not acknowledged, with every original proof intact. Each pass
+ * offers the clear trust, key and address facts first, then the sealed ones, each oldest first: a new till cannot open
+ * the sealed backlog until it holds its shop-key grant, so the grant must never wait behind it. The cursor only pages
+ * within one pass; unacknowledged facts are offered again on the next pass from the start, so a fact skipped by the
+ * device is never lost behind a cursor.
  */
 export async function pull(relay: Relay, scope: Scope, cursor: string | undefined, limit: number): Promise<PullResponse> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > PULL_MAX_LIMIT) throw new RelayError(400, "invalid_request", false);
-  const after = decodeCursor(scope, cursor);
-  const rows = await relay.db.selectFrom("journal as j").select(["j.seq", "j.event_id", "j.canonical", "j.digest", "j.signature", "j.sealed"])
+  const pending = (clear: boolean, after: string) => relay.db.selectFrom("journal as j").select(["j.seq", "j.event_id", "j.canonical", "j.digest", "j.signature", "j.sealed"])
     .innerJoin("shop_devices as o", join => join.onRef("o.business_id", "=", "j.business_id").onRef("o.device_id", "=", "j.origin_device_id"))
     .where("j.business_id", "=", scope.businessId).where("j.origin_device_id", "<>", scope.deviceId).where("j.seq", ">", after).where("o.active", "=", true)
+    .where("j.sealed", clear ? "is" : "is not", null)
     .where(where => where.not(where.exists(where.selectFrom("deliveries as d").select(sql`1`.as("one"))
       .whereRef("d.business_id", "=", "j.business_id").whereRef("d.event_id", "=", "j.event_id").where("d.device_id", "=", scope.deviceId))))
     .orderBy("j.seq").limit(limit + 1).execute();
+  let { clear, after } = decodeCursor(scope, cursor), rows = await pending(clear, after);
+  if (clear && rows.length === 0) { clear = false; rows = await pending(false, "0"); }
   const page = rows.slice(0, limit), events: SyncEvent[] = page.map(row => row.sealed !== null ? { sealed: sealedOf(row.sealed) }
     : { clear: { envelope: JSON.parse(row.canonical!) as JournalEnvelope, digest: row.digest, signature: row.signature! } });
   if (events.length === 0) return { batch: null, cursor: null, has_more: false };
@@ -323,7 +342,8 @@ export async function pull(relay: Relay, scope: Scope, cursor: string | undefine
     await tx.insertInto("offered_batches").values({ business_id: scope.businessId, batch_id: batch.batch_id, device_id: scope.deviceId, created_at: relay.now() }).execute();
     await tx.insertInto("offered_batch_events").values(page.slice(0, batch.events.length).map(row => ({ business_id: scope.businessId, batch_id: batch.batch_id, event_id: row.event_id, digest: row.digest }))).execute();
   });
-  return { batch: { batch, digest: sha256(message), signature: relay.key.sign(message) }, cursor: encodeCursor(scope, last), has_more: rows.length > batch.events.length };
+  // The last clear page still has the sealed facts after it.
+  return { batch: { batch, digest: sha256(message), signature: relay.key.sign(message) }, cursor: encodeCursor(scope, clear, last), has_more: clear || rows.length > batch.events.length };
 }
 
 /** Owner-signed trust facts, so a device can trust the server's key before verifying a server-signed page. */

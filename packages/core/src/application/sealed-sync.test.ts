@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, it } from "node:test";
-import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, pbkdf2Sync, randomBytes, randomUUIDv7, sign, verify } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, argon2, generateKeyPairSync, hkdfSync, pbkdf2Sync, randomBytes, randomUUIDv7, sign, verify } from "node:crypto";
 import { openDatabase } from "../data/database/node-sqlite.ts";
 import { migrate } from "../data/database/migrations.ts";
 import type { Database } from "../data/database/driver.ts";
@@ -14,6 +14,7 @@ import { applyEvent } from "./event-application.ts";
 import { createJournalBatch, importJournalBatch } from "./event-delivery.ts";
 import { currentShopKey, ensureEncryptionKey, maintainShopKeys, openSealedEvent, sealEvent, shopKeys, type SealingCrypto } from "./sealed-sync.ts";
 import { pendingShopServer, shareServerEndpoint } from "./server-sync.ts";
+import { X25519_PKCS8_PREFIX, X25519_SPKI_PREFIX } from "../backup/hpke.ts";
 
 const at = "2026-10-11T06:00:00.000Z", secret = "fixture-owner-secret";
 const crypto: SealingCrypto = {
@@ -25,6 +26,10 @@ const crypto: SealingCrypto = {
     encodeText: text => new Uint8Array(Buffer.from(text, "utf8")), decodeText: bytes => Buffer.from(bytes).toString("utf8"),
     encodeBase64: bytes => Buffer.from(bytes).toString("base64"), decodeBase64: text => new Uint8Array(Buffer.from(text, "base64")),
     fromHex: hex => new Uint8Array(Buffer.from(hex, "hex")), toHex: bytes => Buffer.from(bytes).toString("hex"),
+createSha256:()=>{const hash=createHash("sha256");return {update:(bytes:Uint8Array)=>{hash.update(bytes);},digest:()=>hash.digest("hex")};},
+hmacSha256:(key,data)=>new Uint8Array(createHmac("sha256",key).update(data).digest()),
+ x25519:(privateKey,publicKey)=>new Uint8Array(diffieHellman({privateKey:createPrivateKey({key:Buffer.from([...X25519_PKCS8_PREFIX,...privateKey]),format:"der",type:"pkcs8"}),publicKey:createPublicKey({key:Buffer.from([...X25519_SPKI_PREFIX,...publicKey]),format:"der",type:"spki"})})),
+ argon2id:(password,salt,params)=>new Promise<Uint8Array>((resolve,reject)=>argon2("argon2id",{message:password,nonce:salt,memory:params.memoryKiB,passes:params.passes,parallelism:params.parallelism,tagLength:params.length,...(params.secret===undefined?{}:{secret:params.secret}),...(params.associatedData===undefined?{}:{associatedData:params.associatedData})},(error,key)=>error===null?resolve(new Uint8Array(key)):reject(new Error("native derivation failed")))),
     cipher: (key, nonce) => createCipheriv("aes-256-gcm", Buffer.from(key, "hex"), Buffer.from(nonce, "hex"), { authTagLength: 16 }),
     decipher: (key, nonce) => createDecipheriv("aes-256-gcm", Buffer.from(key, "hex"), Buffer.from(nonce, "hex"), { authTagLength: 16 }),
   }),

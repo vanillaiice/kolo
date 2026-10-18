@@ -333,7 +333,7 @@ tbody tr:last-child td{border-bottom:0}
 .photo-actions{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0}.photo-actions .text-button{padding:4px 0;min-height:32px}
 .danger-action{background:var(--danger);border-color:var(--danger);color:var(--surface)}.danger-action:hover:not(:disabled){background:var(--danger-ink)}
 .share-code{display:block;overflow-wrap:anywhere;font-size:12px;background:var(--surface);border:1px dashed var(--control-border);padding:8px 10px;border-radius:6px;user-select:all}.field textarea{border:1px solid var(--control-border);padding:12px;background:var(--surface);color:var(--text);width:100%;font:inherit;font-size:13px;font-weight:400;border-radius:8px;resize:vertical}
-.support{width:100%;font-size:12px;color:var(--muted)}.support summary{cursor:pointer;min-height:32px}.support .share-code{white-space:pre-wrap;margin:6px 0}
+.add-till{display:flex;flex-direction:column;gap:16px}.support{width:100%;font-size:12px;color:var(--muted)}.support summary{cursor:pointer;min-height:32px}.support .share-code{white-space:pre-wrap;margin:6px 0}
 .join-code{align-items:center}.join-qr{width:240px;height:240px;background:#fff;border-radius:10px;padding:10px}.join-big-code{font-size:34px;font-weight:700;letter-spacing:.12em;padding:8px 16px;border-radius:10px;background:var(--yellow-soft);color:var(--yellow-ink);user-select:all}
 .menu-order{list-style:none;padding:0;margin:0 0 16px;max-width:420px}.menu-order li{display:flex;align-items:center;gap:4px;padding:4px 0;border-bottom:1px solid var(--border);font-size:14px}.menu-order li span{flex:1}.menu-order .text-button{min-height:36px;min-width:40px;font-size:16px}.nav-item[draggable=true]{cursor:grab}.nav-item.dragging{opacity:.5}
 .alerts-button{position:relative;gap:8px}.alerts-button>span[aria-hidden]{font-size:14px}.alerts-count{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--danger);color:var(--surface);font-size:11px;font-weight:700;display:inline-grid;place-items:center;font-variant-numeric:tabular-nums}
@@ -342,4 +342,13 @@ tbody tr:last-child td{border-bottom:0}
 .alert-item.critical{border-left-color:var(--danger)}.alert-item.unread{background:var(--surface-soft)}.alert-item.read{opacity:.8}.alert-item strong{font-size:13px}.alert-item p{margin:4px 0 0;font-size:13px;color:var(--muted)}.alert-item .text-button{white-space:nowrap}
 .receipt-tax{font-size:12px;color:var(--muted);margin:8px 0}.receipt-tax-number{text-align:center;margin-top:12px}
 @media(max-width:850px){.alerts-panel{margin:16px 18px 0}.alerts-button{font-size:0;gap:4px}.alerts-button>span{font-size:14px}}
+
+/* Backup recovery key (ADR-036): fourteen groups, large and unambiguous, and a sheet that prints on its own. */
+.recovery-sheet{width:100%;border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:var(--surface-soft)}
+.recovery-sheet h2{margin:0 0 10px}
+.recovery-groups{list-style:none;margin:0 0 10px;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+.recovery-groups li{display:flex;align-items:baseline;gap:8px}.recovery-groups span{font-size:12px;color:var(--muted);min-width:18px;text-align:right}
+.recovery-groups code{font-size:20px;font-weight:700;letter-spacing:.12em;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.three-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;width:100%}
+@media print{.recovery-sheet,.recovery-sheet *{visibility:visible}.recovery-sheet{position:absolute;left:0;top:0;width:100%;border:0;background:#fff;color:#142b21}.recovery-sheet code{color:#142b21}}
 .journal-table td{vertical-align:top}.journal-table td .tag{display:table;margin:4px 0 0;white-space:nowrap}.journal-when{white-space:nowrap}.journal-details{width:38%;color:var(--muted);overflow-wrap:anywhere}.tag.neutral{background:var(--selected);color:var(--selected-ink)}.journal-subject{flex-basis:100%;display:flex;gap:12px;align-items:center;margin:0}

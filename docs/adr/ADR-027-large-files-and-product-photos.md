@@ -1,6 +1,7 @@
 # ADR-027: Opt-in large transfer files and optional product photos
 
-**Status:** Accepted, 2026-10-10
+**Status:** Accepted, 2026-10-10. The standard/large profiles and the large-files switch are superseded by
+[ADR-035](ADR-035-binary-encrypted-container.md): one 1 GiB snapshot limit and 256 MiB of photos per shop.
 **Amends:** the fixed limits in [ADR-026](ADR-026-compressed-transfer-files.md). Its format,
 compression, bounded inflation and "nothing is pruned" rules remain.
 

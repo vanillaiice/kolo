@@ -163,8 +163,8 @@ describe("every breakdown adds up to its period", () => {
   it("a fully returned line on a discounted bill nets to zero for its product", async () => {
     const f = await fixture(), a = f.product("A", 1_000), b = f.product("B", 1_000), sale = randomUUIDv7(), lineA = randomUUIDv7();
     commands.completeSale(f.context, { id: sale, number: sale, occurredAt: "2026-10-05T10:00:00.000Z", eventId: randomUUIDv7(), discountMinor: 200,
-      lines: [{ id: lineA, movementId: randomUUIDv7(), productId: a, name: "A", unitPriceMinor: 1_000, quantity: 1_000, unitCostMinor: 300 },
-        { id: randomUUIDv7(), movementId: randomUUIDv7(), productId: b, name: "B", unitPriceMinor: 1_000, quantity: 1_000, unitCostMinor: 300 }],
+      lines: [{ id: lineA, movementId: randomUUIDv7(), productId: a, name: "A", unitPriceMinor: 1_000, quantity: 1_000 },
+        { id: randomUUIDv7(), movementId: randomUUIDv7(), productId: b, name: "B", unitPriceMinor: 1_000, quantity: 1_000 }],
       payments: [{ id: randomUUIDv7(), accountId: f.till, amountMinor: 1_800 }] });
     f.setNow("2026-10-06T10:00:00.000Z");
     const preview = previewReturn(f.context, "SALE", sale, [{ originalItemId: lineA, quantity: 1_000 }]);
@@ -172,7 +172,7 @@ describe("every breakdown adds up to its period", () => {
       refunds: [{ id: randomUUIDv7(), accountId: f.till, amountMinor: preview.totalMinor }] });
     f.setNow(later);
     const from = "2026-10-01T00:00:00.000Z", to = "2026-11-01T00:00:00.000Z";
-    assert.deepEqual(reports.productProfit(f.context, from, to).map(item => [item.name, item.soldThousandths, item.revenueMinor, item.costMinor]), [["B", 1_000, 900, 300], ["A", 0, 0, 0]]);
+    assert.deepEqual(reports.productProfit(f.context, from, to).map(item => [item.name, item.soldThousandths, item.revenueMinor, item.costMinor]), [["B", 1_000, 900, 1], ["A", 0, 0, 0]]);
     assert.deepEqual(reports.salesByProduct(f.context, from, to).map(line => [line.label, line.totalMinor]), [["B", 900], ["A", 0]]);
     assert.deepEqual(reports.salesByAccount(f.context, from, to).map(line => [line.totalMinor, line.count]), [[900, 1]]);
   });

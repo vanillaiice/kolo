@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { closeConsistent } from "../data/database/integrity.ts";
 import { afterEach, describe, it } from "node:test";
-import { createHash, generateKeyPairSync, randomUUIDv7 } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, randomUUIDv7 } from "node:crypto";
 import type { Database } from "../data/database/driver.ts";
 import { openDatabase } from "../data/database/node-sqlite.ts";
 import { migrate, MIGRATIONS } from "../data/database/migrations.ts";
@@ -77,15 +77,13 @@ describe("product photos", () => {
     await assert.rejects(setProductPhoto(f.context, { productId: randomUUIDv7(), bytes: webp(10, 10) }, crypto), code("scope_mismatch"));
     const other = await fixture(), foreign = other.product();
     await assert.rejects(setProductPhoto(f.context, { productId: foreign, bytes: webp(10, 10) }, crypto), code("scope_mismatch"));
-    // Fill the shop to just under its limit with maximum-size photos, then one more byte too many.
-    const full = Math.floor(PHOTO_LIMITS.shopBytes / PHOTO_LIMITS.maxBytes);
-    for (let index = 0; index < full; index++) await setProductPhoto(f.context, { productId: f.product(), bytes: webp(10, 10 + index % 400, PHOTO_LIMITS.maxBytes) }, crypto);
+    // Fill the shop to just under its limit with maximum-size photos (directly, in one transaction), then one more byte too many.
+    const full = Math.floor(PHOTO_LIMITS.shopBytes / PHOTO_LIMITS.maxBytes), filled = Array.from({ length: full }, () => f.product());
+    f.db.transaction(tx => { for (const id of filled) tx.run(`INSERT INTO product_photos (business_id, product_id, digest, media_type, bytes, width, height, updated_at, updated_by_device)
+      VALUES (?, ?, ?, 'image/webp', zeroblob(?), 10, 10, ?, ?)`, [f.context.businessId, id, randomBytes(32).toString("hex"), PHOTO_LIMITS.maxBytes, "2026-10-17T00:00:00.000Z", f.context.deviceId]); });
+    assert.deepEqual(photoUsage(f.context), { photos: full, bytes: full * PHOTO_LIMITS.maxBytes, limitBytes: PHOTO_LIMITS.shopBytes });
     await assert.rejects(setProductPhoto(f.context, { productId: rice, bytes: webp(10, 10) }, crypto), code("photo_storage_full"));
     assert.equal(productPhoto(f.context, rice), undefined);
-    // The large-files setting raises the shop's photo limit; the same photo now fits.
-    await setProductPhoto(f.context, { productId: rice, bytes: webp(10, 10) }, crypto, { large: true });
-    assert.equal(photoUsage(f.context, { large: true }).limitBytes, PHOTO_LIMITS.largeShopBytes);
-    assert.equal(removeProductPhoto(f.context, rice), true);
     // Replacing a photo does not count the one it replaces.
     const any = String(f.db.get(`SELECT product_id FROM product_photos LIMIT 1`)!["product_id"]);
     await setProductPhoto(f.context, { productId: any, bytes: webp(20, 20, PHOTO_LIMITS.maxBytes) }, crypto);

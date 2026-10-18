@@ -199,3 +199,26 @@ it("statements carry the exact running balance after each entry, oldest first, a
   assert.deepEqual([...first.items, ...second.items].map(row => [row["amount_minor"], row["balance_minor"]]), [[-700, 300], [500, 1000], [500, 500]]);
   assert.equal(first.items[0]!["balance_minor"], queries.personBalance(f.context, "customer", customer));
 });
+
+it("a sale freezes the latest delivery cost the valuation uses, ignoring the editable purchase price and caller costs", async () => {
+  const f = await fixture(), p = f.product("Oil"), supplier = randomUUIDv7();
+  commands.saveSupplier(f.context, { id: supplier, name: "Wholesaler", active: true, createdAt: at, updatedAt: at });
+  const deliver = (unitCostMinor: number, occurredAt: string) => commands.recordPurchase(f.context, { id: randomUUIDv7(), supplierId: supplier, supplierTransactionId: randomUUIDv7(),
+    lines: [{ id: randomUUIDv7(), movementId: randomUUIDv7(), productId: p, quantity: 2000, unitCostMinor }], payments: [], occurredAt, eventId: randomUUIDv7() });
+  const cost = (saleId: string) => [f.db.get(`SELECT unit_cost_minor AS c FROM sale_items WHERE sale_id=?`, [saleId])!["c"], f.db.get(`SELECT unit_cost_minor AS c FROM inventory_movements WHERE reference_id=?`, [saleId])!["c"]];
+  assert.deepEqual(cost(sell(f.context, p, f.account.id)), [300, 300], "with no costed delivery the purchase price stands in, as in the valuation");
+  deliver(450, "2026-10-06T08:00:00.000Z");
+  const first = sell(f.context, p, f.account.id);
+  assert.deepEqual(cost(first), [450, 450]);
+  const id = randomUUIDv7();
+  commands.completeSale(f.context, { id, number: id, lines: [{ id: randomUUIDv7(), movementId: randomUUIDv7(), productId: p, name: "Line", unitPriceMinor: 500, unitCostMinor: 1, quantity: 1000 }],
+    payments: [{ id: randomUUIDv7(), accountId: f.account.id, amountMinor: 500 }], occurredAt: at, eventId: randomUUIDv7() });
+  assert.deepEqual(cost(id), [450, 450], "a caller's cost is ignored");
+  deliver(200, "2026-10-06T08:30:00.000Z");
+  assert.deepEqual(cost(first), [450, 450], "history keeps the cost frozen at checkout");
+  const valuation = reportView(f.context, "valuation", day.from, day.until);
+  assert.ok(valuation.kind === "valuation"); assert.equal(valuation.products.find(row => row.productId === p)?.unitCostMinor, 200);
+  const blank = randomUUIDv7();
+  commands.saveProduct(f.context, { id: blank, name: "Unknown", unit: "unit", currency: "XAF", sellingPriceMinor: 500, taxRateBasisPoints: 0, minimumStock: 0, divisible: false, active: true, createdAt: at, updatedAt: at });
+  assert.deepEqual(cost(sell(f.context, blank, f.account.id)), [null, null], "nothing says what it cost: an honest gap");
+});

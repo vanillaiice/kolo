@@ -22,7 +22,9 @@ export interface ServerDatabase {
   deliveries: { business_id: string; device_id: string; event_id: string; state: "stored" | "applied" | "deferred" | "unsupported"; updated_at: Generated<Date> };
   receipts: { business_id: string; receipt_id: string; device_id: string; digest: string; canonical: string; signature: string; received_at: Generated<Date> };
   connection_codes: { code_id: string; token_hash: string; label: string; created_by: string; created_at: Generated<Date>; expires_at: Date;
-    used_at: Date | null; used_by: string | null; cancelled_at: Date | null; included_months: Generated<number> };
+    used_at: Date | null; used_by: string | null; cancelled_at: Date | null; included_months: Generated<number>;
+    /** Set for an owner-recovery code: it may only attach a restored owner device to this existing shop (ADR-036). */
+    recovery_business_id: string | null };
   /** Short-lived pairing mailboxes (ADR-032); the server holds only signed or encrypted blobs, keyed by a hash of the code. */
   join_sessions: { join_id: string; business_id: string; owner_device_id: string; offer: unknown; request: unknown | null; enrollment: string | null; sealed_password: unknown | null;
     created_at: Generated<Date>; expires_at: Date };
@@ -220,6 +222,17 @@ export const SERVER_MIGRATIONS: Readonly<Record<string, Migration>> = {
         CHECK ((enrollment IS NULL) = (sealed_password IS NULL)), CHECK (enrollment IS NULL OR request IS NOT NULL))`,
       sql`CREATE INDEX join_sessions_expiry ON join_sessions (expires_at)`,
     ]) await statement.execute(db);
+  } },
+  /**
+   * Owner recovery (ADR-036): an operator-issued code bound to one existing shop attaches a restored owner device after
+   * every till was lost. Ordinary codes still only create shops.
+   */
+  "0006_recovery": { async up(db) {
+    await sql`ALTER TABLE connection_codes ADD COLUMN recovery_business_id uuid REFERENCES shops (business_id)`.execute(db);
+  } },
+  /** Pull offers a shop's clear trust and key facts before its sealed backlog, so a new till reaches its key grant first. */
+  "0007_clear_first": { async up(db) {
+    await sql`CREATE INDEX journal_clear_by_shop ON journal (business_id, seq) WHERE sealed IS NULL`.execute(db);
   } },
 };
 

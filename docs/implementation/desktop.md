@@ -281,16 +281,17 @@ else (for example a manager who is a shareholder). The Journal section filters b
 Today, 7 and 30 days, All), member, device and type; choosing a record narrows to its history.
 Commands live in `electron/reports.ts`.
 
-## Product photos and large files
+
+## Product photos
 
 `setProductPhoto` takes a product ID and the bytes of a WebP or JPEG (at most 64 KiB and
 512 px a side) under `products.edit`; the renderer crops to a 320 px square WebP with EXIF
 orientation applied and metadata dropped. `ProductView.photo` is the photo's SHA-256;
 `productPhoto` returns a data URL (the CSP allows only `data:` images); `removeProductPhoto`
 and `photoUsage` complete the set. `invalid_photo` and `photo_storage_full` are the failures.
-`saveBackup` takes `includePhotos` (default true). `setLargeFiles` (owner, business.settings)
-switches this computer between the standard and large transfer profiles and photo limits;
-`sessionPreferences` reports `largeFiles`. See [ADR-027](../adr/ADR-027-large-files-and-product-photos.md).
+`saveBackup` takes `includePhotos` (default true). A shop holds at most 256 MiB of photos; transfer
+files have one size limit on every device (1 GiB snapshot, [ADR-035](../adr/ADR-035-binary-encrypted-container.md)).
+The former large-files switch (ADR-027) is gone; a leftover `preferences.json` in user data is ignored.
 
 ## Returns contract
 

@@ -6,53 +6,78 @@ export const transferSignature=z.string().regex(/^[a-f0-9]{128}$/);
 export const transferKey=z.string().min(32).max(8192).refine(v=>v.includes("BEGIN PUBLIC KEY")&&!v.includes("PRIVATE KEY"));
 const name=z.string().min(1).max(120).refine(v=>v.trim().length>0);
 const integer=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-/** Size limits for transfer files; every reader and writer checks one profile before allocating. */
+/** Size bounds a transfer reader or writer checks before key derivation or allocation. */
 export interface TransferLimits {
   /** Largest raw SQLite image a backup or enrollment may carry. */
   readonly snapshotBytes: number;
   /** Largest decompressed content: a snapshot image plus its framed signed manifest. */
   readonly contentBytes: number;
-  /** Largest encrypted (compressed) payload; base64 and the header must still fit the file. */
-  readonly payloadBytes: number;
-  /** Largest encrypted file on disk, including base64 expansion and the JSON envelope. */
+  /** Largest encrypted container on disk: compressed content, chunk tags and header. */
   readonly fileBytes: number;
 }
-/** The default profile, sized for low-cost phones and PCs (ADR-026): about fourteen months of a busy shop. */
-export const STANDARD_TRANSFER_LIMITS: TransferLimits = Object.freeze({
-  snapshotBytes: 128 * 1024 * 1024, contentBytes: 128 * 1024 * 1024 + 1024 * 1024 + 4, payloadBytes: 32 * 1024 * 1024, fileBytes: 48 * 1024 * 1024 });
+const MIB=1024*1024;
 /**
- * The opt-in profile for computers with memory to spare (ADR-027). Not unlimited: a file is read
- * as one string, and JavaScript engines cap strings near 512 MiB, so the file stays below that and
- * the payload below its base64 share. Peak memory during a backup is several times the snapshot.
+ * The one size limit for backups and enrollment snapshots on every device (ADR-035): a 1 GiB SQLite
+ * image. Files are whole byte arrays in memory, so peak memory is a few times the snapshot; users are
+ * expected to have several GiB. The file bound adds 1 MiB to the content for deflate's stored-block
+ * overhead on incompressible content (under 0.01%), chunk tags (16 bytes per MiB) and the header.
  */
-export const LARGE_TRANSFER_LIMITS: TransferLimits = Object.freeze({
-  snapshotBytes: 1024 * 1024 * 1024, contentBytes: 1024 * 1024 * 1024 + 1024 * 1024 + 4, payloadBytes: 360 * 1024 * 1024, fileBytes: 496 * 1024 * 1024 });
-/** Largest raw SQLite image a standard backup or enrollment may carry (about a year of a busy shop). */
-export const MAX_SNAPSHOT_IMAGE_BYTES=STANDARD_TRANSFER_LIMITS.snapshotBytes;
-/** Largest decompressed transfer content under the standard profile. */
-export const MAX_TRANSFER_CONTENT_BYTES=STANDARD_TRANSFER_LIMITS.contentBytes;
-/** Largest encrypted (compressed) payload under the standard profile. */
-export const MAX_ENCRYPTED_PAYLOAD_BYTES=STANDARD_TRANSFER_LIMITS.payloadBytes;
-/** Largest encrypted file on disk under the standard profile. */
-export const MAX_ENCRYPTED_FILE_BYTES=STANDARD_TRANSFER_LIMITS.fileBytes;
-// Schemas accept the largest profile; callers check the profile they run under before any work.
-const base64=z.string().max(4*Math.ceil(LARGE_TRANSFER_LIMITS.payloadBytes/3)).regex(/^[A-Za-z0-9+/]*={0,2}$/).refine(v=>v.length%4===0);
-/** Versioned authenticated-encryption header; every field participates in AES-GCM AAD. */
-const encryptedCommon={format:z.literal("kolo.encrypted"),
- purpose:z.enum(["backup","enrollment","exchange","receipt"]),file_id:transferUuid,
- cipher:z.literal("AES-256-GCM"),kdf:z.literal("PBKDF2-SHA256"),iterations:z.literal(600000),
- salt:z.string().regex(/^[a-f0-9]{64}$/),nonce:z.string().regex(/^[a-f0-9]{24}$/)};
+export const TRANSFER_LIMITS: TransferLimits = Object.freeze({ snapshotBytes: 1024 * MIB, contentBytes: 1024 * MIB + MIB + 4, fileBytes: 1024 * MIB + 2 * MIB + 4 });
+/** Largest raw SQLite image a backup or enrollment may carry. */
+export const MAX_SNAPSHOT_IMAGE_BYTES=TRANSFER_LIMITS.snapshotBytes;
+/** Largest decompressed transfer content. */
+export const MAX_TRANSFER_CONTENT_BYTES=TRANSFER_LIMITS.contentBytes;
+/** Largest encrypted transfer file on disk. */
+export const MAX_ENCRYPTED_FILE_BYTES=TRANSFER_LIMITS.fileBytes;
+/** Purposes an encrypted transfer file may declare. */
+export const transferPurposeSchema=z.enum(["backup","enrollment","exchange","receipt"]);
+/** Purposes an encrypted transfer file may declare. */
+export type TransferPurpose=z.infer<typeof transferPurposeSchema>;
+/** First eight bytes of an encrypted container (ADR-035): `\x89KOLO\r\n\x1a`. */
+export const CONTAINER_MAGIC:readonly number[]=Object.freeze([0x89,0x4b,0x4f,0x4c,0x4f,0x0d,0x0a,0x1a]);
+/** Magic plus the four-byte big-endian header length. */
+export const CONTAINER_PREFIX_BYTES=12;
+/** Largest canonical content header a container may declare. */
+export const MAX_CONTAINER_HEADER_BYTES=4096;
+/** Largest canonical key-slot section a container may declare. */
+export const MAX_CONTAINER_SLOTS_BYTES=16384;
+/** Most key slots one container may carry. */
+export const MAX_KEY_SLOTS=8;
+/** AES-GCM tag stored after every chunk. */
+export const CONTAINER_TAG_BYTES=16;
+/** Chunk size writers use; readers accept any power of two from 4 KiB to 4 MiB. */
+export const CONTAINER_CHUNK_BYTES=1024*1024;
+/** The HPKE suite of recipient slots: base mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM (RFC 9180). */
+export const RECIPIENT_SUITE="HPKE-base-X25519-SHA256-AES256GCM";
+const chunkBytes=integer.min(4096).max(4*1024*1024).refine(v=>(v&(v-1))===0);
+const keyId=z.string().regex(/^[a-f0-9]{32}$/);
 /**
- * Version 1 (read-only): uncompressed plaintext. Version 2 (written): `plaintext_bytes` are the
- * encrypted deflate bytes and `content_bytes` the exact decompressed length, both authenticated.
+ * Immutable content header, format version 3 (ADR-035). It is the canonical JSON after the 12-byte
+ * prefix; magic, length and header together are the additional data of every chunk. `recipients`
+ * lists the recovery keys sealed when the file was written, so a removed slot is detectable.
  */
-export const encryptedHeaderSchema=z.discriminatedUnion("format_version",[
- z.strictObject({...encryptedCommon,format_version:z.literal(1),plaintext_bytes:integer.positive().max(18*1024*1024)}),
- z.strictObject({...encryptedCommon,format_version:z.literal(2),compression:z.literal("deflate"),
-  plaintext_bytes:integer.positive().max(LARGE_TRANSFER_LIMITS.payloadBytes),content_bytes:integer.positive().max(LARGE_TRANSFER_LIMITS.contentBytes)}),
-]);
-export const encryptedFileSchema=z.strictObject({header:encryptedHeaderSchema,ciphertext:base64,tag:z.string().regex(/^[a-f0-9]{32}$/)});
-export type EncryptedHeader=z.infer<typeof encryptedHeaderSchema>;
+export const containerHeaderSchema=z.strictObject({format:z.literal("kolo.encrypted"),format_version:z.literal(3),
+ purpose:transferPurposeSchema,file_id:transferUuid,cipher:z.literal("AES-256-GCM"),compression:z.literal("deflate"),
+ nonce_prefix:z.string().regex(/^[a-f0-9]{14}$/),chunk_bytes:chunkBytes,content_bytes:integer.positive().max(TRANSFER_LIMITS.contentBytes),
+ recipients:z.array(keyId).max(MAX_KEY_SLOTS).refine(ids=>ids.every((id,i)=>i===0||ids[i-1]!<id),"sorted and unique")});
+/** Parsed container header. */
+export type ContainerHeader=z.infer<typeof containerHeaderSchema>;
+const memoryKib=integer.min(65_536).max(262_144).refine(v=>(v&(v-1))===0);
+/** A password slot: Argon2id over the NFC-normalized UTF-8 password wraps the file key (bounded parameters). */
+export const passwordSlotSchema=z.strictObject({type:z.literal("password"),kdf:z.literal("argon2id"),memory_kib:memoryKib,
+ passes:integer.min(3).max(10),parallelism:integer.min(1).max(4),salt:z.string().regex(/^[a-f0-9]{32}$/),
+ nonce:z.string().regex(/^[a-f0-9]{24}$/),wrapped:z.string().regex(/^[a-f0-9]{96}$/)});
+/** A recipient slot: the file key sealed with single-shot HPKE to a shop backup recovery key (ADR-036). */
+export const recipientSlotSchema=z.strictObject({type:z.literal("recipient"),suite:z.literal(RECIPIENT_SUITE),key_id:keyId,
+ enc:z.string().regex(/^[a-f0-9]{64}$/),wrapped:z.string().regex(/^[a-f0-9]{96}$/)});
+/**
+ * The mutable key-slot section: at most one password slot, first, then recipient slots in ascending
+ * `key_id` order, so each set of slots has one encoding.
+ */
+export const keySlotsSchema=z.strictObject({slots:z.array(z.discriminatedUnion("type",[passwordSlotSchema,recipientSlotSchema])).min(1).max(MAX_KEY_SLOTS)
+ .refine(slots=>slots.every((slot,i)=>slot.type==="password"?i===0:i===0||slots[i-1]!.type==="password"||(slots[i-1]!.type==="recipient"&&(slots[i-1] as {key_id:string}).key_id<slot.key_id)),"one password slot first, recipients sorted and unique")});
+/** Parsed key slots. */
+export type KeySlots=z.infer<typeof keySlotsSchema>;
 /** Snapshot boundary includes origin coverage and permanent application count, never a global server cursor. */
 export const snapshotBoundarySchema=z.strictObject({audit_watermark:integer,applied_count:integer,
  origins:z.array(z.strictObject({device_id:transferUuid,maximum_sequence:integer,next_local_sequence:integer.positive().nullable()})).max(10000),
@@ -64,9 +89,11 @@ const target=z.strictObject({installation_id:transferUuid,device_id:transferUuid
 export const snapshotManifestSchema=z.strictObject({format:z.literal("kolo.snapshot"),format_version:z.literal(1),snapshot_id:transferUuid,
  kind:z.enum(["backup","enrollment"]),schema_version:integer.min(17),created_at:transferTime,
  business:z.strictObject({id:transferUuid,name,currency:z.literal("XAF")}),owner:z.strictObject({id:transferUuid,name}),
- source_device_id:transferUuid,source_public_key:transferKey,snapshot_digest:transferDigest,snapshot_bytes:integer.positive().max(LARGE_TRANSFER_LIMITS.snapshotBytes),
+ source_device_id:transferUuid,source_public_key:transferKey,snapshot_digest:transferDigest,snapshot_bytes:integer.positive().max(TRANSFER_LIMITS.snapshotBytes),
  boundary:snapshotBoundarySchema,credential_policy:z.literal("device_local_credentials_excluded"),target:target.nullable(),
-}).refine(m=>(m.kind==="enrollment")===(m.target!==null));
+ /** Backups only: the shop data keys (ADR-030) the making till held, so a restore can resume sync with no other till (ADR-036). */
+ shop_keys:z.array(z.strictObject({key_id:transferUuid,epoch:integer.positive(),key:z.string().regex(/^[a-f0-9]{64}$/)})).max(1000).optional(),
+}).refine(m=>(m.kind==="enrollment")===(m.target!==null)).refine(m=>m.kind==="backup"||m.shop_keys===undefined);
 export const signedSnapshotSchema=z.strictObject({manifest:snapshotManifestSchema,digest:transferDigest,signature:transferSignature});
 export type SnapshotManifest=z.infer<typeof snapshotManifestSchema>;
 export type SignedSnapshot=z.infer<typeof signedSnapshotSchema>;

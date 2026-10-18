@@ -1,8 +1,44 @@
 import { domainsForWrite, publishChanges, type ChangedDomain } from "./changes.ts";
-import { mkdirSync, readFileSync, writeFileSync, statSync, rmSync, renameSync, openSync, fsyncSync, closeSync, existsSync, readdirSync, lstatSync } from "node:fs";
+import { mkdirSync, writeFileSync, statSync, rmSync, renameSync, openSync, fsyncSync, closeSync, existsSync, readdirSync, lstatSync } from "node:fs";
+import { open as openFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUIDv7 } from "node:crypto";
-import { STANDARD_TRANSFER_LIMITS, TransferError, type SnapshotPort, type SnapshotHandle, type TransferLimits } from "../../backup/types.ts";
+import { Worker } from "node:worker_threads";
+import { MAX_SNAPSHOT_BYTES, TransferError, type ImageReader, type ImageWriter, type SnapshotPort, type SnapshotHandle } from "../../backup/types.ts";
+
+/**
+ * `VACUUM INTO` run by a worker thread with its own SQLite connection (ADR-035), so a backup of a large shop never
+ * blocks the till's main thread. The worker reads a consistent WAL snapshot while the till keeps writing. It is
+ * inline code, not a file, so it also runs from inside a packaged Electron archive.
+ */
+const VACUUM_WORKER = `const { parentPort, workerData } = require("node:worker_threads");
+const { DatabaseSync } = require("node:sqlite");
+let db;
+try { db = new DatabaseSync(workerData.source); db.exec("PRAGMA busy_timeout = 5000"); db.prepare("VACUUM INTO ?").run(workerData.target); parentPort.postMessage({ ok: true }); }
+catch (error) { parentPort.postMessage({ ok: false, message: String(error && error.message) }); }
+finally { try { db && db.close(); } catch {} }`;
+function vacuumInto(source: string, target: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(VACUUM_WORKER, { eval: true, workerData: { source, target } });
+    let settled = false;
+    worker.once("message", (message: { ok: boolean; message?: string }) => { settled = true; if (message.ok) resolve(); else reject(new Error(message.message ?? "vacuum failed")); });
+    worker.once("error", error => { if (!settled) { settled = true; reject(error); } });
+    worker.once("exit", code => { if (!settled) { settled = true; reject(new Error(`vacuum worker exited with ${code}`)); } });
+  });
+}
+/** Reads a private file in chunks; closing deletes it. */
+async function fileReader(path: string): Promise<ImageReader> {
+  const handle = await openFile(path, "r"), size = (await handle.stat()).size;
+  let closed = false;
+  return { size,
+    async read(offset, length) {
+      if (closed || !Number.isSafeInteger(offset) || offset < 0 || length < 0) throw new TransferError("invalid_snapshot");
+      const buffer = new Uint8Array(Math.max(0, Math.min(length, size - offset)));
+      let at = 0; while (at < buffer.byteLength) { const { bytesRead } = await handle.read(buffer, at, buffer.byteLength - at, offset + at); if (bytesRead === 0) break; at += bytesRead; }
+      return at === buffer.byteLength ? buffer : buffer.subarray(0, at);
+    },
+    async close() { if (closed) return; closed = true; await handle.close(); rmSync(path, { force: true }); } };
+}
 /**
  * A {@link Database} backed by Node's built-in SQLite.
  *
@@ -162,9 +198,8 @@ function describe(cause: unknown): string {
 }
 
 /** Native file slots and private SQLite staging, shared by desktop and real-database recovery tests. */
-export function nodeWorkspaceFiles(directory:string,options:{readonly limits?:()=>TransferLimits}={}): SnapshotPort & { limits():TransferLimits; openActive():Database; activeId():string; saved():Promise<readonly {id:string;name:string}[]>; selectSaved(id:string,target:Database):Promise<Database>; close():void } {
+export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActive():Database; activeId():string; saved():Promise<readonly {id:string;name:string}[]>; selectSaved(id:string,target:Database):Promise<Database>; close():void } {
   mkdirSync(directory,{recursive:true,mode:0o700});
-  const limits=():TransferLimits=>options.limits?.() ?? STANDARD_TRANSFER_LIMITS,maximum=():number=>limits().snapshotBytes;
   const control=openDatabase({location:join(directory,"workspace-slots.db")});
   control.run("PRAGMA synchronous=FULL");
   control.run(`CREATE TABLE IF NOT EXISTS active_slot(id INTEGER PRIMARY KEY CHECK(id=1),filename TEXT NOT NULL,generation INTEGER NOT NULL) STRICT`);
@@ -176,10 +211,14 @@ export function nodeWorkspaceFiles(directory:string,options:{readonly limits?:()
     let state:"open"|"closed"|"activated"="open";
     return {database,
       async bytes(){
+        const image=await this.image();
+        try{const bytes=await image.read(0,image.size);if(bytes.byteLength!==image.size)throw new TransferError("invalid_snapshot");return bytes;}finally{await image.close();}
+      },
+      async image(){
         if(state!=="open")throw new TransferError("invalid_snapshot");
-        const exportName=allocate(),path=name(exportName);
-        try{database.run("VACUUM INTO ?",[path]);if(statSync(path).size>maximum())throw new TransferError("too_large");return new Uint8Array(readFileSync(path));}
-        finally{rmSync(path,{force:true});}
+        const path=name(allocate());
+        try{await vacuumInto(name(filename),path);if(statSync(path).size>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");return await fileReader(path);}
+        catch(error){rmSync(path,{force:true});throw error instanceof TransferError?error:new TransferError("invalid_snapshot");}
       },
       async discard(){if(state==="activated")return;if(state==="open"){database.close();state="closed";}for(const suffix of ["","-wal","-shm"])rmSync(name(filename)+suffix,{force:true});},
       async activate(target){
@@ -199,7 +238,7 @@ export function nodeWorkspaceFiles(directory:string,options:{readonly limits?:()
       },
     };
   }
-  return {limits,
+  return {
     /** File name of the active slot; a failed replacement selects it again. */
     activeId(){return String(control.get(`SELECT filename FROM active_slot WHERE id=1`)!["filename"]);},
     openActive(){const row=control.get(`SELECT * FROM active_slot WHERE id=1`)!;const filename=String(row["filename"]);if(filename!=="kolo.db"&&!existsSync(name(filename)))throw new TransferError("activation_failed");const database=openDatabase({location:name(filename)});bindings.set(database,{filename,generation:Number(row["generation"])});return database;},
@@ -221,8 +260,27 @@ export function nodeWorkspaceFiles(directory:string,options:{readonly limits?:()
       catch(error){next.close();throw error;}
       bindings.set(next,{filename:id,generation:binding.generation+1});return next;
     },
-    async capture(source){const filename=allocate();try{source.run("VACUUM INTO ?",[name(filename)]);if(statSync(name(filename)).size>maximum())throw new TransferError("too_large");return handle(filename,openDatabase({location:name(filename)}));}catch(error){rmSync(name(filename),{force:true});throw error;}},
-    async open(bytes){if(bytes.byteLength<100||bytes.byteLength>maximum())throw new TransferError("invalid_snapshot");const filename=allocate();writeFileSync(name(filename),bytes,{flag:"wx",mode:0o600});try{return handle(filename,openDatabase({location:name(filename)}));}catch{rmSync(name(filename),{force:true});throw new TransferError("invalid_snapshot");}},
+    async capture(source){
+      const filename=allocate(),bound=bindings.get(source);
+      try{
+        // An on-disk shop is copied by a worker thread; an in-memory database (tests) is copied in place.
+        if(bound!==undefined)await vacuumInto(name(bound.filename),name(filename));else source.run("VACUUM INTO ?",[name(filename)]);
+        if(statSync(name(filename)).size>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");return handle(filename,openDatabase({location:name(filename)}));
+      }catch(error){rmSync(name(filename),{force:true});throw error;}
+    },
+    async receive():Promise<ImageWriter>{
+      const filename=allocate(),path=name(filename),file=await openFile(path,"wx",0o600);let size=0,state:"writing"|"done"="writing";
+      return {
+        async write(bytes){if(state!=="writing")throw new TransferError("invalid_snapshot");size+=bytes.byteLength;if(size>MAX_SNAPSHOT_BYTES)throw new TransferError("too_large");let at=0;while(at<bytes.byteLength)at+=(await file.write(bytes,at,bytes.byteLength-at)).bytesWritten;},
+        async open(){
+          if(state!=="writing")throw new TransferError("invalid_snapshot");state="done";await file.sync();await file.close();
+          if(size<100){rmSync(path,{force:true});throw new TransferError("invalid_snapshot");}
+          try{return handle(filename,openDatabase({location:path}));}catch{rmSync(path,{force:true});throw new TransferError("invalid_snapshot");}
+        },
+        async discard(){if(state==="writing"){state="done";await file.close().catch(()=>undefined);}for(const suffix of ["","-wal","-shm"])rmSync(path+suffix,{force:true});},
+      };
+    },
+    async open(bytes){if(bytes.byteLength<100||bytes.byteLength>MAX_SNAPSHOT_BYTES)throw new TransferError("invalid_snapshot");const filename=allocate();writeFileSync(name(filename),bytes,{flag:"wx",mode:0o600});try{return handle(filename,openDatabase({location:name(filename)}));}catch{rmSync(name(filename),{force:true});throw new TransferError("invalid_snapshot");}},
     async empty(){const filename=allocate();return handle(filename,openDatabase({location:name(filename)}));},
     close(){control.close();},
   };
