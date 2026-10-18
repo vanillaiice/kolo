@@ -51,8 +51,9 @@ async function withDisplay(work) {
 }
 
 function step(command, args, env) {
-  const run = spawnSync(command, args, { cwd: root, env, stdio: "inherit" });
-  if (run.status !== 0) throw new Error(`${[command, ...args].join(" ")} failed`);
+  // On Windows npm is npm.cmd, which Node only starts through a shell.
+  const run = spawnSync(command, args, { cwd: root, env, stdio: "inherit", shell: process.platform === "win32" && command === "npm" });
+  if (run.status !== 0) throw new Error(`${[command, ...args].join(" ")} failed${run.error === undefined ? "" : `: ${run.error.message}`}`);
 }
 
 try {
