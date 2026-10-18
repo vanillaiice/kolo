@@ -7,10 +7,12 @@
  * kolo://self-check and reads the app's platform check from logcat: every crypto primitive against known answers,
  * key imports, NFC passwords, and the golden backup opened by password and by recovery key. Fails unless the install
  * replaced the app at app.json's version, so a stale APK or one with another app ID cannot pass on the existing app.
+ * Without an APK argument, the built APK must also be newer than every source file it bundles, so a failed or skipped
+ * build cannot be verified with the previous one.
  * Never uninstalls: that would erase the phone's shop. Needs exactly one device or emulator with USB debugging.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -22,6 +24,22 @@ function adb(args, options = {}) {
   return run.stdout;
 }
 const sleep = milliseconds => new Promise(done => setTimeout(done, milliseconds));
+// What goes into the APK: the app's source and configuration, the shared packages it bundles, and the lockfile.
+const SOURCES = ["apps/mobile/src", "apps/mobile/plugins", "apps/mobile/assets", "apps/mobile/app.json", "apps/mobile/index.ts", "apps/mobile/package.json",
+  "apps/mobile/babel.config.cjs", "packages/core/src", "packages/core/package.json", "packages/contracts/src", "packages/contracts/package.json", "package-lock.json"];
+/** The newest source file, so an APK built before a change (committed or not) is caught; a failed build leaves the old one. */
+function newestSource() {
+  let newest = { path: "", mtimeMs: 0 };
+  const visit = path => {
+    if (!existsSync(path)) return;
+    const stat = statSync(path);
+    if (stat.isDirectory()) { for (const entry of readdirSync(path)) visit(join(path, entry)); return; }
+    if (/\.test\.[cm]?[jt]sx?$/.test(path)) return; // Tests are not bundled.
+    if (stat.mtimeMs > newest.mtimeMs) newest = { path, mtimeMs: stat.mtimeMs };
+  };
+  for (const source of SOURCES) visit(join(root, source));
+  return newest;
+}
 // The phone's build of the app. Installing an APK with another app ID succeeds but adds a second app, and the
 // self-check would then run whatever build was already installed.
 function installed() {
@@ -41,6 +59,9 @@ try {
   const gradle = join(root, "apps/mobile/android/app/build/outputs/apk/release", `app-${split}-release.apk`);
   if (process.argv[2] === undefined && existsSync(gradle) && statSync(gradle).mtimeMs > statSync(apk).mtimeMs)
     throw new Error(`${apk} is older than Gradle's ${gradle}; rebuild with npm run build:mobile:android or pass the APK`);
+  const source = newestSource();
+  if (process.argv[2] === undefined && source.mtimeMs > statSync(apk).mtimeMs)
+    throw new Error(`${apk} is older than ${source.path.slice(root.length + 1)}; rebuild with npm run build:mobile:android (or pass an APK to test it as it is)`);
   const before = installed();
   process.stdout.write(`Installing ${apk} on ${devices[0].split("\t")[0]} (${abi})\n`);
   const install = spawnSync("adb", ["install", "-r", apk], { encoding: "utf8", timeout: 300_000 });
