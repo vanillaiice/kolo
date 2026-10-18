@@ -156,9 +156,11 @@ it("an independent implementation opens what KOLO writes, for password and recov
   }
  }
  // Search sizes around one chunk until a payload fills its last record exactly, so that boundary is always covered. The
- // compressed size of random bytes varies with the bytes, so each size gets a few draws and the range is wide.
+ // compressed size varies with the bytes, so the bytes come from a fixed seed: deflate is pure JS, so every platform
+ // finds the same hit instead of a fresh random draw sometimes finding none.
+ const seeded=(length:number,seed:number):Uint8Array=>{const next=generator(seed),bytes=new Uint8Array(length);for(let at=0;at<length;at++)bytes[at]=next(256);return bytes;};
  for(let size=4096-400,draw=0;!boundaryHit&&size<4096+400;draw=(draw+1)%4,size+=draw===0?1:0){
-  const content=random(size),file=await sealContainer(content,"backup",randomUUIDv7(),{recipients:[recipientOf(owner)]},fast,TRANSFER_LIMITS,4096);
+  const content=seeded(size,size*4+draw+1),file=await sealContainer(content,"backup",randomUUIDv7(),{recipients:[recipientOf(owner)]},fast,TRANSFER_LIMITS,4096);
   const body=file.byteLength-recordsAt(file),count=Math.ceil(body/4112);
   if((body-16*count)%4096===0){boundaryHit=true;assert.deepEqual(new Uint8Array((await oracleOpen(file,{recoveryKey:owner})).content),content);}
  }
