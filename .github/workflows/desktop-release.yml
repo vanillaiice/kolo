@@ -61,9 +61,16 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          sudo apt-get install -y xvfb
+          sudo apt-get install -y xvfb gnome-keyring dbus-x11
       # Every artifact passes in its own packaged runtime: self-check, then the real-UI workflow (scripts/verify-desktop-build.mjs).
-      - run: npm run verify:desktop:${{ matrix.platform == 'windows' && 'win' || 'linux' }}
+      - if: matrix.platform == 'windows'
+        run: npm run verify:desktop:win
+      # The app refuses Linux's plaintext basic_text store, so the gate runs with an unlocked GNOME keyring on a session bus;
+      # XDG_CURRENT_DESKTOP makes Electron select libsecret on the runner.
+      - if: matrix.platform == 'linux'
+        env:
+          XDG_CURRENT_DESKTOP: GNOME
+        run: dbus-run-session -- bash -c 'echo -n "" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && npm run verify:desktop:linux'
       - name: Hash artifacts
         shell: bash
         run: |
