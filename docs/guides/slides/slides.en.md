@@ -146,7 +146,7 @@ layout: two-cols
 - Accounts: **Cash**, **Mobile Money**, **Bank**, **Card**
 - Expenses: rent, electricity, transport, salaries…
 - Count the cash drawer and see the difference
-- Reports: sales, profit, best sellers, stock value, debts, tax (VAT)
+- Reports: sales, profit, best sellers, stock value, debts, tax (VAT), printable or saved as PDF
 - Analytics: trends and busy hours
 
 ::right::
@@ -170,7 +170,7 @@ if product costs are entered.
 | Inventory staff | Deliveries and counts |
 | Accountant | Money and reports |
 
-Permissions can be adjusted per person. The **Journal** shows who did what, when, and on which device.
+The owner decides what each role may do, and can make exceptions for one person. The **Journal** shows who did what, when, and on which device.
 
 <!--
 Owners worry about theft. Personal codes plus the journal answer that concern.

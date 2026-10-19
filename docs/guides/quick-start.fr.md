@@ -66,7 +66,7 @@ Dans le même écran, cliquez aussi sur **Créer une clé de récupération**. N
 
 ## 6. Facultatif : ajouter votre personnel et votre téléphone
 
-**Personnel** : allez dans **Personnel → Ajouter un membre**, saisissez un nom, choisissez un **Rôle** (par exemple **Caissier**) et donnez-lui son propre code. Chacun se connecte avec son code, et le **Journal** montre qui a fait quoi.
+**Personnel** : allez dans **Personnel → Ajouter un membre**, saisissez un nom, choisissez un **Rôle** (par exemple **Caissier**) et donnez-lui son propre code. Chacun se connecte avec son code, et le **Journal** montre qui a fait quoi. Pour changer ce qu’un rôle peut faire, utilisez **Personnel → Rôles**.
 
 **Un téléphone ou un deuxième ordinateur**, sur le même Wi-Fi ou point d’accès (sans Internet) :
 

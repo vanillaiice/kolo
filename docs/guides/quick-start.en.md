@@ -66,7 +66,7 @@ Also click **Create a recovery key** in the same screen. Write down or print the
 
 ## 6. Optional: add your staff and your phone
 
-**Staff**: go to **Staff → Add staff member**, enter a name, choose a **Role** (for example **Cashier**) and give them their own code. Each person signs in with their own code, and the **Journal** shows who did what.
+**Staff**: go to **Staff → Add staff member**, enter a name, choose a **Role** (for example **Cashier**) and give them their own code. Each person signs in with their own code, and the **Journal** shows who did what. To change what a role may do, use **Staff → Roles**.
 
 **A phone or second computer**, on the same Wi-Fi or hotspot (no internet needed):
 

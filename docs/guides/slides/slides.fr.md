@@ -146,7 +146,7 @@ layout: two-cols
 - Comptes : **Espèces**, **Mobile Money**, **Banque**, **Carte**
 - Dépenses : loyer, électricité, transport, salaires…
 - Comptez la caisse et voyez l’écart
-- Rapports : ventes, marge, meilleures ventes, valeur du stock, dettes, taxe (TVA)
+- Rapports : ventes, marge, meilleures ventes, valeur du stock, dettes, taxe (TVA), à imprimer ou enregistrer en PDF
 - Analyses : tendances et heures d’affluence
 
 ::right::
@@ -170,7 +170,7 @@ en deux clics si les coûts des articles sont saisis.
 | Gestionnaire de stock | Livraisons et comptages |
 | Comptable | Argent et rapports |
 
-Les autorisations s’ajustent par personne. Le **Journal** montre qui a fait quoi, quand et sur quel appareil.
+Le propriétaire décide ce que chaque rôle peut faire, et peut faire des exceptions pour une personne. Le **Journal** montre qui a fait quoi, quand et sur quel appareil.
 
 <!--
 Les propriétaires craignent le vol. Les codes personnels et le journal répondent à cette inquiétude.
