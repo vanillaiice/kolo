@@ -2,9 +2,11 @@ import { useState } from "react";
 import { localDayPeriod } from "@kolo/core/domain/entry";
 import { formatMoney, formatQuantity, formatRate } from "@kolo/core/domain/money";
 import type { Permission } from "@kolo/core/identity/permissions";
+import type { ReportDocumentLabels, ReportDocumentText } from "@kolo/core/domain/report-document";
+import type { Language } from "@kolo/core/domain/money";
 import type { ReportKind, ReportLine, ReportResult, ShopService } from "../../shared/service.ts";
 import type { TextKey } from "../text.ts";
-import { ReadState, useRead, useText } from "./ui.tsx";
+import { ErrorText, ReadState, useAction, useRead, useText } from "./ui.tsx";
 
 type Props = { readonly service: ShopService; readonly sessionId: string; readonly revision: number; readonly permissions: readonly Permission[] };
 const authority: readonly (readonly [ReportKind, Permission, boolean])[] = [
@@ -38,12 +40,39 @@ export function Reports({ service, sessionId, revision, permissions }: Props): R
           <button className="secondary" onClick={()=>{const start=new Date();start.setDate(1);preset(start);}}>{t("thisMonth")}</button></div></>}
     </div>
     {period===undefined?<p className="notice error" role="alert">{t("invalidPeriod")}</p>:allowed.length===0?<p className="notice error">{t("noAccess")}</p>:
-      <ReportView key={`${kind}:${period.from}:${period.until}`} service={service} sessionId={sessionId} revision={revision} kind={kind} period={period}/>}
+      <ReportView key={`${kind}:${period.from}:${period.until}`} canExport={permissions.includes("data.export")} service={service} sessionId={sessionId} revision={revision} kind={kind} period={period} days={dated?{from,to}:undefined}/>}
   </section>;
 }
-function ReportView({service,sessionId,revision,kind,period}:{service:ShopService;sessionId:string;revision:number;kind:ReportKind;period:{from:string;until:string}}):React.JSX.Element{
+/** A local YYYY-MM-DD day in words ("19 octobre 2026"). */
+function longDay(value:string,language:Language):string{
+  const [year=1970,month=1,date=1]=value.split("-").map(Number);
+  return new Intl.DateTimeFormat(language==="fr"?"fr-FR":"en-GB",{day:"numeric",month:"long",year:"numeric"}).format(new Date(year,month-1,date));
+}
+const fill=(template:string,values:Record<string,string>):string=>template.replace(/\{(\w+)\}/g,(_,key:string)=>values[key]??"");
+/** The wording of a report PDF; the main process adds the shop name and reads the figures itself. */
+function pdfText(t:(key:TextKey)=>string,language:Language,kind:ReportKind,days:{from:string;to:string}|undefined):Omit<ReportDocumentText,"shop">{
+  const now=new Date(),stamp=new Intl.DateTimeFormat(language==="fr"?"fr-FR":"en-GB",{dateStyle:"long",timeStyle:"short"}).format(now);
+  const labels:ReportDocumentLabels={name:t("pdfName"),count:t("countColumn"),total:t("total"),salesTotal:t("salesTotal"),transactions:t("transactions"),itemsSold:t("itemsSold"),revenue:t("revenue"),
+    grossProfit:t("grossProfit"),expenses:t("expenses"),netResult:t("netResult"),customerDebt:t("customersOwe"),supplierDebt:t("owedToSuppliers"),lowStock:t("lowStockCount"),
+    uncostedLines:t("uncostedLines"),uncostedProducts:t("uncosted"),purchasesTotal:t("rep_purchases"),deliveries:t("deliveries"),noSupplier:t("pdfNoSupplier"),uncategorized:t("pdfUncategorized"),
+    account:t("account"),moneyIn:t("moneyInShort"),moneyOut:t("moneyOutShort"),net:t("net"),closing:t("closing"),stockValue:t("rep_valuation"),stock:t("stock"),unitCost:t("unitCostShort"),
+    value:t("value"),negativeStock:t("negativeStock"),taxRate:t("taxRateColumn"),taxGross:t("grossIncl"),taxAmount:t("taxAmount"),taxNet:t("netExcl"),taxNote:t("taxReportNote"),
+    noData:t("noReportData"),truncated:t("truncatedRows")};
+  return {language,title:t(`rep_${kind}` as TextKey),labels,credit:`${t("receiptGenerated")} kolo · ${t("receiptMadeBy")} hblabs`,generated:fill(t("pdfPrinted"),{date:stamp}),
+    period:days===undefined?fill(t("pdfAsOf"),{date:stamp}):days.from===days.to?longDay(days.from,language):fill(t("pdfPeriod"),{from:longDay(days.from,language),to:longDay(days.to,language)})};
+}
+function ReportView({service,sessionId,revision,kind,period,days,canExport}:{canExport:boolean;service:ShopService;sessionId:string;revision:number;kind:ReportKind;period:{from:string;until:string};days:{from:string;to:string}|undefined}):React.JSX.Element{
+  const {t,language}=useText(),saving=useAction(),[saved,setSaved]=useState(false);
   const read=useRead(()=>service.report({sessionId,kind,from:period.from,until:period.until}),[service,sessionId,kind,period.from,period.until,revision]);
-  return <ReadState loading={read.loading} error={read.error} empty={false} emptyText="" retry={read.retry}>{read.data!==undefined&&<Result value={read.data}/>}</ReadState>;
+  const savePdf=():void=>{setSaved(false);void saving.run(async()=>{
+    const result=await service.saveReportPdf({sessionId,kind,from:period.from,until:period.until,filename:`kolo-${kind}${days===undefined?"":`_${days.from}_${days.to}`}.pdf`,text:pdfText(t,language,kind,days)});
+    if(result.ok&&result.value)setSaved(true);
+    return result;
+  });};
+  return <ReadState loading={read.loading} error={read.error} empty={false} emptyText="" retry={read.retry}>{read.data!==undefined&&<>
+    {canExport&&<div className="actions report-export"><button className="secondary" disabled={saving.busy} onClick={savePdf}>{saving.busy?t("savingPdf"):t("savePdf")}</button>
+      {saved&&<p className="notice success" role="status">{t("pdfSaved")}</p>}<ErrorText message={saving.error}/></div>}
+    <Result value={read.data}/></>}</ReadState>;
 }
 function Tile({label,value,tone}:{label:string;value:string;tone?:"negative"}):React.JSX.Element{
   return <div className="stat-tile"><span>{label}</span><strong className={tone}>{value}</strong></div>;

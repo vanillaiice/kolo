@@ -174,6 +174,7 @@ export type { ReportKind, ReportLine, ReportResult, AnalyticsBucket, AnalyticsPo
 import type { ReportKind, AnalyticsBucket, ReportResult, AnalyticsResult } from "@kolo/core/application/report-views";
 export type { AuditEntry, AuditFacts, AuditGroup, AuditPage, AuditSubject } from "@kolo/core/application/audit";
 import type { AuditEntry, AuditGroup, AuditPage } from "@kolo/core/application/audit";
+import type { ReportDocumentText } from "@kolo/core/domain/report-document";
 /** What remains returnable from a sale or purchase, at the original net prices or costs. */
 export interface ReturnSourceView {
   readonly kind: "SALE" | "PURCHASE"; readonly originalId: string; readonly priorId?: string; readonly hasCounterparty: boolean;
@@ -435,6 +436,11 @@ export interface ShopService {
   journalExport(input: SessionRequest & { readonly from?: string; readonly until?: string; readonly actorId?: string; readonly deviceId?: string; readonly group?: AuditGroup; readonly subjectId?: string }): Promise<Result<{ readonly items: readonly AuditEntry[]; readonly truncated: boolean }>>;
   /** Saves a `.csv` export (UTF-8 text) where the member chooses, under data.export; false when the save dialog was cancelled. */
   saveCsv(input: SessionRequest & { readonly filename: string; readonly content: string }): Promise<Result<boolean>>;
+  /**
+   * Saves one report as an A4 PDF where the member chooses, under that report's permission. The main process reads the
+   * figures itself; the renderer supplies the wording and a plain `.pdf` name. False when the save dialog was cancelled.
+   */
+  saveReportPdf(input: SessionRequest & { readonly kind: ReportKind; readonly from: string; readonly until: string; readonly filename: string; readonly text: Omit<ReportDocumentText, "shop"> }): Promise<Result<boolean>>;
   /** Returnable lines of a sale (sales.refund) or purchase (purchases.create and purchases.pay). */
   returnSource(input: SessionRequest & { readonly kind: "SALE" | "PURCHASE"; readonly originalId: string }): Promise<Result<ReturnSourceView>>;
   /** Exact value of a selection against the current predecessor. */

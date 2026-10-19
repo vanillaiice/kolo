@@ -600,4 +600,10 @@ export const mobileStrings = {
   "jd.new": ["nouveau", "new"], "jd.archived": ["archivé", "archived"], "jd.reversal": ["annulation", "reversal"], "jd.on": ["activé", "on"], "jd.off": ["désactivé", "off"],
   "jd.cash.ADJUSTMENT": ["correction", "correction"], "jd.cash.OPENING_BALANCE": ["solde initial", "opening balance"], "jd.CASH_IN": ["entrée", "money in"], "jd.CASH_OUT": ["sortie", "money out"], "jd.STANDARD": ["taux normal", "standard rate"], "jd.EXEMPT": ["exonéré", "exempt"], "jd.RATE": ["taux propre", "own rate"],
   "jd.OPENING_BALANCE": ["stock initial", "opening stock"], "jd.ADJUSTMENT": ["ajustement", "adjustment"], "jd.DAMAGE": ["perte", "loss"], "jd.STOCK_COUNT": ["comptage", "count"],
+  printReport: ["Imprimer ou enregistrer en PDF", "Print or save as PDF"], "pdf.count": ["Nombre", "Count"], "pdf.unitCost": ["Coût unitaire", "Unit cost"],
+  "pdf.value": ["Valeur", "Value"], "pdf.taxRate": ["Taux", "Rate"], "pdf.noData": ["Rien sur cette période", "Nothing in this period"],
+  "pdf.uncostedLines": ["lignes vendues sans coût connu : la marge est sous-estimée.", "lines sold without a known cost: profit is understated."],
+  "pdf.uncostedProducts": ["articles sans coût ne sont pas valorisés.", "products without a cost are not valued."],
+  "pdf.truncated": ["Liste limitée aux premières lignes ; les totaux restent exacts.", "List limited to the first rows; totals stay exact."],
+  "pdf.period": ["Du {from} au {to}", "From {from} to {to}"], "pdf.asOf": ["Situation au {date}", "As of {date}"], "pdf.printed": ["Imprimé le {date}", "Printed on {date}"],
 } as const satisfies Record<string, readonly [string, string]>;

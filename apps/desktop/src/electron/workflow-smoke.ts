@@ -1,7 +1,8 @@
 import { basename, join } from "node:path";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { openTransferFile, saveDesktopExportFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.ts";
+import { openTransferFile, saveDesktopExportFile, saveDesktopPdfFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.ts";
+import { renderPdf } from "./pdf.ts";
 import { copyFile, readFile, readdir, writeFile, mkdir } from "node:fs/promises";
 import { nativeTheme, type BrowserWindow, type Dialog, type SaveDialogOptions, type SaveDialogReturnValue } from "electron";
 import type { TransferDialogs } from "./transfer.ts";
@@ -32,6 +33,7 @@ export function smokeDialogs(outgoing: string): TransferDialogs {
     save: async document => keep(await saveDesktopTransferFile(document, native)),
     saveStream: async write => keep(await saveDesktopTransferStream(write, native, outgoing)),
     saveExport: async (filename, bytes) => keep(await saveDesktopExportFile(filename, bytes, native)),
+    savePdf: async (filename, html) => keep(await saveDesktopPdfFile(filename, await renderPdf(html), native)),
   };
 }
 /** Disposable actual Electron DOM/IPC/native-vault workflow; invoked only by the explicit smoke flag. */
@@ -234,6 +236,13 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await navigate("Reports"); await wait("document.querySelector('.stat-tile strong')?.textContent.replace(/[^0-9-]/g,'')==='750'", "sales report");
     await audit("Reports");
     assert.equal(await evaluate("Array.from(document.querySelectorAll('.stat-tile')).find(tile=>tile.textContent.startsWith('Expenses'))?.textContent.replace(/[^0-9-]/g,'')"), "200");
+    // Save as PDF: the main process reads the report again and renders an A4 page in its script-less print window.
+    await clickVisible(".report-export button", "Save as PDF"); await wait(`${visible(".report-export .notice.success")}.length===1`, "report saved as PDF");
+    const pdfDirectory = join(process.env["KOLO_DESKTOP_SMOKE_DIR"]!, "saved"), reportPdf = (await readdir(pdfDirectory)).filter(name => name.endsWith(".pdf")).sort().at(-1);
+    assert.ok(reportPdf !== undefined && /kolo-dashboard_\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.pdf$/.test(reportPdf), "the PDF is named after its report and period");
+    const pdfBytes = await readFile(join(pdfDirectory, reportPdf));
+    assert.ok(pdfBytes.length > 1000 && pdfBytes.subarray(0, 5).toString() === "%PDF-", "report PDF rendering");
+    if (process.env["KOLO_DESKTOP_SMOKE_REPORT_PDF"] !== undefined) await writeFile(process.env["KOLO_DESKTOP_SMOKE_REPORT_PDF"], pdfBytes);
     // Analytics: the default period includes today; KPIs, trend, heatmap, best sellers and shares render.
     await navigate("Analytics"); await wait("document.querySelector('.stat-tile strong')?.textContent.replace(/[^0-9-]/g,'')==='750'", "analytics summary");
     await wait(`${visible(".chart-frame .recharts-wrapper")}.length===2 && ${visible(".heatmap-cell:not(.is-empty)")}.length>0 && ${visible(".donut .recharts-wrapper")}.length===2`, "analytics charts");

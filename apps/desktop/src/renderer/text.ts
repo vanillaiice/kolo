@@ -250,7 +250,7 @@ const strings = {
   "permission.users.manage": ["Gérer le personnel", "Manage staff"],
   "permission.business.settings": ["Configurer la boutique", "Configure shop"],
   "permission.audit.view": ["Consulter le journal des opérations", "View operation journal"],
-  "permission.data.export": ["Exporter des données (fichiers CSV)", "Export data (CSV files)"],
+  "permission.data.export": ["Exporter des données (fichiers CSV et PDF)", "Export data (CSV and PDF files)"],
   "permission.sales.price_override": ["Modifier le prix lors d’une vente", "Override sale price"],
   returnItems: ["Retour d’articles", "Return items"], returnGoods: ["Retour au fournisseur", "Return to supplier"], fullReturn: ["Tout retourner", "Return everything"],
   returnable: ["Retournable", "Returnable"], returnQuantity: ["Quantité retournée", "Quantity returned"], returnValue: ["Valeur du retour", "Return value"],
@@ -483,6 +483,9 @@ const strings = {
   "jd.new": ["nouveau", "new"], "jd.archived": ["archivé", "archived"], "jd.reversal": ["annulation", "reversal"], "jd.on": ["activé", "on"], "jd.off": ["désactivé", "off"],
   "jd.cash.ADJUSTMENT": ["correction", "correction"], "jd.cash.OPENING_BALANCE": ["solde initial", "opening balance"], "jd.CASH_IN": ["entrée", "money in"], "jd.CASH_OUT": ["sortie", "money out"], "jd.STANDARD": ["taux normal", "standard rate"], "jd.EXEMPT": ["exonéré", "exempt"], "jd.RATE": ["taux propre", "own rate"],
   storage_failed: ["L’opération n’a pas abouti. Votre saisie reste disponible pour réessayer.", "The operation did not finish. Your entries remain available to retry."],
+  savePdf: ["Enregistrer en PDF", "Save as PDF"], savingPdf: ["Création du PDF…", "Creating the PDF…"], pdfSaved: ["Rapport enregistré en PDF.", "Report saved as PDF."],
+  pdfName: ["Nom", "Name"], pdfUncategorized: ["Sans catégorie", "Uncategorized"], pdfNoSupplier: ["Sans fournisseur", "No supplier"],
+  pdfPeriod: ["Du {from} au {to}", "From {from} to {to}"], pdfAsOf: ["Situation au {date}", "As of {date}"], pdfPrinted: ["Imprimé le {date}", "Printed on {date}"],
 } as const;
 export type TextKey = keyof typeof strings;
 export type Language = "fr" | "en";

@@ -239,8 +239,19 @@ under `reports.inventory`, customer debts under `reports.customers`, purchases a
 supplier debts under `reports.suppliers`. Results are serializable and row lists are
 capped at 500 (stock alerts at 100) with a `truncated` flag; totals stay exact. Report and
 analytics assembly lives in core `application/report-views`, shared with mobile. The
-Reports section shows stat tiles and tables only. Commands live in `electron/reports.ts`.
+Reports section shows stat tiles and tables. Commands live in `electron/reports.ts`.
 `KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT` optionally saves the fixture summary screen.
+
+`saveReportPdf` takes the same kind and period, a plain `.pdf` file name and the wording
+(language, title, period line, print line, credit and every `REPORT_DOCUMENT_LABELS` entry).
+The main process reads the report again under its own permission, so the figures are never
+the renderer's, takes the shop name from the installation, and builds the page with core
+`domain/report-document` `reportHtml` (A4, every value escaped, a CSP that allows no
+script or external resource). `electron/pdf.ts` renders it to PDF in a hidden window on its
+own in-memory session, with JavaScript off and every request except the page cancelled. The
+save dialog publishes a new file and never overwrites one. It needs the report's
+permission and `data.export`, like the journal CSV; the button is hidden without it.
+`KOLO_DESKTOP_SMOKE_REPORT_PDF` optionally keeps the smoke run's PDF.
 
 ## Analytics contract
 

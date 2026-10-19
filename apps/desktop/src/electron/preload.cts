@@ -64,6 +64,7 @@ const bridge: DesktopBridge = {
   journal: input => ipcRenderer.invoke("kolo:journal", input),
   journalExport: input => ipcRenderer.invoke("kolo:journal-export", input),
   saveCsv: input => ipcRenderer.invoke("kolo:save-csv", input),
+  saveReportPdf: input => ipcRenderer.invoke("kolo:save-report-pdf", input),
   returnSource: input => ipcRenderer.invoke("kolo:return-source", input),
   previewReturn: input => ipcRenderer.invoke("kolo:preview-return", input),
   recordReturn: input => ipcRenderer.invoke("kolo:record-return", input),

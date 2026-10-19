@@ -10,7 +10,8 @@ import { desktopSessionMemory } from "./session-memory.js";
 import { desktopHandlers } from "./handlers.js";
 import { isRendererUrl } from "./renderer-origin.js";
 import { localCredentialsOnDesktop, desktopSealingCrypto } from "./local-credentials.js";
-import { clearOutgoing, pickDesktopTransferFile, saveDesktopExportFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.js";
+import { clearOutgoing, pickDesktopTransferFile, saveDesktopExportFile, saveDesktopPdfFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.js";
+import { renderPdf } from "./pdf.js";
 import type { TransferDialogs } from "./transfer.js";
 import { nodeWorkspaceFiles } from "@kolo/core/data/database/node-sqlite";
 import { migrate } from "@kolo/core/data/database/migrations";
@@ -81,7 +82,8 @@ if (selfCheck) {
       const outgoing = join(app.getPath("userData"), "outgoing"); clearOutgoing(outgoing);
       const dialogs: TransferDialogs = workflowSmoke ? (await import("./workflow-smoke.js")).smokeDialogs(outgoing) : {
         open: () => pickDesktopTransferFile(dialog), save: document => saveDesktopTransferFile(document, dialog),
-        saveStream: write => saveDesktopTransferStream(write, dialog, outgoing), saveExport: (filename, bytes) => saveDesktopExportFile(filename, bytes, dialog) };
+        saveStream: write => saveDesktopTransferStream(write, dialog, outgoing), saveExport: (filename, bytes) => saveDesktopExportFile(filename, bytes, dialog),
+        savePdf: async (filename, html) => saveDesktopPdfFile(filename, await renderPdf(html), dialog) };
       // Restore and pairing activate a new database: a new application serves it, and the old one
       // is disposed after its in-flight command (the activation itself) has answered.
       // Computer reset: after the command answered, retire the application, delete every shop file,

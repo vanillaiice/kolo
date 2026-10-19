@@ -147,6 +147,8 @@ class DesktopApplication implements ShopService {
   journalExport(input: unknown): Promise<Result<{ readonly items: readonly AuditEntry[]; readonly truncated: boolean; }>>;
   /** A spreadsheet export through the save dialog (data.export); see exports.ts. */
   saveCsv(input: unknown): Promise<Result<boolean>>;
+  /** A report saved as PDF through the save dialog, under the report's permission; see exports.ts. */
+  saveReportPdf(input: unknown): Promise<Result<boolean>>;
   /** Tax, payment terms and notifications; see settings.ts. */
   taxSettings(input: unknown): Promise<Result<TaxSettingsView>>;
   updateTaxSettings(input: unknown): Promise<Result<TaxSettingsView>>;
@@ -261,6 +263,15 @@ The name must be a plain `.csv` name and the text is bounded like any file KOLO 
 
 ```ts
 saveCsv(host: TransferHost, input: unknown): Promise<boolean>;
+```
+
+Saves a report as an A4 PDF through the native save dialog, for a member holding the report's own permission and
+`data.export` (a file of their choosing takes the figures off this computer, as for ). The figures are
+read here exactly as  shows them; the renderer supplies only the wording (escaped into the page) and
+the file name, a plain `.pdf` name. The shop name is the installation's. False when the dialog was cancelled.
+
+```ts
+saveReportPdf(host: TransferHost, input: unknown): Promise<boolean>;
 ```
 
 ## [apps/desktop/src/electron/finance.ts](../../apps/desktop/src/electron/finance.ts)
@@ -503,6 +514,15 @@ class LocalNetwork {
   /** Removes the mailbox and revokes an unapproved invite; already approved device trust is retained. */
   cancel(id: string): void;
 }
+```
+
+## [apps/desktop/src/electron/pdf.ts](../../apps/desktop/src/electron/pdf.ts)
+
+Renders a self-contained HTML page (a report from core `reportHtml`) to A4 PDF bytes in a hidden window that runs no
+script, has no preload and may load nothing but the page itself. The window is destroyed whatever happens.
+
+```ts
+renderPdf(html: string): Promise<Uint8Array<ArrayBufferLike>>;
 ```
 
 ## [apps/desktop/src/electron/purchasing.ts](../../apps/desktop/src/electron/purchasing.ts)
@@ -831,6 +851,18 @@ Main-process save dialog for a spreadsheet export; like transfer files it publis
 saveDesktopExportFile(filename: string, bytes: Uint8Array, native: Pick<Dialog, "showSaveDialog">, maximum: number = MAX_TRANSFER_FILE_BYTES): Promise<boolean>;
 ```
 
+Report PDFs KOLO writes: a plain name ending in .pdf, at most 100 characters.
+
+```ts
+const PDF_NAME: RegExp;
+```
+
+Main-process save dialog for a rendered PDF; like every export it publishes a complete new file and never overwrites one.
+
+```ts
+saveDesktopPdfFile(filename: string, bytes: Uint8Array, native: Pick<Dialog, "showSaveDialog">, maximum: number = MAX_TRANSFER_FILE_BYTES): Promise<boolean>;
+```
+
 Removes temporary files an interrupted streamed save left in the private outgoing directory.
 
 ```ts
@@ -870,6 +902,7 @@ export interface TransferDialogs {
     save(document: TransferDocument): Promise<boolean>;
     saveStream?(write: (sink: ByteSink) => Promise<string>): Promise<boolean>;
     saveExport?(filename: string, bytes: Uint8Array): Promise<boolean>;
+    savePdf?(filename: string, html: string): Promise<boolean>;
 }
 ```
 
@@ -2073,6 +2106,13 @@ export interface ShopService {
     saveCsv(input: SessionRequest & {
         readonly filename: string;
         readonly content: string;
+    }): Promise<Result<boolean>>;
+    saveReportPdf(input: SessionRequest & {
+        readonly kind: ReportKind;
+        readonly from: string;
+        readonly until: string;
+        readonly filename: string;
+        readonly text: Omit<ReportDocumentText, "shop">;
     }): Promise<Result<boolean>>;
     returnSource(input: SessionRequest & {
         readonly kind: "SALE" | "PURCHASE";
@@ -10811,6 +10851,87 @@ Other numbers are returned unchanged; receipts and printouts keep the stored num
 
 ```ts
 shortReceiptNumber(number: string): string;
+```
+
+## [packages/core/src/domain/report-document.ts](../../packages/core/src/domain/report-document.ts)
+
+A report as a printable A4 page (spec §39). Pure, so each client turns the report it was allowed to read into the
+same document: desktop saves it as PDF, mobile hands it to the system print dialog (which also saves PDF).
+
+Labels the document needs, already in the device language; business names stay as stored. `uncostedLines` and
+`uncostedProducts` follow a count ("3 lines without a cost"); `truncated` is shown when a list was cut at the row
+limit (totals above it stay exact).
+
+```ts
+const REPORT_DOCUMENT_LABELS: readonly ["name", "count", "total", "salesTotal", "transactions", "itemsSold", "revenue", "grossProfit", "expenses", "netResult", "customerDebt", "supplierDebt", "lowStock", "uncostedLines", "uncostedProducts", "purchasesTotal", "deliveries", "noSupplier", "uncategorized", "account", "moneyIn", "moneyOut", "net", "closing", "stockValue", "stock", "unitCost", "value", "negativeStock", "taxRate", "taxGross", "taxAmount", "taxNet", "taxNote", "noData", "truncated"];
+```
+
+One wording per  entry.
+
+```ts
+export type ReportDocumentLabels = Readonly<Record<typeof REPORT_DOCUMENT_LABELS[number], string>>;
+```
+
+What surrounds the figures: who, which report, which period, when it was produced.
+
+```ts
+export interface ReportDocumentText {
+    readonly language: Language;
+    readonly shop: string;
+    readonly title: string;
+    readonly period: string;
+    readonly generated: string;
+    readonly credit: string;
+    readonly labels: ReportDocumentLabels;
+}
+```
+
+One table cell: its text, whether it is a figure (right-aligned) and whether it is below zero.
+
+```ts
+export interface ReportCell {
+    readonly text: string;
+    readonly numeric?: boolean;
+    readonly negative?: boolean;
+}
+```
+
+A table's headings and rows.
+
+```ts
+export interface ReportTable {
+    readonly columns: readonly ReportCell[];
+    readonly rows: readonly (readonly ReportCell[])[];
+}
+```
+
+The figures of a report, ready for any layout: headline tiles, notes and at most one table.
+
+```ts
+export interface ReportSheet {
+    readonly tiles: readonly (readonly [
+        string,
+        string,
+        boolean?
+    ])[];
+    readonly notes: readonly string[];
+    readonly table?: ReportTable;
+    readonly empty?: string;
+    readonly truncated: boolean;
+}
+```
+
+The figures of a report under the client's labels; nothing here reads the database.
+
+```ts
+reportSheet(value: ReportResult, labels: ReportDocumentLabels, language: Language): ReportSheet;
+```
+
+The report as a self-contained A4 HTML page: no script, no external resource, every value escaped. Table headings
+repeat on each printed page and rows never split across pages.
+
+```ts
+reportHtml(value: ReportResult, text: ReportDocumentText): string;
 ```
 
 ## [packages/core/src/exchange/types.ts](../../packages/core/src/exchange/types.ts)

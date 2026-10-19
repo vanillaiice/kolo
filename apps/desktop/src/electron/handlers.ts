@@ -78,6 +78,7 @@ export function desktopHandlers(current: DesktopApplication | (() => DesktopAppl
   command("kolo:journal", input => application.journal(input));
   command("kolo:journal-export", input => application.journalExport(input));
   command("kolo:save-csv", input => application.saveCsv(input));
+  command("kolo:save-report-pdf", input => application.saveReportPdf(input));
   command("kolo:tax-settings", input => application.taxSettings(input));
   command("kolo:update-tax-settings", input => application.updateTaxSettings(input));
   command("kolo:product-tax", input => application.productTax(input));

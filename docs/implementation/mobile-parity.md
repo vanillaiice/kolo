@@ -24,6 +24,7 @@ The desktop reference is the current code (`apps/desktop/src/shared/service.ts` 
 | Bluetooth / server sync | Bluetooth remains roadmap; optional encrypted server sync is available | Same; encrypted file exchange stays |
 | Photos across devices | Device-local, in backups | Same; pairing does not carry photos |
 | Receipt output | OS print dialog (72 mm stylesheet) | OS share (text) and system print/PDF (`expo-print`); thermal printer adapters remain hardware work |
+| Report output | Save as PDF (A4, core `reportHtml`) | System print/PDF of the same A4 page (`expo-print`), read again with the full 500-row limit; both need `data.export` |
 | Legal/About | Electron licence listing, uninstall notes | Android-relevant About and licence text only |
 
 ## Navigation map

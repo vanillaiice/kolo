@@ -32,6 +32,8 @@ export interface TransferDialogs {
   saveStream?(write: (sink: ByteSink) => Promise<string>): Promise<boolean>;
   /** A spreadsheet export (`.csv`) offered in the save dialog; false when the dialog was cancelled. */
   saveExport?(filename: string, bytes: Uint8Array): Promise<boolean>;
+  /** A self-contained HTML page rendered to PDF and offered in the save dialog; false when the dialog was cancelled. */
+  savePdf?(filename: string, html: string): Promise<boolean>;
 }
 /** What the desktop host provides for backup, pairing and exchange. */
 export interface TransferPorts { readonly files: SnapshotPort & { activeId?(): string; saved?(): Promise<readonly {id:string;name:string}[]>; selectSaved?(id:string,target:Database):Promise<Database> }; readonly dialogs: TransferDialogs; readonly crypto: TransferCrypto; }

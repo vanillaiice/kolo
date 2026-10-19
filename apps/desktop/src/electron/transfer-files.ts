@@ -78,6 +78,14 @@ export async function saveDesktopExportFile(filename:string,bytes:Uint8Array,nat
  const result=await native.showSaveDialog({title:"KOLO — exporter",defaultPath:filename,filters:[{name:"CSV",extensions:["csv"]}]});if(result.canceled||result.filePath===undefined)return false;
  await publishNewFile(result.filePath,async file=>{let at=0;while(at<bytes.length)at+=(await file.write(bytes,at,bytes.length-at)).bytesWritten;});return true;
 }
+/** Report PDFs KOLO writes: a plain name ending in .pdf, at most 100 characters. */
+export const PDF_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,95}\.pdf$/u;
+/** Main-process save dialog for a rendered PDF; like every export it publishes a complete new file and never overwrites one. */
+export async function saveDesktopPdfFile(filename:string,bytes:Uint8Array,native:Pick<Dialog,"showSaveDialog">,maximum:number=MAX_TRANSFER_FILE_BYTES):Promise<boolean>{
+ if(!PDF_NAME.test(filename)||!(bytes instanceof Uint8Array))throw new TransferError("invalid_file");if(bytes.length<1||bytes.length>maximum)throw new TransferError("too_large");
+ const result=await native.showSaveDialog({title:"KOLO — exporter",defaultPath:filename,filters:[{name:"PDF",extensions:["pdf"]}]});if(result.canceled||result.filePath===undefined)return false;
+ await publishNewFile(result.filePath,async file=>{let at=0;while(at<bytes.length)at+=(await file.write(bytes,at,bytes.length-at)).bytesWritten;});return true;
+}
 /** Removes temporary files an interrupted streamed save left in the private outgoing directory. */
 export function clearOutgoing(directory:string):void{
  mkdirSync(directory,{recursive:true,mode:0o700});

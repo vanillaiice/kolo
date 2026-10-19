@@ -684,6 +684,8 @@ export class DesktopApplication implements ShopService {
   journalExport(input: unknown): ReturnType<ShopService["journalExport"]> { return this.#run(() => reports.journalExport(this.#host, input)); }
   /** A spreadsheet export through the save dialog (data.export); see exports.ts. */
   saveCsv(input: unknown): ReturnType<ShopService["saveCsv"]> { return this.#file(host => exports.saveCsv(host, input)); }
+  /** A report saved as PDF through the save dialog, under the report's permission; see exports.ts. */
+  saveReportPdf(input: unknown): ReturnType<ShopService["saveReportPdf"]> { return this.#file(host => exports.saveReportPdf(host, input)); }
   /** Tax, payment terms and notifications; see settings.ts. */
   taxSettings(input: unknown): ReturnType<ShopService["taxSettings"]> { return this.#run(() => settings.taxSettings(this.#host, input)); }
   updateTaxSettings(input: unknown): ReturnType<ShopService["updateTaxSettings"]> { return this.#run(() => settings.updateTaxSettings(this.#host, input)); }

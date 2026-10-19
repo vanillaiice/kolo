@@ -2,14 +2,18 @@ import { useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { analyticsView, reportView, REPORT_KINDS, REPORT_PERMISSION, UNDATED_REPORT_KINDS, type AnalyticsBucket, type AnalyticsResult, type ReportLine, type ReportResult } from "@kolo/core/application/report-views";
 import { localDayPeriod } from "@kolo/core/domain/entry";
+import { reportHtml } from "@kolo/core/domain/report-document";
 import { formatMoney, formatQuantity, formatRate } from "@kolo/core/domain/money";
 import { localeOf, useText, type Language, type TextKey } from "../../app/i18n.tsx";
 import { useNav, useParams } from "../../app/navigation.tsx";
 import { useDraft, usePermissions, useRevision, useSession } from "../../app/session.tsx";
+import { useAction } from "../../components/command.tsx";
 import { spacing } from "../../components/theme.ts";
+import { printDocument } from "../../data/output/print-on-device.ts";
 import { Button, EmptyState, Facts, Field, ListRow, Notice, RowGroup, Screen, Section, Segmented, Stat, useStyles } from "../../components/ui.tsx";
 import { localDay, useDeferredRecord } from "../shared.tsx";
 import { Bars, Heatmap, Shares, Trend, type Datum } from "./charts.tsx";
+import { reportDocumentText } from "./report-output.ts";
 
 /** Rows a phone keeps from a report or analytics list; totals stay exact over all rows. */
 const PHONE_ROWS = 100;
@@ -63,18 +67,28 @@ function lines(rows: readonly ReportLine[], countKey: TextKey, t: (key: TextKey,
 
 /** One report: its period (when it has one), headline figures and bounded rows. */
 export function ReportScreen(): React.JSX.Element {
-  const { t } = useText(), s = useStyles(), nav = useNav(), { kind } = useParams("report"), { context } = useSession();
+  const { t, language } = useText(), s = useStyles(), nav = useNav(), { kind } = useParams("report"), session = useSession(), { context } = session, action = useAction();
+  const canExport = usePermissions().includes("data.export");
   const revision = useRevision(["sales", "inventory", "customers", "suppliers", "purchases", "accounts", "expenses"]);
-  const { period, control } = usePeriod("report-period", "today");
+  const { state, period, control } = usePeriod("report-period", "today");
   const result = useDeferredRecord((): ReportResult | undefined => {
     const range = UNDATED_REPORT_KINDS.has(kind) ? { from: new Date(0).toISOString(), until: new Date().toISOString() } : period;
     return range === undefined ? undefined : reportView(context, kind, range.from, range.until, { rows: PHONE_ROWS });
   }, [context, kind, period?.from, period?.until, revision]);
-  const value = result.value;
+  const value = result.value, undated = UNDATED_REPORT_KINDS.has(kind);
+  // The printed page reads the report again with the full row limit, so a long list is not cut at the phone's.
+  const print = (): void => {
+    const range = undated ? { from: new Date(0).toISOString(), until: new Date().toISOString() } : period;
+    if (range === undefined) return;
+    void action.runAsync(() => session.systemUi(() => printDocument(reportHtml(reportView(context, kind, range.from, range.until),
+      reportDocumentText(t, language, session.businessName, kind, undated ? undefined : { from: state.from, to: state.to })))));
+  };
   return <Screen title={t(`report.${kind}` as TextKey)} onBack={nav.back}>
     {!UNDATED_REPORT_KINDS.has(kind) && control}
     {result.loading && <ActivityIndicator accessibilityLabel={t("loading")} />}
     {result.failed && <Notice tone="error" text={t("loadFailed")} />}
+    {value !== undefined && canExport && <Button label={t("printReport")} variant="secondary" busy={action.busy} onPress={print} hint={t("printHint")} />}
+    {action.notice}
     {value !== undefined && <ReportBody value={value} />}
     {value !== undefined && "truncated" in value && value.truncated && <Text style={s.muted}>{t("rowsTruncated", { count: PHONE_ROWS })}</Text>}
   </Screen>;

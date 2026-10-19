@@ -352,3 +352,5 @@ tbody tr:last-child td{border-bottom:0}
 .three-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;width:100%}
 @media print{.recovery-sheet,.recovery-sheet *{visibility:visible}.recovery-sheet{position:absolute;left:0;top:0;width:100%;border:0;background:#fff;color:#142b21}.recovery-sheet code{color:#142b21}}
 .journal-table td{vertical-align:top}.journal-table td .tag{display:table;margin:4px 0 0;white-space:nowrap}.journal-when{white-space:nowrap}.journal-details{width:38%;color:var(--muted);overflow-wrap:anywhere}.tag.neutral{background:var(--selected);color:var(--selected-ink)}.journal-notice{flex-basis:100%;margin:0}.journal-subject{flex-basis:100%;display:flex;gap:12px;align-items:center;margin:0}
+/* Report PDF: the save button sits above the figures, with its confirmation beside it. */
+.report-export{margin:0 0 18px;align-items:center}.report-export .notice{margin:0}
