@@ -6,6 +6,7 @@
     "Features",
     "Screenshots",
     "Downloads",
+    "Guides",
     "Developers"
   ],
   "language": "Language",
@@ -103,7 +104,7 @@
   ],
   "downloadsEyebrow": "Ready for your counter",
   "downloadsTitle": "Choose your device.",
-  "downloadsLead": "KOLO is in public beta. Download a build below and start with a demo shop if you want to explore first.",
+  "downloadsLead": "KOLO is in public beta. Download a build below.",
   "release": "Published release",
   "releaseFallback": "Browse published beta releases on GitHub.",
   "releaseNotes": "Release notes & checksums",
@@ -118,6 +119,25 @@
   "androidSecondary": "Smaller APKs by phone type",
   "androidHelp": "The universal APK works on both supported phone types. Choose ARM64 for most recent phones, or ARMv7 for older 32-bit phones.",
   "installerNote": "Beta installation: Windows may show a warning for an unsigned build. Android APKs are installed manually. To update, install the new version over the old one.",
+  "resourcesEyebrow": "Free guides",
+  "resourcesTitle": "Start in minutes. Show it to others.",
+  "resourcesLead": "Free material for first-time users and for anyone introducing KOLO to a shop. In English and French.",
+  "resources": [
+    {
+      "title": "Quick start",
+      "body": "From download to your first sale in about 15 minutes: create your shop, add products, sell and save a backup. Two pages to print or keep on your phone.",
+      "meta": "2 pages · PDF",
+      "source": "Read on GitHub"
+    },
+    {
+      "title": "Presentation",
+      "body": "Fourteen slides for a shop visit or a training session. The editable Slidev version includes a trainer’s script in the speaker notes.",
+      "meta": "14 slides · PDF",
+      "source": "Edit the slides (Slidev)"
+    }
+  ],
+  "resourcesDownload": "Download PDF",
+  "resourcesOtherLanguage": "Version française",
   "coming": "Coming later",
   "stores": [
     "Google Play",

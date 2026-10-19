@@ -6,6 +6,7 @@
     "Fonctions",
     "Captures",
     "Téléchargements",
+    "Guides",
     "Développeurs"
   ],
   "language": "Langue",
@@ -103,7 +104,7 @@
   ],
   "downloadsEyebrow": "Prêt pour votre comptoir",
   "downloadsTitle": "Choisissez votre appareil.",
-  "downloadsLead": "KOLO est en bêta publique. Téléchargez une version ci-dessous et explorez une boutique de démonstration si vous souhaitez commencer par un essai.",
+  "downloadsLead": "KOLO est en bêta publique. Téléchargez une version ci-dessous.",
   "release": "Version publiée",
   "releaseFallback": "Consultez les versions bêta publiées sur GitHub.",
   "releaseNotes": "Notes de version et sommes de contrôle",
@@ -118,6 +119,25 @@
   "androidSecondary": "APK plus petits selon le téléphone",
   "androidHelp": "L’APK universel fonctionne sur les deux types de téléphones pris en charge. Choisissez ARM64 pour la plupart des téléphones récents, ou ARMv7 pour les anciens téléphones 32 bits.",
   "installerNote": "Installation bêta : Windows peut afficher un avertissement pour une version non signée. Les APK Android s’installent manuellement. Pour une mise à jour, installez la nouvelle version par-dessus l’ancienne.",
+  "resourcesEyebrow": "Guides gratuits",
+  "resourcesTitle": "Démarrez en quelques minutes. Présentez-le autour de vous.",
+  "resourcesLead": "Des supports gratuits pour les nouveaux utilisateurs et pour tous ceux qui présentent KOLO à une boutique. En français et en anglais.",
+  "resources": [
+    {
+      "title": "Démarrage rapide",
+      "body": "Du téléchargement à votre première vente en 15 minutes environ : créez votre boutique, ajoutez des articles, vendez et enregistrez une sauvegarde. Deux pages à imprimer ou à garder sur votre téléphone.",
+      "meta": "2 pages · PDF",
+      "source": "Lire sur GitHub"
+    },
+    {
+      "title": "Présentation",
+      "body": "Quatorze diapositives pour une visite de boutique ou une formation. La version modifiable (Slidev) contient le texte du formateur dans les notes.",
+      "meta": "14 diapositives · PDF",
+      "source": "Modifier les diapositives (Slidev)"
+    }
+  ],
+  "resourcesDownload": "Télécharger le PDF",
+  "resourcesOtherLanguage": "English version",
   "coming": "À venir",
   "stores": [
     "Google Play",

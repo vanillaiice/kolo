@@ -44,6 +44,7 @@ Caddy serves the site and `/up`. Verify both languages, policy pages, assets,
 | `content/releases.json` | Saved GitHub release snapshot; refresh after publishing |
 | `build.mjs`, `styles.css` | Layout, metadata and styles |
 | `public/media` | Optimized screenshots from `docs/screenshots` |
+| `public/guides` | Quick-start and slide PDFs; regenerate with `npm run export:landing` in `docs/guides/slides` |
 | `public/assets/share.svg`, `share.png` | Social image; regenerate PNG after SVG edits |
 
 Downloads use uploaded, nonempty assets from the newest shared `vX.Y.Z` release,
