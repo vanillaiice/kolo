@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 
 function walk(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
-    ? walk(join(directory, entry.name)) : entry.name.endsWith(".md") ? [join(directory, entry.name)] : []);
+    ? entry.name === "node_modules" ? [] : walk(join(directory, entry.name)) : entry.name.endsWith(".md") ? [join(directory, entry.name)] : []);
 }
 let errors = 0;
 const files = ["README.md", "CLAUDE.md", ...walk("docs").filter(path => !path.replaceAll("\\", "/").startsWith("docs/history/"))];
