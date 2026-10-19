@@ -1,0 +1,21 @@
+{
+  "name": "kolo-slides",
+  "private": true,
+  "description": "kolo presentation decks (Slidev), kept outside the npm workspace.",
+  "scripts": {
+    "dev:en": "slidev slides.en.md --open",
+    "dev:fr": "slidev slides.fr.md --open",
+    "build:en": "slidev build slides.en.md --out dist/en",
+    "build:fr": "slidev build slides.fr.md --out dist/fr",
+    "export:en": "slidev export slides.en.md --output dist/kolo-slides-en.pdf",
+    "export:fr": "slidev export slides.fr.md --output dist/kolo-slides-fr.pdf",
+    "export:quick-start": "node quick-start-pdf.mjs",
+    "export:landing": "HOST=127.0.0.1 npm run export:en && HOST=127.0.0.1 npm run export:fr && npm run export:quick-start && mkdir -p ../../../apps/landing/public/guides && cp dist/kolo-slides-en.pdf dist/kolo-slides-fr.pdf dist/kolo-quick-start-en.pdf dist/kolo-quick-start-fr.pdf ../../../apps/landing/public/guides/"
+  },
+  "devDependencies": {
+    "@slidev/cli": "^51.0.0",
+    "@slidev/theme-default": "^0.25.0",
+    "markdown-it": "^14.3.3",
+    "playwright-chromium": "^1.64.1"
+  }
+}

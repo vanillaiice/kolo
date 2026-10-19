@@ -1,0 +1,47 @@
+/* kolo colours, taken from the landing page. */
+:root {
+  --kolo-text: #142b21;
+  --kolo-muted: #465d50;
+  --kolo-brand: #006c43;
+  --kolo-dark: #0c3426;
+  --kolo-soft: #edf4ef;
+  --kolo-border: #cedbd2;
+  --kolo-red: #e8475c;
+}
+
+.slidev-layout {
+  color: var(--kolo-text);
+  font-family: Inter, 'Segoe UI', system-ui, sans-serif;
+}
+.slidev-layout h1 { color: var(--kolo-brand); font-weight: 800; }
+.slidev-layout h3 { color: var(--kolo-dark); font-weight: 700; margin-bottom: 0.25rem; }
+.slidev-layout strong { color: var(--kolo-dark); }
+
+.cover { display: flex; flex-direction: column; justify-content: center; height: 100%; }
+.cover h1 { font-size: 3.2rem; line-height: 1.1; margin: 1rem 0; }
+.logo { width: 72px; }
+.logo-small { width: 56px; margin: 0 auto 1rem; }
+.lead { font-size: 1.3rem; color: var(--kolo-muted); }
+.tag { font-size: 0.9rem; color: var(--kolo-brand); margin-top: 2rem; }
+.credit { margin-top: 2.5rem; font-size: 0.85rem; color: var(--kolo-muted); }
+
+.callout {
+  margin: 2rem 0 0 1.5rem; padding: 1.5rem;
+  background: var(--kolo-soft); border-left: 6px solid var(--kolo-red); border-radius: 8px;
+}
+.callout .big { font-size: 1.6rem; font-weight: 800; color: var(--kolo-dark); margin: 0 0 0.5rem; }
+
+.note {
+  margin-top: 1.5rem; padding: 0.6rem 1rem; display: inline-block;
+  background: var(--kolo-soft); border-radius: 6px; color: var(--kolo-dark); font-weight: 600;
+}
+
+.pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1rem; }
+.pillars > div { padding: 0.8rem 1rem; border: 1px solid var(--kolo-border); border-radius: 8px; }
+.pillars p { font-size: 0.85rem; margin: 0; color: var(--kolo-muted); }
+
+.shot { max-height: 260px; margin: 0 auto; border: 1px solid var(--kolo-border); border-radius: 8px; }
+.two-cols .shot, .slidev-layout .col-right .shot { max-height: 340px; margin-top: 3rem; margin-left: 1rem; }
+.phone { max-height: 400px; margin: 0 auto; border-radius: 16px; border: 1px solid var(--kolo-border); }
+
+table { font-size: 0.9rem; }
