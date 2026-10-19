@@ -194,11 +194,16 @@ export interface ReturnRequest extends SessionRequest {
   readonly items: readonly { readonly originalItemId: string; readonly quantity: number }[];
   readonly refund?: { readonly accountId: string; readonly amountMinor: number };
 }
-/** A local staff member with effective permissions; no credential material is exposed. */
+/**
+ * A local staff member with effective permissions; no credential material is exposed. `exceptions` are the
+ * permissions where the member differs from their role: a grant the role lacks or a revocation of one it gives.
+ */
 export interface StaffView {
   readonly id: string; readonly name: string; readonly role: "OWNER" | "MANAGER" | "CASHIER" | "INVENTORY" | "ACCOUNTANT"; readonly active: boolean;
-  readonly isSelf: boolean; readonly permissions: readonly Permission[];
+  readonly isSelf: boolean; readonly permissions: readonly Permission[]; readonly exceptions: readonly Permission[];
 }
+/** One column of the shop's role matrix (ADR-037); `customized` is false while the role keeps its built-in defaults. */
+export interface RoleView { readonly role: Exclude<StaffView["role"], "OWNER">; readonly permissions: readonly Permission[]; readonly customized: boolean; }
 /** A checked backup file waiting for an explicit restore confirmation. */
 export interface BackupFileView { readonly businessName: string; readonly ownerName: string; readonly createdAt: string; readonly appliedEvents: number; }
 /** A checked pairing invite: compare the fingerprint with the owner's screen before accepting. */
@@ -451,8 +456,19 @@ export interface ShopService {
   listStaff(input: SessionRequest): Promise<Result<readonly StaffView[]>>;
   /** Owner-only: adds a member with a role and their own code; names must be unique among staff. */
   createStaff(input: SessionRequest & { readonly name: string; readonly role: Exclude<StaffView["role"], "OWNER">; readonly secret: string }): Promise<Result<StaffView>>;
-  /** Owner-only: grants or revokes one permission; asking for the current state changes nothing. */
+  /**
+   * Owner-only: gives or removes one permission for one member. Asking for what the member's role gives clears their
+   * exception instead of recording one; asking for the current state changes nothing.
+   */
   setStaffPermission(input: SessionRequest & { readonly userId: string; readonly permission: Permission; readonly allowed: boolean }): Promise<Result<StaffView>>;
+  /** Owner-only: moves another member to a staff role, keeping their exceptions. */
+  setStaffRole(input: SessionRequest & { readonly userId: string; readonly role: RoleView["role"] }): Promise<Result<StaffView>>;
+  /** The role matrix under users.view: each staff role's permissions. The owner always holds every permission. */
+  listRoles(input: SessionRequest): Promise<Result<readonly RoleView[]>>;
+  /** Owner-only: ticks or unticks one cell of the role matrix; returns the whole matrix. */
+  setRolePermission(input: SessionRequest & { readonly role: RoleView["role"]; readonly permission: Permission; readonly allowed: boolean }): Promise<Result<readonly RoleView[]>>;
+  /** Owner-only: returns a role to its built-in defaults; returns the whole matrix. */
+  resetRole(input: SessionRequest & { readonly role: RoleView["role"] }): Promise<Result<readonly RoleView[]>>;
   /** Owner-only: suspends or reinstates another member. */
   setStaffActive(input: SessionRequest & { readonly userId: string; readonly active: boolean }): Promise<Result<StaffView>>;
   /** Owner-only: replaces another member's code. */

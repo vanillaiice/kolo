@@ -10,6 +10,7 @@ import { HOSTED_SERVICE_MIGRATION } from "./hosted-service-migration.ts";
 import { TAX_TERMS_MIGRATION } from "./tax-terms-migration.ts";
 import { LOCAL_NETWORK_MIGRATION } from "./local-network-migration.ts";
 import { BACKUP_KEY_MIGRATION } from "./backup-key-migration.ts";
+import { ROLE_PERMISSIONS_MIGRATION } from "./role-permissions-migration.ts";
 /**
  * The local schema and how a device gets to it.
  *
@@ -1004,6 +1005,7 @@ export const MIGRATIONS: readonly Migration[] = [
   TAX_TERMS_MIGRATION,
   LOCAL_NETWORK_MIGRATION,
   BACKUP_KEY_MIGRATION,
+  ROLE_PERMISSIONS_MIGRATION,
 ];
 
 /** The version the code in this build expects. */

@@ -2012,3 +2012,33 @@ Every report can now be printed or saved as an A4 PDF, on desktop and on mobile.
   The packaged workflow smoke saves the dashboard as PDF through the real print window and checks the file.
 - Mobile: French and English wording exists for every label and report title; period lines for a range, a single day
   and snapshot reports. Not verified on a device: the Android print dialog with a report.
+
+## 2026-10-19: Role permission matrix (ADR-037)
+
+The owner can now edit what each staff role allows, as a roles × permissions matrix, while shops that never edit a
+role keep exactly the built-in defaults.
+
+- **Core.** `identity/roles`: `listRoles`, `setRolePermissions` (null or the defaults returns a role to them) and
+  `changeMemberRole`; `clearPermissionOverride` in `identity/workspace`. `@kolo/contracts/permissions` exports
+  `STAFF_ROLES`, `isStaffRole`, `defaultPermissions`, and `resolvePermissions` takes the shop's role set. SQLite
+  migration 31 adds `role_permissions`; authority checks, reports, backups and file previews resolve through it.
+- **Facts.** Owner-signed `ROLE_PERMISSIONS_SET` (per role, higher revision wins, equal revision must match),
+  `MEMBER_ROLE_CHANGED` and `PERMISSION_OVERRIDE_CLEARED` (member revision chain). They replicate over files, the
+  local network and the server like other sealed facts; owner review cannot accept a quarantined role fact.
+- **Desktop.** Staff gains Members | Roles tabs: the matrix with a "Customized" mark and "Reset" per role; members
+  get a role picker and an "Exception" mark where they differ from their role. Switching a permission back to the
+  role's choice clears the exception. Commands `listRoles`, `setRolePermission`, `resetRole`, `setStaffRole`.
+- **Mobile.** More → Staff → Roles edits one role at a time with reset; the member screen has the role picker,
+  exception hints and the same clearing rule. The journal names roles for the new facts in both apps.
+
+### Verification
+
+- Core: defaults unchanged with no rows; an edited role reaches its holders' next command; grants and revocations
+  beat the role and clearing them returns to it; defaults or null store NULL; repeated sets record nothing; only the
+  owner edits roles or moves members; OWNER, unknown permissions and malformed lists refused; a role move keeps
+  exceptions and advances the revision; a corrupt role row fails closed for its holders only. Two replicas converge on
+  the matrix, a role move and a cleared exception; a stale revision loses; an equal-revision rewrite is quarantined
+  as a conflict; a staff-signed role fact is refused and cannot be accepted through review.
+- Desktop inside Electron: matrix cell, reset, role move, exception clearing that leaves no stored override, invalid
+  roles/permissions/flags, owner role move and staff access refused. The workflow smoke ticks a matrix cell.
+- Not verified on a device: the mobile Roles screen and member role picker on Android.

@@ -7,7 +7,7 @@ import { parseEventPayload, type EventType, type JournalEnvelope } from "@kolo/c
 import type { Queryable, SqlValue } from "../database/driver.ts";
 import { ExchangeError } from "../../exchange/types.ts";
 import { memberPermissions } from "../../identity/internal-authority.ts";
-import { type Permission } from "../../rules/permissions.ts";
+import { PERMISSIONS, type Permission } from "../../rules/permissions.ts";
 import { eventModel } from "./model.ts";
 import { claimEntities } from "./journal.ts";
 import { productApplier } from "../sync/product-applier.ts";
@@ -33,7 +33,7 @@ export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewe
     const manifest = ["WORKSPACE_CREATED","LEGACY_WORKSPACE_ADOPTED"].includes(event.event_type);
     if (!manifest && event.authority_revision > Number(actor["revision"])) throw new ExchangeError("missing_dependency");
     if (!manifest && event.authority_revision !== actor["revision"]) throw new ExchangeError("authority_revision");
-    const permissions = memberPermissions(actor);
+    const permissions = memberPermissions(tx,actor);
     if (![...event.required_permissions,...model.permissions].every(p => permissions.includes(p))) throw new ExchangeError("permission_denied");
   }
   if (model.authority) { applyAuthority(tx,event); return; }
@@ -48,7 +48,7 @@ export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewe
     if (row["business_id"] !== event.business_id) throw new ExchangeError("scope_mismatch");
     if (!entity.mutable) throw new ExchangeError("conflict");
   }
-  const require = (permission: Permission): void => { if (!reviewed && (!event.required_permissions.includes(permission) || !memberPermissions(actor).includes(permission))) throw new ExchangeError("permission_denied"); };
+  const require = (permission: Permission): void => { if (!reviewed && (!event.required_permissions.includes(permission) || !memberPermissions(tx,actor).includes(permission))) throw new ExchangeError("permission_denied"); };
   if (event.event_type === "SALE_RETURNED" || event.event_type === "PURCHASE_RETURNED") {
     applyReturn(tx,event,recordedAt); claimEntities(tx,event,model); return;
   }
@@ -161,6 +161,7 @@ function applyAuthority(tx: Queryable, event: JournalEnvelope): void {
   if (event.event_type === "SHOP_KEY_GRANTED") { applyShopKeyGrant(tx,event); return; }
   if (event.event_type === "SERVER_ENDPOINT_SET" || event.event_type === "SERVER_ENDPOINT_CLEARED") { applyServerEndpoint(tx,event); return; }
   if (event.event_type === "SHOP_BACKUP_KEY") { applyBackupKey(tx,event); return; }
+  if (event.event_type === "ROLE_PERMISSIONS_SET") { applyRolePermissions(tx,event); return; }
   if (!("user_id" in payload) || !("revision" in payload)) throw new ExchangeError("unsupported_event");
   const target = tx.get(`SELECT * FROM local_memberships WHERE business_id=? AND user_id=?`,[event.business_id,payload.user_id]);
   if (event.event_type === "MEMBER_CREATED") {
@@ -178,13 +179,19 @@ function applyAuthority(tx: Queryable, event: JournalEnvelope): void {
   if (target === undefined) throw new ExchangeError("missing_dependency");
   if (payload.revision > Number(target["revision"]) + 1) throw new ExchangeError("missing_dependency");
   if (payload.revision !== Number(target["revision"]) + 1) throw new ExchangeError("conflict");
-  if (event.event_type === "PERMISSION_GRANTED" || event.event_type === "PERMISSION_REVOKED") {
+  if (event.event_type === "PERMISSION_GRANTED" || event.event_type === "PERMISSION_REVOKED" || event.event_type === "PERMISSION_OVERRIDE_CLEARED") {
     const change = parseEventPayload(event.event_type,2,payload);
     if (change.user_id === installation["owner_id"] && change.permission === "users.manage" && event.event_type === "PERMISSION_REVOKED") throw new ExchangeError("permission_denied");
     const granted = new Set(JSON.parse(String(target["granted"])) as string[]), revoked = new Set(JSON.parse(String(target["revoked"])) as string[]);
-    if (event.event_type === "PERMISSION_GRANTED") { granted.add(change.permission); revoked.delete(change.permission); }
-    else { granted.delete(change.permission); revoked.add(change.permission); }
+    granted.delete(change.permission); revoked.delete(change.permission);
+    if (event.event_type === "PERMISSION_GRANTED") granted.add(change.permission);
+    if (event.event_type === "PERMISSION_REVOKED") revoked.add(change.permission);
     tx.run(`UPDATE local_memberships SET granted=?,revoked=?,revision=? WHERE business_id=? AND user_id=?`,[JSON.stringify([...granted].sort()),JSON.stringify([...revoked].sort()),change.revision,event.business_id,change.user_id]);
+  } else if (event.event_type === "MEMBER_ROLE_CHANGED") {
+    const change = parseEventPayload("MEMBER_ROLE_CHANGED",2,payload);
+    if (change.user_id === installation["owner_id"] || target["role"] === "OWNER") throw new ExchangeError("permission_denied");
+    tx.run(`UPDATE local_memberships SET role=?,revision=? WHERE business_id=? AND user_id=?`,[change.role,change.revision,event.business_id,change.user_id]);
+    tx.run(`UPDATE users SET role=?,updated_at=max(updated_at,?) WHERE business_id=? AND id=?`,[change.role,event.occurred_at,event.business_id,change.user_id]);
   } else if (["MEMBER_SUSPENDED","MEMBER_REINSTATED"].includes(event.event_type)) {
     if (payload.user_id === installation["owner_id"]) throw new ExchangeError("permission_denied");
     tx.run(`UPDATE local_memberships SET active=?,revision=? WHERE business_id=? AND user_id=?`,[event.event_type === "MEMBER_REINSTATED" ? 1 : 0,payload.revision,event.business_id,payload.user_id]);
@@ -249,6 +256,17 @@ function applyBackupKey(tx: Queryable, event: JournalEnvelope): void {
   if (old !== undefined) { if (old["version"] !== key.version || old["public_key"] !== key.public_key || old["created_at"] !== key.created_at) throw new ExchangeError("conflict"); return; }
   tx.run(`INSERT INTO backup_recovery_keys(business_id,key_id,version,public_key,created_at,device_id,event_id) VALUES (?,?,?,?,?,?,?)`,
     [event.business_id,key.key_id,key.version,key.public_key,key.created_at,event.origin_device_id,event.event_id]);
+}
+
+// One staff role's permissions (ADR-037): the higher revision wins; an equal revision must say the same thing.
+function applyRolePermissions(tx: Queryable, event: JournalEnvelope): void {
+  const { role, permissions, revision } = parseEventPayload("ROLE_PERMISSIONS_SET",2,event.payload);
+  const value = permissions === null ? null : JSON.stringify(PERMISSIONS.filter(permission => permissions.includes(permission)));
+  const old = tx.get(`SELECT permissions,revision FROM role_permissions WHERE business_id=? AND role=?`,[event.business_id,role]);
+  if (old !== undefined && revision < Number(old["revision"])) return;
+  if (old !== undefined && revision === old["revision"]) { if (old["permissions"] !== value) throw new ExchangeError("conflict"); return; }
+  tx.run(`INSERT INTO role_permissions(business_id,role,permissions,revision) VALUES (?,?,?,?)
+    ON CONFLICT(business_id,role) DO UPDATE SET permissions=excluded.permissions,revision=excluded.revision`,[event.business_id,role,value,revision]);
 }
 
 // The owner's chosen server address: the higher revision wins; an equal revision must say the same thing.

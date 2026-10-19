@@ -12,7 +12,7 @@ import type { DebtAging } from "../rules/terms.ts";
  */
 
 function requireAny(tx: Queryable, context: OperationContext, permissions: readonly Permission[]): readonly Permission[] {
-  const held = memberPermissions(activeMember(tx, context, context.userId));
+  const held = memberPermissions(tx, activeMember(tx, context, context.userId));
   if (!permissions.some(permission => held.includes(permission))) throw new WorkspaceError("permission_denied");
   return held;
 }

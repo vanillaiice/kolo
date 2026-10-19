@@ -37,7 +37,7 @@ export function supplier(context: OperationContext, id: string): (Supplier & { o
  */
 export function account(context: OperationContext, id: string): (Account & { onHandMinor?: number }) | undefined {
   return authorizedOperation(context, [], (_db, tx) => {
-    const permissions = memberPermissions(activeMember(tx, context, context.userId));
+    const permissions = memberPermissions(tx, activeMember(tx, context, context.userId));
     const balance = permissions.includes("finance.accounts.view") && permissions.includes("cash.view");
     if (!balance && !permissions.includes("cash.move") && !permissions.includes("finance.accounts.view")) throw new WorkspaceError("permission_denied");
     const item = accountOf(tx, context.businessId, id);

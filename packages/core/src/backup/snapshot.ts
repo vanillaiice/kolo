@@ -48,7 +48,7 @@ export async function validateSnapshot(database:Database,manifest:SnapshotManife
  const shop=database.get(`SELECT * FROM businesses WHERE id=?`,[manifest.business.id]),owner=database.get(`SELECT * FROM users WHERE id=? AND business_id=?`,[manifest.owner.id,manifest.business.id]);
  if(database.get(`SELECT count(*) AS n FROM businesses`)?.["n"]!==1||shop?.["name"]!==manifest.business.name||shop["currency"]!=="XAF"||shop["active"]!==1||owner?.["name"]!==manifest.owner.name||owner["role"]!=="OWNER"||owner["active"]!==1)throw new TransferError("scope_mismatch");
  const member=database.get(`SELECT * FROM local_memberships WHERE business_id=? AND user_id=?`,[manifest.business.id,manifest.owner.id]);
- if(member===undefined||member["role"]!=="OWNER"||member["active"]!==1||!memberPermissions(member).includes("users.manage"))throw new TransferError("invalid_snapshot");
+ if(member===undefined||member["role"]!=="OWNER"||member["active"]!==1||!memberPermissions(database,member).includes("users.manage"))throw new TransferError("invalid_snapshot");
  for(const {name} of database.all(`SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`)){
   const table=String(name);if(!/^[a-z_]+$/.test(table))throw new TransferError("invalid_snapshot");
   if(database.all(`PRAGMA table_info(${table})`).some(row=>row["name"]==="business_id")&&database.get(`SELECT 1 AS mismatch FROM ${table} WHERE business_id<>? OR business_id IS NULL LIMIT 1`,[manifest.business.id])!==undefined)throw new TransferError("scope_mismatch");

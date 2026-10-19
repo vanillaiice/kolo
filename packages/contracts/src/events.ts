@@ -77,6 +77,16 @@ export const EVENT_PAYLOAD_SCHEMAS = {
   MEMBER_CREATED: z.strictObject({ user_id: uuid, name, role: role.exclude(["OWNER"]), revision: z.literal(1) }),
   PERMISSION_GRANTED: z.strictObject({ user_id: uuid, permission, revision: positive }),
   PERMISSION_REVOKED: z.strictObject({ user_id: uuid, permission, revision: positive }),
+  /** Owner removes a member's exception for one permission, so it follows the member's role again (ADR-037). */
+  PERMISSION_OVERRIDE_CLEARED: z.strictObject({ user_id: uuid, permission, revision: positive }),
+  /** Owner moves a staff member to another role; the member's own exceptions are kept (ADR-037). */
+  MEMBER_ROLE_CHANGED: z.strictObject({ user_id: uuid, role: role.exclude(["OWNER"]), revision: positive }),
+  /**
+   * The shop's permissions for one staff role (ADR-037), replacing its built-in defaults; null returns to the defaults.
+   * Per role, the higher revision wins and an equal revision must say the same thing.
+   */
+  ROLE_PERMISSIONS_SET: z.strictObject({ role: role.exclude(["OWNER"]),
+    permissions: z.array(permission).max(PERMISSIONS.length).refine(values => new Set(values).size === values.length).nullable(), revision: positive }),
   MEMBER_SUSPENDED: z.strictObject({ user_id: uuid, revision: positive }),
   MEMBER_REINSTATED: z.strictObject({ user_id: uuid, revision: positive }),
   MEMBER_ACCESS_RESET: z.strictObject({ user_id: uuid, revision: positive }),

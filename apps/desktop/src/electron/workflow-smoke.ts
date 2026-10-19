@@ -318,7 +318,11 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     for (const [selector, value] of [["#member-name", "Zoé"], ["#member-secret", "765432"], ["#member-confirm", "765432"]]) await fill(selector!, value!);
     await submit("#member-name"); await wait(`${visible(".staff-detail h2")}[0]?.textContent==='Zoé'`, "staff created");
     await clickVisible(".permission-group .check input:not(:checked)", undefined, "Sell on credit");
-    await wait(`${visible(".permission-group .check")}.find(label=>label.textContent==='Sell on credit')?.querySelector('input').checked===true`, "credit granted"); await snapshot("staff-detail");
+    await wait(`${visible(".permission-group .check")}.find(label=>label.textContent==='Sell on creditException')?.querySelector('input').checked===true`, "credit granted as an exception"); await snapshot("staff-detail");
+    // Role matrix: ticking a cell gives the whole role the permission and marks the role customized.
+    await clickVisible(".tabs button", "Roles"); await clickVisible(".role-matrix input[aria-label='Cashier · View sales reports']");
+    await wait(`${visible(".role-matrix input[aria-label='Cashier · View sales reports']")}[0]?.checked===true && ${visible(".role-matrix thead .tag")}.length===1`, "cashier role customized");
+    await snapshot("role-matrix"); await clickVisible(".tabs button", "Members");
     if (process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"] !== undefined) await writeFile(process.env["KOLO_DESKTOP_SMOKE_REPORT_SCREENSHOT"], (await window.webContents.capturePage()).toPNG());
     assert.equal(await evaluate("document.querySelector('.notice.error')===null"), true);
     // Backup, then restore it over this shop: the activated database is served by a new

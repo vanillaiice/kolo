@@ -359,3 +359,28 @@ it("change kept on account travels as an ordinary customer payment and reads bac
   }
   assert.deepEqual(b.db.all(`SELECT a.status FROM applied_events a JOIN event_journal e ON e.event_id=a.event_id WHERE e.provenance='received' AND a.status<>'applied'`), []);
 });
+
+it("the role matrix, role moves and cleared exceptions converge; stale role facts lose and a same-revision rewrite is a conflict",async()=>{
+ const [a,b]=await replicas() as [Replica,Replica];
+ const { createLocalMember }=await import("../identity/members.ts");const { grantPermission,clearPermissionOverride }=await import("../identity/workspace.ts");
+ const { setRolePermissions,changeMemberRole,listRoles }=await import("../identity/roles.ts");
+ const member=await createLocalMember(a.context,{name:"Staff",role:"CASHIER",secret:"654321"});
+ setRolePermissions(a.context,"CASHIER",["sales.create","products.view"]);setRolePermissions(a.context,"MANAGER",["reports.sales"]);setRolePermissions(a.context,"MANAGER",null);
+ changeMemberRole(a.context,member,"ACCOUNTANT");grantPermission(a.context,member,"sales.create");clearPermissionOverride(a.context,member,"sales.create");
+ await send(a,b);
+ assert.deepEqual(listRoles(b.context),listRoles(a.context));
+ const row=(r:Replica)=>r.db.get(`SELECT m.role,m.granted,m.revoked,m.revision,u.role AS user_role FROM local_memberships m JOIN users u ON u.id=m.user_id WHERE m.user_id=?`,[member]);
+ assert.deepEqual(row(b),row(a));assert.equal(row(b)!["role"],"ACCOUNTANT");assert.equal(row(b)!["revision"],4);
+ const fact=a.db.all(`SELECT canonical FROM event_journal WHERE event_type='ROLE_PERMISSIONS_SET'`).map(r=>JSON.parse(String(r["canonical"])) as JournalEnvelope).find(e=>e.payload["role"]==="CASHIER")!;
+ const next=Number(a.db.get(`SELECT max(origin_sequence) AS n FROM event_journal WHERE origin_device_id=?`,[a.install.deviceId])!["n"]);
+ const stale:JournalEnvelope={...fact,event_id:randomUUIDv7(),origin_sequence:next+1,payload:{role:"MANAGER",permissions:[],revision:1}};
+ assert.equal(applyEvent(b.context,await verifyEvent(b.context,await signed(a,stale),crypto)),"applied");
+ assert.equal(listRoles(b.context).find(v=>v.role==="MANAGER")!.customized,false,"revision 2 already returned the role to its defaults");
+ const rewrite:JournalEnvelope={...fact,event_id:randomUUIDv7(),origin_sequence:next+2,payload:{role:"CASHIER",permissions:["sales.create","sales.refund"],revision:1}};
+ assert.equal(applyEvent(b.context,await verifyEvent(b.context,await signed(a,rewrite),crypto)),"quarantined");assert.equal(b.db.get(`SELECT reason FROM applied_events WHERE event_id=?`,[rewrite.event_id])!["reason"],"conflict");
+ assert.deepEqual(listRoles(b.context).find(v=>v.role==="CASHIER")!.permissions,["products.view","sales.create"]);
+ const staffFact:JournalEnvelope={...fact,event_id:randomUUIDv7(),origin_sequence:next+3,actor_id:member,authority_revision:4,payload:{role:"CASHIER",permissions:null,revision:9}};
+ assert.equal(applyEvent(b.context,await verifyEvent(b.context,await signed(a,staffFact),crypto)),"quarantined","only the owner sets roles");
+ assert.throws(()=>reviewQuarantinedEvent(b.context,staffFact.event_id,b.db.get(`SELECT digest FROM event_signatures WHERE event_id=?`,[staffFact.event_id])!["digest"] as string),/permission_denied/);
+ assert.equal(listRoles(b.context).find(v=>v.role==="CASHIER")!.revision,1);
+});

@@ -24,7 +24,7 @@ const fill = (template: string, values: Record<string, string>): string => templ
 function codeText(entry: AuditEntry, t: (key: TextKey) => string): string | undefined {
   const code = entry.facts.code;
   if (code === undefined) return undefined;
-  const candidates = entry.type.startsWith("PERMISSION_") ? [`permission.${code}`] : entry.type === "MEMBER_CREATED" ? [`role.${code}`]
+  const candidates = entry.type.startsWith("PERMISSION_") ? [`permission.${code}`] : ["MEMBER_CREATED", "MEMBER_ROLE_CHANGED", "ROLE_PERMISSIONS_SET"].includes(entry.type) ? [`role.${code}`]
     : entry.type === "PAYMENT_TERMS_SET" ? [code === "SUPPLIER" ? "suppliers" : "customers"] : [...(entry.type === "CASH_MOVED" ? [`jd.cash.${code}`] : []), `jd.${code}`, code];
   const key = candidates.find(hasText);
   return key === undefined ? code : t(key);

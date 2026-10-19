@@ -747,6 +747,33 @@ it("owner manages staff: unique names, effective grants and revokes, suspension 
     failure(await f.application.unlock({userId:created.id,secret:"765432"}),"invalid_credential");
   }finally{await f.dispose();}
 });
+it("owner edits the role matrix and moves staff; ticking back to the role clears the exception",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!,ownerId=workspace.members[0]!.id;
+    const defaults=value(await f.application.listRoles({sessionId}));
+    assert.deepEqual(defaults.map(role=>[role.role,role.customized]),[["MANAGER",false],["CASHIER",false],["INVENTORY",false],["ACCOUNTANT",false]]);
+    const created=value(await f.application.createStaff({sessionId,name:"Binta",role:"CASHIER",secret:"765432"}));assert.deepEqual(created.exceptions,[]);
+    const matrix=value(await f.application.setRolePermission({sessionId,role:"CASHIER",permission:"reports.sales",allowed:true}));
+    assert.equal(matrix.find(role=>role.role==="CASHIER")!.customized,true);
+    let member=value(await f.application.listStaff({sessionId})).find(item=>item.id===created.id)!;
+    assert.equal(member.permissions.includes("reports.sales"),true,"the role change reaches its holders");assert.deepEqual(member.exceptions,[]);
+    member=value(await f.application.setStaffPermission({sessionId,userId:created.id,permission:"reports.sales",allowed:false}));assert.deepEqual(member.exceptions,["reports.sales"]);
+    member=value(await f.application.setStaffPermission({sessionId,userId:created.id,permission:"reports.sales",allowed:true}));assert.deepEqual(member.exceptions,[]);
+    assert.deepEqual({...f.database.get("SELECT granted,revoked FROM local_memberships WHERE user_id=?",[created.id])},{granted:"[]",revoked:"[]"},"no stale exception left behind");
+    member=value(await f.application.setStaffPermission({sessionId,userId:created.id,permission:"audit.view",allowed:true}));
+    member=value(await f.application.setStaffRole({sessionId,userId:created.id,role:"INVENTORY"}));
+    assert.deepEqual([member.role,member.permissions.includes("inventory.adjust"),member.permissions.includes("reports.sales"),member.exceptions],["INVENTORY",true,false,["audit.view"]]);
+    const reset=value(await f.application.resetRole({sessionId,role:"CASHIER"}));assert.equal(reset.find(role=>role.role==="CASHIER")!.customized,false);
+    assert.deepEqual(reset,defaults);
+    for(const bad of [{role:"OWNER"},{role:"CASHIER",permission:"everything"},{role:"CASHIER",allowed:"yes"}])failure(await f.application.setRolePermission({sessionId,role:"CASHIER",permission:"reports.sales",allowed:true,...bad}),"invalid_input");
+    failure(await f.application.setStaffRole({sessionId,userId:ownerId,role:"MANAGER"}),"permission_denied");
+    failure(await f.application.setStaffRole({sessionId,userId:created.id,role:"OWNER"}),"invalid_input");
+    failure(await f.application.resetRole({sessionId,role:"OWNER"}),"invalid_input");
+    const staff=value(await f.application.unlock({userId:created.id,secret:"765432"})).sessionId!;
+    failure(await f.application.setRolePermission({sessionId:staff,role:"INVENTORY",permission:"users.manage",allowed:true}),"permission_denied");
+    failure(await f.application.listRoles({sessionId:staff}),"permission_denied");
+  }finally{await f.dispose();}
+});
 // Stay signed in: real SQLite, real vault files and the real session-memory module across restarts.
 function remembering() {
   const directory=mkdtempSync(join(tmpdir(),"kolo-desktop-remember-")),os=native();

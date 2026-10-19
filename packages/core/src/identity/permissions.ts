@@ -1,2 +1,2 @@
 /** Compatibility path for pure role and permission rules. */
-export { PERMISSIONS, isPermission, resolvePermissions, type Permission, type Role } from "../rules/permissions.ts";
+export { PERMISSIONS, STAFF_ROLES, defaultPermissions, isPermission, isStaffRole, resolvePermissions, type Permission, type Role, type StaffRole } from "../rules/permissions.ts";

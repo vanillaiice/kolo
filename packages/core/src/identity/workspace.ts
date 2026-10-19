@@ -209,7 +209,7 @@ async function unlock(input: { readonly userId: string; readonly secret: string 
     if (activeRuntime.epoch !== epoch) throw new WorkspaceError("locked");
     const member = activeMember(tx, install, input.userId);
     if (member["credential_reference"] !== credential) throw new WorkspaceError("credential_unavailable");
-    memberPermissions(member);
+    memberPermissions(tx, member);
     tx.run(`UPDATE local_memberships SET failures = 0, next_attempt_at = NULL
       WHERE business_id = ? AND user_id = ?`, [install.businessId, input.userId]);
     const context: OperationContext = Object.freeze({ businessId: install.businessId, userId: input.userId, deviceId: install.deviceId });
@@ -251,7 +251,7 @@ export function resumeWorkspace(remembered: RememberedMember, ports: WorkspacePo
     const member = activeMember(tx, install, remembered.userId);
     if (Number(member["failures"]) >= 10) throw new WorkspaceError("recovery_required");
     if (member["credential_reference"] !== remembered.credentialReference) throw new WorkspaceError("locked");
-    memberPermissions(member);
+    memberPermissions(tx, member);
     const context: OperationContext = Object.freeze({ businessId: install.businessId, userId: remembered.userId, deviceId: install.deviceId });
     activeRuntime.context = context;
     contexts.set(context, { ...ports });
@@ -268,29 +268,36 @@ export function lockWorkspace(database: Database): void {
 
 /** Owner-only permission grant, with authority revision and immutable local event/audit. */
 export function grantPermission(context: OperationContext, userId: string, permission: Permission): void {
-  changePermission(context, userId, permission, true);
+  changePermission(context, userId, permission, "grant");
 }
 
 /** Owner-only revocation; takes effect on the target's next local command without re-unlock. */
 export function revokePermission(context: OperationContext, userId: string, permission: Permission): void {
-  changePermission(context, userId, permission, false);
+  changePermission(context, userId, permission, "revoke");
 }
 
-function changePermission(context: OperationContext, userId: string, permission: Permission, grant: boolean): void {
+/** Owner-only: drops the member's own grant or revocation of one permission, so it follows their role again (ADR-037). */
+export function clearPermissionOverride(context: OperationContext, userId: string, permission: Permission): void {
+  changePermission(context, userId, permission, "clear");
+}
+
+function changePermission(context: OperationContext, userId: string, permission: Permission, change: "grant" | "revoke" | "clear"): void {
   if (!isPermission(permission)) throw new WorkspaceError("invalid_input");
   authorizedOperation(context, ["users.manage"], (_database, tx, ports) => {
     const installation = tx.get(`SELECT owner_id FROM local_installation WHERE id = 1`);
     if (installation?.["owner_id"] !== context.userId) throw new WorkspaceError("permission_denied");
     const member = tx.get(`SELECT * FROM local_memberships WHERE business_id = ? AND user_id = ?`, [context.businessId, userId]);
     if (member === undefined) throw new WorkspaceError("scope_mismatch");
-    if (userId === context.userId && permission === "users.manage" && !grant) throw new WorkspaceError("permission_denied");
+    if (userId === context.userId && permission === "users.manage" && change === "revoke") throw new WorkspaceError("permission_denied");
     const granted = permissionArray(member["granted"]).filter(p => p !== permission);
     const revoked = permissionArray(member["revoked"]).filter(p => p !== permission);
-    (grant ? granted : revoked).push(permission);
+    if (change === "grant") granted.push(permission);
+    if (change === "revoke") revoked.push(permission);
     const revision = Number(member["revision"]) + 1;
     tx.run(`UPDATE local_memberships SET granted = ?, revoked = ?, revision = ? WHERE business_id = ? AND user_id = ?`,
       [JSON.stringify(granted), JSON.stringify(revoked), revision, context.businessId, userId]);
-    appendLocalAudit(tx, context, ports, revision, grant ? "PERMISSION_GRANTED" : "PERMISSION_REVOKED", userId, { permission, revision });
+    const action = ({ grant: "PERMISSION_GRANTED", revoke: "PERMISSION_REVOKED", clear: "PERMISSION_OVERRIDE_CLEARED" } as const)[change];
+    appendLocalAudit(tx, context, ports, revision, action, userId, { permission, revision });
   });
 }
 

@@ -82,7 +82,7 @@ export function suppliers(context: OperationContext, query: PageQuery = {}): Pag
 /** Payment account names only, with no balances; available to currently authorized payment/checkout actors. */
 export function paymentAccounts(context: OperationContext, query: PageQuery = {}): Page<Account> {
   return authorizedOperation(context, [], (_db, tx) => {
-    const permissions = memberPermissions(activeMember(tx, context, context.userId));
+    const permissions = memberPermissions(tx, activeMember(tx, context, context.userId));
     if (!["sales.create", "sales.refund", "customers.pay", "purchases.pay", "expenses.create", "finance.accounts.view"].some(p => permissions.includes(p as Permission))) throw new WorkspaceError("permission_denied");
     return catalogue(tx, context.businessId, "financial_accounts", query, accountOf);
   });
@@ -135,7 +135,7 @@ export interface Receipt {
   readonly changeKeptMinor?: number | undefined;
 }
 function salesAuthority(tx: Queryable, context: OperationContext): boolean {
-  const permissions = memberPermissions(activeMember(tx, context, context.userId));
+  const permissions = memberPermissions(tx, activeMember(tx, context, context.userId));
   if (permissions.includes("sales.view")) return false;
   if (permissions.includes("sales.view_own")) return true;
   throw new WorkspaceError("permission_denied");
@@ -181,7 +181,7 @@ export function receipt(context: OperationContext, saleId: string): Receipt {
       LEFT JOIN customers c ON c.business_id=s.business_id AND c.id=s.customer_id WHERE s.business_id=? AND s.id=?${own ? " AND s.user_id=?" : ""}`,
       [context.businessId, saleId, ...(own ? [context.userId] : [])]);
     if (row === undefined) throw new WorkspaceError("scope_mismatch");
-    return receiptOf(tx, context.businessId, row, memberPermissions(activeMember(tx, context, context.userId)).includes("customers.view"));
+    return receiptOf(tx, context.businessId, row, memberPermissions(tx, activeMember(tx, context, context.userId)).includes("customers.view"));
   });
 }
 /** Keyset receipt history, newest first, bounded 1–100 and scoped to current sales authority. */
@@ -224,7 +224,7 @@ export function statement(context: OperationContext, kind: "customer" | "supplie
 
 /** Current effective UI capabilities, re-read from local membership; commands still authorize independently. */
 export function capabilities(context: OperationContext): readonly Permission[] {
-  return authorizedOperation(context, [], (_db, tx) => memberPermissions(activeMember(tx, context, context.userId)));
+  return authorizedOperation(context, [], (_db, tx) => memberPermissions(tx, activeMember(tx, context, context.userId)));
 }
 
 /** Bounded expense history under expenses.view; reversal status derives from referencing immutable entries. */

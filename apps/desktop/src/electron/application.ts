@@ -705,6 +705,10 @@ export class DesktopApplication implements ShopService {
   listStaff(input: unknown): ReturnType<ShopService["listStaff"]> { return this.#run(() => staff.listStaff(this.#host, input)); }
   createStaff(input: unknown): ReturnType<ShopService["createStaff"]> { return this.#run(() => this.#identity(() => staff.createStaff(this.#host, input))); }
   setStaffPermission(input: unknown): ReturnType<ShopService["setStaffPermission"]> { return this.#run(() => staff.setStaffPermission(this.#host, input)); }
+  setStaffRole(input: unknown): ReturnType<ShopService["setStaffRole"]> { return this.#run(() => staff.setStaffRole(this.#host, input)); }
+  listRoles(input: unknown): ReturnType<ShopService["listRoles"]> { return this.#run(() => staff.listRoles(this.#host, input)); }
+  setRolePermission(input: unknown): ReturnType<ShopService["setRolePermission"]> { return this.#run(() => staff.setRolePermission(this.#host, input)); }
+  resetRole(input: unknown): ReturnType<ShopService["resetRole"]> { return this.#run(() => staff.resetRole(this.#host, input)); }
   setStaffActive(input: unknown): ReturnType<ShopService["setStaffActive"]> { return this.#run(() => staff.setStaffActive(this.#host, input)); }
   resetStaffSecret(input: unknown): ReturnType<ShopService["resetStaffSecret"]> { return this.#run(() => this.#identity(() => staff.resetStaffSecret(this.#host, input))); }
   /** The shop's pinned backup recovery keys (ADR-036), newest first; owner settings access. */

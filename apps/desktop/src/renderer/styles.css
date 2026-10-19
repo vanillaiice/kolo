@@ -354,3 +354,9 @@ tbody tr:last-child td{border-bottom:0}
 .journal-table td{vertical-align:top}.journal-table td .tag{display:table;margin:4px 0 0;white-space:nowrap}.journal-when{white-space:nowrap}.journal-details{width:38%;color:var(--muted);overflow-wrap:anywhere}.tag.neutral{background:var(--selected);color:var(--selected-ink)}.journal-notice{flex-basis:100%;margin:0}.journal-subject{flex-basis:100%;display:flex;gap:12px;align-items:center;margin:0}
 /* Report PDF: the save button sits above the figures, with its confirmation beside it. */
 .report-export{margin:0 0 18px;align-items:center}.report-export .notice{margin:0}
+/* Role matrix: permissions down, roles across; the permission names stay in view while scrolling sideways. */
+.role-matrix{max-width:1100px}.role-matrix table{min-width:720px}.role-matrix thead th{vertical-align:bottom;text-align:center}.role-matrix thead th:first-child,.role-matrix tbody th[scope=row]{text-align:left}
+.role-matrix th[scope=row]{font-size:13px;font-weight:450;text-transform:none;letter-spacing:0;color:var(--text);position:sticky;left:0;background:var(--surface)}
+.role-matrix td{text-align:center;padding:8px 14px}.role-matrix td input{width:18px;height:18px;accent-color:var(--primary)}
+.role-matrix .group-row th{padding-top:22px;color:var(--muted);font-weight:700}.role-matrix thead small{margin-top:6px}.role-matrix thead .tag{display:table;margin:0 auto}.role-matrix thead .text-button{min-height:30px;padding:4px 6px;font-size:12px}
+.role-matrix tbody tr:last-child th[scope=row]{border-bottom:0}.staff-detail .check .tag{margin-left:0}

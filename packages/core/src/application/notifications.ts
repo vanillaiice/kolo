@@ -137,7 +137,7 @@ function marks(tx: Queryable, context: OperationContext): Map<string, { fingerpr
 
 function current(tx: Queryable, context: OperationContext, now: string): ShopNotification[] {
   if (!Number.isFinite(Date.parse(now)) || new Date(now).toISOString() !== now) throw new WorkspaceError("invalid_input");
-  const held = memberPermissions(activeMember(tx, context, context.userId)), can = (permission: Permission): boolean => held.includes(permission);
+  const held = memberPermissions(tx, activeMember(tx, context, context.userId)), can = (permission: Permission): boolean => held.includes(permission);
   const drafts = [
     ...(can("inventory.view") ? stock(tx, context.businessId) : []),
     ...(can("customers.view") ? debts(tx, context.businessId, now, "CUSTOMER") : []),

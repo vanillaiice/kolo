@@ -19,7 +19,7 @@ export interface RouteMap {
   accounts: undefined; account: { readonly accountId: string }; accountForm: { readonly accountId?: string };
   money: { readonly accountId: string; readonly mode: "in" | "out" | "transfer" }; cashCount: { readonly accountId: string };
   reports: undefined; report: { readonly kind: ReportKind }; analytics: undefined;
-  staff: undefined; staffMember: { readonly userId: string }; staffNew: undefined;
+  staff: undefined; staffMember: { readonly userId: string }; staffNew: undefined; staffRoles: undefined;
   devices: undefined; backupCreate: undefined; backupRestore: undefined; addTill: undefined; exchangeSend: undefined; exchangeReceive: undefined;
   exchangeConfirm: undefined; exchangeStatus: undefined; recoveryKey: undefined; backupKey: undefined; serverSync: undefined;
   settings: undefined; about: undefined; reset: undefined;

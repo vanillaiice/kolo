@@ -42,3 +42,4 @@ Accepted ADRs preserve decision history. Changes belong in a superseding ADR.
 | [034](ADR-034-local-network-pairing-and-sync.md) | Direct local-network pairing and synchronization | Accepted |
 | [035](ADR-035-binary-encrypted-container.md) | Encrypted container with key slots | Accepted (device acceptance open) |
 | [036](ADR-036-shop-backup-recovery-key.md) | Shop backup recovery key | Accepted |
+| [037](ADR-037-role-permission-matrix.md) | Shop role permission matrix | Accepted |

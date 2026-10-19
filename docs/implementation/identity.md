@@ -113,8 +113,10 @@ overwriting newer local sales. See [ADR-022](../adr/ADR-022-encrypted-files-and-
 `unlockWorkspace` returns a frozen context registered privately against database and
 ports. A structurally identical object, serialized context or stale/locked context
 cannot authorize anything. Every command/report re-reads active shop/device/user,
-local membership and granular grants in the same SQLite transaction. Revocation wins
-over role defaults and grants; cached cloud `users.permissions` is not local authority.
+local membership, the shop's role matrix and granular grants in the same SQLite transaction.
+A role's permissions are the shop's edited set or, until the owner edits it, the built-in
+defaults ([ADR-037](../adr/ADR-037-role-permission-matrix.md)); member grants and revocations
+are exceptions on top, and revocation wins. Cached cloud `users.permissions` is not local authority.
 Owner alone manages members/grants on an authority-approved device, and cannot revoke
 their own `users.manage`. Pairing defaults secondary devices to business operations;
 the owner can explicitly approve management. Secondary PIN recovery stays local and

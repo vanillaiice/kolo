@@ -44,7 +44,7 @@ export function authorizedOperation<T>(context: OperationContext, permissions: r
       throw new WorkspaceError("scope_mismatch");
     }
     const member = activeMember(tx, context, context.userId);
-    const effective = memberPermissions(member);
+    const effective = memberPermissions(tx, member);
     if (!permissions.every(p => isPermission(p) && effective.includes(p))) throw new WorkspaceError("permission_denied");
     if (permissions.includes("users.manage") && tx.get(`SELECT authority_allowed FROM trusted_exchange_devices WHERE business_id=? AND device_id=?`, [context.businessId, context.deviceId])?.["authority_allowed"] !== 1) throw new WorkspaceError("permission_denied");
     const revision = Number(member["revision"]);
@@ -78,11 +78,19 @@ export function activeMember(tx: Queryable, install: Pick<Installation, "busines
   return member;
 }
 
-/** @internal Resolves current authority, failing closed on corrupt storage. */
-export function memberPermissions(member: Row): readonly Permission[] {
+/** @internal Resolves current authority through the shop's role matrix, failing closed on corrupt storage. */
+export function memberPermissions(tx: Queryable, member: Row): readonly Permission[] {
   try {
-    return resolvePermissions(member["role"] as Role, permissionArray(member["granted"]), permissionArray(member["revoked"]));
+    return resolvePermissions(member["role"] as Role, permissionArray(member["granted"]), permissionArray(member["revoked"]),
+      rolePermissions(tx, String(member["business_id"]), member["role"] as Role));
   } catch { throw new WorkspaceError("permission_denied"); }
+}
+
+/** @internal The shop's edited permissions for a role (ADR-037), or null when it keeps the built-in defaults. */
+export function rolePermissions(tx: Queryable, businessId: string, role: Role): Permission[] | null {
+  if (role === "OWNER") return null;
+  const value = tx.get(`SELECT permissions FROM role_permissions WHERE business_id = ? AND role = ?`, [businessId, role])?.["permissions"];
+  return value === undefined || value === null ? null : permissionArray(value);
 }
 
 /** @internal Decodes persisted permissions. */

@@ -5,14 +5,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Database } from "../data/database/driver.ts";
 import { migrate, MIGRATIONS, schemaVersion } from "../data/database/migrations.ts";
+import { domainsForWrite } from "../data/database/changes.ts";
 import { openDatabase } from "../data/database/node-sqlite.ts";
 import { balanceOfAccount } from "../data/finance/cash.ts";
 import { stockOf } from "../data/inventory/movements.ts";
 import * as commands from "../application/operations.ts";
 import { currentInstallation, createWorkspace, recoverWorkspaceSetup, unlockWorkspace, lockWorkspace,
-  grantPermission, revokePermission, rememberMember, resumeWorkspace } from "./workspace.ts";
+  grantPermission, revokePermission, clearPermissionOverride, rememberMember, resumeWorkspace } from "./workspace.ts";
+import { changeMemberRole, listRoles, setRolePermissions } from "./roles.ts";
 import { authorizedOperation } from "./internal-authority.ts";
-import { resolvePermissions, PERMISSIONS } from "./permissions.ts";
+import { resolvePermissions, defaultPermissions, PERMISSIONS, STAFF_ROLES } from "./permissions.ts";
 import { WorkspaceError, type CreateWorkspaceInput, type CredentialPort, type Installation,
   type OperationContext, type ProvisionedIdentity, type WorkspacePorts } from "./types.ts";
 
@@ -558,5 +560,86 @@ describe("upgrade from shipped schema 14", () => {
       assert.equal(currentInstallation(previous).state, "legacy");
       assert.deepEqual(previous.all(`PRAGMA foreign_key_check`), []);
     } finally { previous.close(); }
+  });
+});
+
+describe("role matrix (ADR-037)", () => {
+  // One unlocked session per device: each check signs the member in, each change signs the owner back in.
+  const can = async (userId: string, permission: (typeof PERMISSIONS)[number]): Promise<boolean> => {
+    const context = await unlockWorkspace({ userId, secret: "staff-secret" }, ports);
+    try { return authorizedOperation(context, [permission], () => true); } catch (error) { if (code("permission_denied")(error)) return false; throw error; }
+  };
+  it("a shop that never edits a role keeps exactly the built-in defaults", async () => {
+    const installation = await createWorkspace(input, ports); const context = await owner(installation);
+    assert.equal(count("role_permissions"), 0);
+    for (const view of listRoles(context)) {
+      assert.deepEqual(view.permissions, defaultPermissions(view.role)); assert.equal(view.customized, false); assert.equal(view.revision, 0);
+    }
+    assert.deepEqual(listRoles(context).map(view => view.role), STAFF_ROLES);
+    for (const role of STAFF_ROLES) assert.deepEqual(resolvePermissions(role, [], [], null), resolvePermissions(role, [], []));
+    assert.deepEqual(domainsForWrite(`INSERT INTO role_permissions(business_id,role,permissions,revision) VALUES (?,?,?,?)`), ["authority"], "screens refresh after a role edit");
+  });
+  it("an edited role changes every holder's next command, and member exceptions still win", async () => {
+    const installation = await createWorkspace(input, ports); const userId = staff(installation);
+    assert.equal(await can(userId, "sales.create"), true); assert.equal(await can(userId, "reports.sales"), false);
+    const cashier = await unlockWorkspace({ userId, secret: "staff-secret" }, ports);
+    const edited: (typeof PERMISSIONS)[number][] = [...defaultPermissions("CASHIER").filter(p => p !== "sales.create"), "reports.sales" as const];
+    setRolePermissions(await owner(installation), "CASHIER", edited);
+    assert.throws(() => authorizedOperation(cashier, [], () => 1), code("locked"));
+    assert.equal(await can(userId, "sales.create"), false); assert.equal(await can(userId, "reports.sales"), true);
+    let context = await owner(installation);
+    const view = listRoles(context).find(item => item.role === "CASHIER")!;
+    assert.equal(view.customized, true); assert.equal(view.revision, 1); assert.deepEqual(view.permissions, PERMISSIONS.filter(p => edited.includes(p)));
+    grantPermission(context, userId, "sales.create"); revokePermission(context, userId, "reports.sales");
+    assert.equal(await can(userId, "sales.create"), true, "a member grant beats the role"); assert.equal(await can(userId, "reports.sales"), false, "a member revocation beats the role");
+    context = await owner(installation);
+    clearPermissionOverride(context, userId, "sales.create"); clearPermissionOverride(context, userId, "reports.sales");
+    const row = database.get(`SELECT granted,revoked,revision FROM local_memberships WHERE user_id = ?`, [userId])!;
+    assert.deepEqual([row["granted"], row["revoked"], row["revision"]], ["[]", "[]", 5]);
+    assert.equal(await can(userId, "sales.create"), false); assert.equal(await can(userId, "reports.sales"), true);
+    context = await owner(installation); setRolePermissions(context, "CASHIER", []);
+    assert.ok(authorizedOperation(context, ["sales.create"], () => true), "the owner never depends on a role row");
+  });
+  it("setting the defaults or null returns the role to them; repeating a set records nothing", async () => {
+    const installation = await createWorkspace(input, ports); const context = await owner(installation);
+    setRolePermissions(context, "MANAGER", ["sales.create"]); const audits = count("local_audit");
+    setRolePermissions(context, "MANAGER", ["sales.create", "sales.create"]); assert.equal(count("local_audit"), audits, "same set, no fact");
+    setRolePermissions(context, "MANAGER", [...defaultPermissions("MANAGER")].reverse());
+    assert.equal(database.get(`SELECT permissions FROM role_permissions WHERE role = 'MANAGER'`)!["permissions"], null);
+    assert.equal(listRoles(context)[0]!.customized, false); assert.equal(listRoles(context)[0]!.revision, 2);
+    setRolePermissions(context, "MANAGER", null); assert.equal(count("local_audit"), audits + 1, "already at defaults");
+    setRolePermissions(context, "MANAGER", []); assert.deepEqual(listRoles(context)[0]!.permissions, []);
+    setRolePermissions(context, "MANAGER", null); assert.equal(listRoles(context)[0]!.revision, 4);
+  });
+  it("only the owner edits roles or moves members, and malformed requests are refused", async () => {
+    const installation = await createWorkspace(input, ports);
+    const managerId = staff(installation, "MANAGER"); grantPermission(await owner(installation), managerId, "users.manage");
+    const manager = await unlockWorkspace({ userId: managerId, secret: "staff-secret" }, ports);
+    assert.throws(() => setRolePermissions(manager, "CASHIER", PERMISSIONS), code("permission_denied"));
+    assert.throws(() => changeMemberRole(manager, managerId, "ACCOUNTANT"), code("permission_denied"));
+    const context = await owner(installation);
+    assert.throws(() => setRolePermissions(context, "OWNER" as "MANAGER", []), code("invalid_input"));
+    assert.throws(() => setRolePermissions(context, "CASHIER", ["typo" as "sales.create"]), code("invalid_input"));
+    assert.throws(() => setRolePermissions(context, "CASHIER", "sales.create" as unknown as []), code("invalid_input"));
+    assert.throws(() => changeMemberRole(context, managerId, "OWNER" as "MANAGER"), code("invalid_input"));
+    assert.throws(() => changeMemberRole(context, installation.ownerId, "CASHIER"), code("permission_denied"));
+    assert.throws(() => changeMemberRole(context, id(), "CASHIER"), code("scope_mismatch"));
+    assert.equal(count("role_permissions"), 0);
+  });
+  it("moving a member keeps their exceptions and bumps their authority revision", async () => {
+    const installation = await createWorkspace(input, ports); const context = await owner(installation);
+    const userId = staff(installation); grantPermission(context, userId, "audit.view");
+    const audits = count("local_audit"); changeMemberRole(context, userId, "CASHIER"); assert.equal(count("local_audit"), audits, "same role, no fact");
+    changeMemberRole(context, userId, "INVENTORY");
+    const row = database.get(`SELECT m.role,m.revision,m.granted,u.role AS user_role FROM local_memberships m JOIN users u ON u.id = m.user_id WHERE m.user_id = ?`, [userId])!;
+    assert.deepEqual([row["role"], row["user_role"], row["revision"], row["granted"]], ["INVENTORY", "INVENTORY", 3, '["audit.view"]']);
+    assert.equal(await can(userId, "inventory.adjust"), true); assert.equal(await can(userId, "sales.create"), false); assert.equal(await can(userId, "audit.view"), true);
+  });
+  it("a corrupt role row fails closed for its holders only", async () => {
+    const installation = await createWorkspace(input, ports); const userId = staff(installation);
+    database.run(`INSERT INTO role_permissions(business_id,role,permissions,revision) VALUES (?,'CASHIER','["typo"]',1)`, [installation.businessId]);
+    await assert.rejects(() => unlockWorkspace({ userId, secret: "staff-secret" }, ports), code("permission_denied"));
+    assert.equal(authorizedOperation(await owner(installation), ["users.manage"], () => 1), 1);
+    assert.throws(() => database.run(`INSERT INTO role_permissions(business_id,role,permissions,revision) VALUES (?,'OWNER',NULL,1)`, [installation.businessId]));
   });
 });

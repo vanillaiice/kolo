@@ -327,8 +327,11 @@ desktop failures. Receipts show returned value. Commands live in `electron/retur
 
 ## Staff contract
 
-The Staff section lists members with effective permissions (role defaults plus grants
-minus revocations) under `users.view`. Only the owner changes staff; core rechecks owner
+The Staff section lists members with effective permissions (the role's permissions plus
+grants minus revocations) and their exceptions under `users.view`. Its Roles tab is the shop's
+role matrix (ADR-037): `listRoles`, `setRolePermission` for one cell and `resetRole` back to the
+built-in defaults. `setStaffRole` moves a member to another staff role, keeping exceptions;
+`setStaffPermission` toward what the role gives clears the exception instead of recording one. Only the owner changes staff; core rechecks owner
 authority. Member creation and code replacement run through the native vault and are
 single-flight with setup/unlock. Core draws member identities, so a retried creation is
 recognised by name: a member with the same name (case-insensitive) is refused as

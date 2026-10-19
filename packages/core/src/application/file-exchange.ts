@@ -28,7 +28,7 @@ export async function previewBundle(context:OperationContext,file:Uint8Array,pas
    else if(old?.["status"]==="applied")assessment="duplicate";
    else try{const model=eventModel(e),actor=tx.get(`SELECT m.*,u.active AS user_active FROM local_memberships m JOIN users u ON u.id=m.user_id AND u.business_id=m.business_id WHERE m.business_id=? AND m.user_id=?`,[context.businessId,e.actor_id]);
     if(actor===undefined||e.authority_revision>Number(actor["revision"]))assessment="deferred";
-    else if(actor["active"]!==1||actor["user_active"]!==1||e.authority_revision!==actor["revision"]||![...model.permissions,...e.required_permissions].every(p=>memberPermissions(actor).includes(p)))assessment="review";
+    else if(actor["active"]!==1||actor["user_active"]!==1||e.authority_revision!==actor["revision"]||![...model.permissions,...e.required_permissions].every(p=>memberPermissions(tx,actor).includes(p)))assessment="review";
     else if(model.references.some(ref=>tx.get(`SELECT id FROM ${ref.table} WHERE id=? AND business_id=?`,[ref.id,context.businessId])===undefined))assessment="deferred";
    }catch(error){assessment=error instanceof Error&&"code" in error&&error.code==="unsupported_event"?"unsupported":"review";}
    return Object.freeze({eventId:e.event_id,type:e.event_type,assessment});
