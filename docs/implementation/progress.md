@@ -1790,7 +1790,7 @@ because Windows installer upgrades depend on it. `verify-android.mjs` and the sc
 
 ## 2026-10-18: Review fixes (costing, replay, sync keys, backup and restore)
 
-Fixes for the seven findings in `review-1.md` and `review-2.md` (2026-10-17):
+Fixes for the seven findings of the internal code reviews of 2026-10-17:
 
 - **Sale cost.** `completeSale` freezes each line's cost with the valuation's costing policy (`currentUnitCost`,
   LATEST_COST: latest costed delivery or opening stock, else the purchase price) instead of the editable
