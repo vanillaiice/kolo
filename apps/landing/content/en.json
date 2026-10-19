@@ -15,6 +15,7 @@
   "headline": "Your shop.\nYour day.\nUnder control.",
   "lead": "Sales, stock, and customer credit. Keep your shop running, even without internet.",
   "download": "Download KOLO",
+  "downloadFor": "Download for {platform}",
   "explore": "See how it works",
   "beta": "Public beta",
   "heroNote": "On your computer. On your Android phone. In English or French.",
@@ -118,6 +119,9 @@
   "androidPrimary": "Download Android APK",
   "androidSecondary": "Smaller APKs by phone type",
   "androidHelp": "The universal APK works on both supported phone types. Choose ARM64 for most recent phones, or ARMv7 for older 32-bit phones.",
+  "suggestedBadge": "Recommended for this device",
+  "iosNote": "KOLO is not on iPhone or iPad yet. Install it on an Android phone or a Windows or Linux computer.",
+  "macNote": "There is no Mac version yet. Install KOLO on a Windows or Linux computer, or an Android phone.",
   "installerNote": "Beta installation: Windows may show a warning for an unsigned build. Android APKs are installed manually. To update, install the new version over the old one.",
   "resourcesEyebrow": "Free guides",
   "resourcesTitle": "Start in minutes. Show it to others.",
@@ -201,7 +205,7 @@
     "privacyLink": "Privacy policy",
     "cookiesLink": "Cookie policy",
     "home": "Back to KOLO",
-    "updated": "Last updated: 12 October 2026",
+    "updated": "Last updated: 19 October 2026",
     "contactHeading": "Privacy contact",
     "contactFallback": "For privacy questions, contact hblabs through the channel from which you received KOLO. Do not share shop records, backups, passwords or other private information in public GitHub issues.",
     "contactLabel": "Contact",
@@ -234,7 +238,8 @@
         {
           "title": "What this website does",
           "paragraphs": [
-            "You can read about KOLO, view demo screenshots and download promotional assets without an account. This website has no signup, contact form, payment form, advertising, analytics scripts or tracking pixels. It does not read or upload your shop’s sales, stock, customer records or backups."
+            "You can read about KOLO, view demo screenshots and download promotional assets without an account. This website has no signup, contact form, payment form, advertising, analytics scripts or tracking pixels. It does not read or upload your shop’s sales, stock, customer records or backups.",
+            "To suggest a download, the page’s JavaScript reads the device type your browser reports (for example Android or Windows). It is used only in your browser, never stored, and not sent anywhere."
           ]
         },
         {

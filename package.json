@@ -50,7 +50,7 @@
     "prepare": "husky",
     "build:landing": "node apps/landing/build.mjs",
     "dev:landing": "npm run build:landing && node apps/landing/preview.mjs",
-    "check:landing": "npm run build:landing && node apps/landing/check.mjs && node --test apps/landing/releases.test.mjs",
+    "check:landing": "npm run build:landing && node apps/landing/check.mjs && node --test apps/landing/releases.test.mjs apps/landing/platform.test.mjs",
     "refresh:landing-releases": "node apps/landing/refresh-releases.mjs",
     "test:server:pg": "node scripts/test-server-postgres.mjs",
     "kolo": "npm run build:packages --silent && npm run build -w @kolo/cli --silent && node apps/cli/dist/main.js",

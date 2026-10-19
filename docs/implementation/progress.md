@@ -1959,3 +1959,28 @@ Exporting shop data now needs its own permission, so staff who can see figures c
 - Desktop inside Electron: `journalExport` and `saveCsv` refuse members without `data.export`, including the owner
   once it is revoked; malformed export filters are refused.
 
+
+## 2026-10-19: Landing download suggestion
+
+The landing page now suggests the download for the visitor's device. Without JavaScript the page is unchanged.
+
+- **Detection.** `apps/landing/platform.mjs` reads `navigator.userAgentData.platform` first, then the user agent.
+  Android is checked before Linux; ChromeOS gets Linux; iPadOS asking for the desktop site is told apart from a Mac by
+  its touch screen. The build inlines the function into `assets/site.js`, because the CSP allows only same-origin
+  scripts.
+- **Page.** The matching card gets a "Recommended for this device" badge and moves first on narrow screens only; the
+  desktop order stays put. The hero button reads "Download for Android/Windows/Linux" and still scrolls to
+  `#downloads`, keeping the unsigned-build note in view. iPhone/iPad and Mac visitors see a short note instead. The
+  universal APK stays the Android pick, since browsers cannot reliably report ARM64 or ARMv7.
+- **Privacy.** The privacy page (both languages, dated 19 October 2026) states that the reported device type is read
+  only to suggest a download, and is neither stored nor sent. The cookie page is unchanged: nothing is saved.
+
+### Verification
+
+- `npm run check:landing`: translation parity, markup checks for card platforms and note hooks, 10 detection tests
+  over real user agents (Android Chrome, Samsung Internet, Firefox, Opera on Tecno; Windows Edge/Firefox/IE11;
+  Ubuntu Firefox, Linux Chrome, ChromeOS; iPhone Safari/Chrome, iPad; macOS Safari/Firefox), client hints, iPadOS
+  touch, unknown inputs, and the built `site.js` running in a VM.
+- Headless Chromium against the preview server with Android, Windows, iPhone and Mac agents plus the host's own
+  browser: the right card, badge, hero label and note in English and French, at 390 and 1280 px. The served HTML
+  with JavaScript off has no suggestion and both notes hidden.

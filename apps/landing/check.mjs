@@ -28,6 +28,10 @@ for (const lang of ['en','fr']) for (const route of ['', 'privacy/', 'cookies/']
   }
   for (const [,tag] of html.matchAll(/(<img\b[^>]*>)/g)) assert.ok(/\balt=/.test(tag),'Images need alt text');
   if (!route) for (const name of ['iOS','Google Play','F-Droid']) assert.ok(html.includes(`<strong>${name}</strong>`));
+  if (!route) {
+    assert.deepEqual([...html.matchAll(/class="download-card" data-platform="([^"]+)"/g)].map(m => m[1]),['windows','linux','android'],'Download cards need their platform for the suggestion');
+    for (const attr of ['data-suggested=','data-download-for=','data-platform-note="ios"','data-platform-note="mac"']) assert.ok(html.includes(attr),`Missing ${attr}`);
+  }
   assert.ok(html.includes('href=') && html.includes(`${lang}/privacy/`) && html.includes(`${lang}/cookies/`),'Policy footer links missing');
   assert.ok(!html.includes('—'),'Em dashes must stay removed');
   assert.ok(!html.includes('releases/latest'),'Beta downloads must not use latest');

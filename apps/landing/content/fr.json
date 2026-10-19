@@ -15,6 +15,7 @@
   "headline": "Votre boutique.\nVotre journée.\nSous contrôle.",
   "lead": "Ventes, stock et crédits clients. Gérez votre boutique, même sans Internet.",
   "download": "Télécharger KOLO",
+  "downloadFor": "Télécharger pour {platform}",
   "explore": "Découvrir les fonctions",
   "beta": "Bêta publique",
   "heroNote": "Sur votre ordinateur. Sur votre téléphone Android. En français ou en anglais.",
@@ -118,6 +119,9 @@
   "androidPrimary": "Télécharger l’APK Android",
   "androidSecondary": "APK plus petits selon le téléphone",
   "androidHelp": "L’APK universel fonctionne sur les deux types de téléphones pris en charge. Choisissez ARM64 pour la plupart des téléphones récents, ou ARMv7 pour les anciens téléphones 32 bits.",
+  "suggestedBadge": "Recommandé pour cet appareil",
+  "iosNote": "KOLO n’est pas encore disponible sur iPhone ni iPad. Installez-le sur un téléphone Android ou un ordinateur Windows ou Linux.",
+  "macNote": "Il n’existe pas encore de version Mac. Installez KOLO sur un ordinateur Windows ou Linux, ou sur un téléphone Android.",
   "installerNote": "Installation bêta : Windows peut afficher un avertissement pour une version non signée. Les APK Android s’installent manuellement. Pour une mise à jour, installez la nouvelle version par-dessus l’ancienne.",
   "resourcesEyebrow": "Guides gratuits",
   "resourcesTitle": "Démarrez en quelques minutes. Présentez-le autour de vous.",
@@ -201,7 +205,7 @@
     "privacyLink": "Confidentialité",
     "cookiesLink": "Cookies",
     "home": "Retour à KOLO",
-    "updated": "Dernière mise à jour : 12 octobre 2026",
+    "updated": "Dernière mise à jour : 19 octobre 2026",
     "contactHeading": "Contact pour la confidentialité",
     "contactFallback": "Pour toute question sur la confidentialité, contactez hblabs par le canal grâce auquel vous avez obtenu KOLO. Ne publiez pas de données de boutique, sauvegardes, mots de passe ou autres informations privées dans les tickets publics GitHub.",
     "contactLabel": "Contact",
@@ -234,7 +238,8 @@
         {
           "title": "Ce que fait ce site",
           "paragraphs": [
-            "Vous pouvez découvrir KOLO, consulter les captures de démonstration et télécharger les supports de présentation sans compte. Ce site ne comporte ni inscription, ni formulaire de contact ou de paiement, ni publicité, ni script de mesure d’audience, ni pixel de suivi. Il ne lit ni ne transmet les ventes, stocks, fiches clients ou sauvegardes de votre boutique."
+            "Vous pouvez découvrir KOLO, consulter les captures de démonstration et télécharger les supports de présentation sans compte. Ce site ne comporte ni inscription, ni formulaire de contact ou de paiement, ni publicité, ni script de mesure d’audience, ni pixel de suivi. Il ne lit ni ne transmet les ventes, stocks, fiches clients ou sauvegardes de votre boutique.",
+            "Pour suggérer un téléchargement, le JavaScript de la page lit le type d’appareil indiqué par votre navigateur (par exemple Android ou Windows). Cette information reste dans votre navigateur : elle n’est ni enregistrée ni transmise."
           ]
         },
         {

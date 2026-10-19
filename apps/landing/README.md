@@ -43,6 +43,7 @@ Caddy serves the site and `/up`. Verify both languages, policy pages, assets,
 | `content/en.json`, `content/fr.json` | Visitor copy; keep keys and array lengths aligned |
 | `content/releases.json` | Saved GitHub release snapshot; refresh after publishing |
 | `build.mjs`, `styles.css` | Layout, metadata and styles |
+| `site.js`, `platform.mjs` | Optional enhancements; `platform.mjs` (device suggestion) is inlined into `assets/site.js` at build time |
 | `public/media` | Optimized screenshots from `docs/screenshots` |
 | `public/guides` | Quick-start and slide PDFs; regenerate with `npm run export:landing` in `docs/guides/slides` |
 | `public/assets/share.svg`, `share.png` | Social image; regenerate PNG after SVG edits |
@@ -74,8 +75,9 @@ For a demo video, add an MP4, poster and English/French WebVTT captions to
 
 Policy pages describe this website's local assets, language preference, server
 logs and GitHub links. The script stores `kolo-landing-language` only after an
-explicit language choice; the cookie page can remove it. No analytics or embedded
-trackers are included. Set log retention in both languages once confirmed from
+explicit language choice; the cookie page can remove it. To highlight the matching
+download, it reads the browser's reported device type in the page only; nothing is
+stored or sent. No analytics or embedded trackers are included. Set log retention in both languages once confirmed from
 the host. Update notices when hosting, cookies, forms, media or storage change.
 
 Licensed under [GPL-3.0-only](LICENSE).

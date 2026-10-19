@@ -25,6 +25,25 @@
       } catch { status.textContent = reset.dataset.error; }
     });
   }
+  const downloads = document.querySelector('[data-suggested]');
+  if (downloads) {
+    // Read once to suggest a card; never stored or sent anywhere.
+    const platform = detectPlatform({ userAgent: navigator.userAgent, userAgentData: navigator.userAgentData, maxTouchPoints: navigator.maxTouchPoints });
+    const card = downloads.querySelector(`[data-platform="${platform}"]`);
+    if (card) {
+      card.classList.add('suggested');
+      const badge = document.createElement('span');
+      badge.className = 'suggested-badge';
+      badge.textContent = downloads.dataset.suggested;
+      card.prepend(badge);
+      const hero = document.querySelector('[data-download-for]');
+      const label = hero?.firstChild;
+      if (label?.nodeType === Node.TEXT_NODE) label.textContent = hero.dataset.downloadFor.replace('{platform}', card.querySelector('h3').textContent);
+    } else {
+      const note = document.querySelector(`[data-platform-note="${platform}"]`);
+      if (note) note.hidden = false;
+    }
+  }
   const dialog = document.querySelector('.lightbox');
   if (!dialog?.showModal) return;
   let trigger;
