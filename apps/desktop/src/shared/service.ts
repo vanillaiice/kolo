@@ -605,3 +605,62 @@ export interface ShopService {
   /** Invalidation only: subscribers reread bounded pages; no business database mirror. */
   onChanged(listener: () => void): () => void;
 }
+
+/** One release's notes as GitHub renders them (HTML); the renderer shows their text only. */
+export interface ReleaseNote { readonly version: string; readonly html: string }
+
+/** A newer version: its notes for every release since this one, and whether it may break what this version does. */
+export interface FoundUpdate {
+  readonly version: string;
+  readonly notes: readonly ReleaseNote[];
+  /**
+   * A breaking release under semver's caret rule: a new major from 1.0.0, a new minor before 1.0.0. Automatic updates
+   * never download or install it; the person reads its notes and chooses.
+   */
+  readonly breaking: boolean;
+}
+
+/** Where an update stands on this computer; failures carry no detail beyond the step that failed. */
+export type UpdateStatus =
+  | { readonly state: "idle" }
+  | { readonly state: "checking" }
+  | { readonly state: "current"; readonly checkedAt: string }
+  | ({ readonly state: "available" } & FoundUpdate)
+  | ({ readonly state: "downloading"; readonly percent: number } & FoundUpdate)
+  | ({ readonly state: "ready" } & FoundUpdate)
+  /** "backup": the copy of the shop taken before installing failed, so nothing was installed. */
+  | { readonly state: "failed"; readonly step: "check" | "download" | "backup" | "install" };
+
+/** This computer's update state and preference. */
+export interface UpdateView {
+  readonly currentVersion: string;
+  /**
+   * "install": KOLO downloads and installs the new version itself (Windows installer, AppImage, .deb).
+   * "notify": KOLO only says that a new version exists and opens the download page (Windows portable).
+   * "none": updates come from elsewhere (Microsoft Store, development builds) and KOLO never checks.
+   */
+  readonly mode: "install" | "notify" | "none";
+  /** Download non-breaking versions in the background; the Windows installer and AppImage then install when KOLO closes. */
+  readonly automatic: boolean;
+  /** Whether, with automatic updates on, a downloaded version installs when KOLO closes; a .deb waits for a restart instead. */
+  readonly installsOnClose: boolean;
+  readonly status: UpdateStatus;
+}
+
+/** Desktop application updates; a per-computer concern outside any shop, so no session is needed. */
+export interface UpdateService {
+  /** The current update state. */
+  updateState(): Promise<Result<UpdateView>>;
+  /** Looks for a newer version now; with automatic updates on, a found version starts downloading. */
+  checkForUpdate(): Promise<Result<UpdateView>>;
+  /** Downloads the version found by the last check. */
+  downloadUpdate(): Promise<Result<UpdateView>>;
+  /** Copies the shop, closes KOLO cleanly, installs the downloaded version and reopens; answers only if it could not. */
+  installUpdate(): Promise<Result<UpdateView>>;
+  /** Turns background download (and install on close) on or off for this computer. */
+  setAutomaticUpdates(input: { readonly enabled: boolean }): Promise<Result<UpdateView>>;
+  /** Opens the KOLO downloads page in the browser, for copies that cannot install updates themselves. */
+  openDownloads(): Promise<Result<null>>;
+  /** Called with every update state change. */
+  onUpdate(listener: (view: UpdateView) => void): () => void;
+}

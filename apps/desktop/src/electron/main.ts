@@ -1,7 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, powerMonitor, safeStorage, nativeTheme, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor, safeStorage, nativeTheme, shell, type IpcMainInvokeEvent } from "electron";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "node:crypto";
 import { desktopStatus } from "./database.js";
@@ -12,6 +12,7 @@ import { isRendererUrl } from "./renderer-origin.js";
 import { localCredentialsOnDesktop, desktopSealingCrypto } from "./local-credentials.js";
 import { clearOutgoing, pickDesktopTransferFile, saveDesktopExportFile, saveDesktopPdfFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.js";
 import { renderPdf } from "./pdf.js";
+import { DesktopUpdates, installKind, updateHandlers, writeSafetyCopy, type Updater } from "./updates.js";
 import type { TransferDialogs } from "./transfer.js";
 import { nodeWorkspaceFiles } from "@kolo/core/data/database/node-sqlite";
 import { migrate } from "@kolo/core/data/database/migrations";
@@ -41,7 +42,7 @@ if (smokeTest || workflowSmoke || benchmarkSmoke) {
 
 if (selfCheck) {
   void app.whenReady().then(async () => {
-    const result = await (await import("./self-check.js")).desktopSelfCheck();
+    const result = await (await import("./self-check.js")).desktopSelfCheck(app.isPackaged ? process.resourcesPath : undefined);
     process.stdout.write(`KOLO_SELF_CHECK ${JSON.stringify(result)}\n`);
     // A GUI app's stdout can be lost (Windows, wine): the verifier names a file for the result instead.
     const output = process.env["KOLO_SELF_CHECK_OUTPUT"];
@@ -56,10 +57,12 @@ if (selfCheck) {
   let fileSlots: ReturnType<typeof nodeWorkspaceFiles> | undefined;
   let application: DesktopApplication | undefined;
   let interval: ReturnType<typeof setInterval> | undefined;
+  let updates: DesktopUpdates | undefined;
   let closing = false, closed = false;
   const stop = async (): Promise<void> => {
     closing = true;
     if (interval !== undefined) clearInterval(interval);
+    updates?.dispose();
     await application?.dispose(); application = undefined;
     database?.close(); database = undefined; fileSlots?.close(); fileSlots = undefined;
   };
@@ -70,7 +73,8 @@ if (selfCheck) {
     event.preventDefault();
     if (closing) return;
     closing = true;
-    void stop().finally(() => { closed = true; app.quit(); });
+    // An update installing on close copies the shop first, while its database is still open.
+    void (updates?.beforeQuit() ?? Promise.resolve()).then(stop).finally(() => { closed = true; app.quit(); });
   });
 
   void app.whenReady().then(async () => {
@@ -93,7 +97,7 @@ if (selfCheck) {
         await previous?.dispose(); previousDatabase?.close(); fileSlots?.close();
         const data = app.getPath("userData");
         for (const entry of readdirSync(data)) if (/^(kolo\.db|workspace-[0-9a-f-]+\.db|stage-[0-9a-f-]+\.db|workspace-slots\.db)(?:-wal|-shm|-journal)?$/.test(entry)) rmSync(join(data, entry), { force: true });
-        for (const directory of ["credentials", "session"]) rmSync(join(data, directory), { recursive: true, force: true });
+        for (const directory of ["credentials", "session", "pre-update"]) rmSync(join(data, directory), { recursive: true, force: true });
         fileSlots = nodeWorkspaceFiles(data);
         const fresh = fileSlots.openActive(); migrate(fresh);
         application = await serve(fresh); database = fresh;
@@ -119,6 +123,19 @@ if (selfCheck) {
           event.senderFrame === window.webContents.mainFrame && isRendererUrl(event.senderFrame?.url, rendererPath);
       };
       for (const [channel, handler] of Object.entries(desktopHandlers(() => application!, () => desktopStatus(database!), trusted))) ipcMain.handle(channel, handler);
+      // Smoke and benchmark runs of a packaged build never look for updates.
+      const packageType = ((): string | undefined => { try { return readFileSync(join(process.resourcesPath, "package-type"), "utf8").trim(); } catch { return undefined; } })();
+      const kind = smokeTest || workflowSmoke || benchmarkSmoke ? "development" : installKind({ platform: process.platform, packaged: app.isPackaged, windowsStore: process.windowsStore === true, env: process.env, packageType });
+      updates = new DesktopUpdates({ kind, currentVersion: app.getVersion(), preferences: join(app.getPath("userData"), "updates.json"), now: () => new Date().toISOString(),
+        updater: async (): Promise<Updater> => {
+          const { AppImageUpdater, DebUpdater, NsisUpdater } = (await import("electron-updater")).default;
+          return kind === "appimage" ? new AppImageUpdater() : kind === "deb" ? new DebUpdater() : new NsisUpdater();
+        },
+        safetyCopy: async () => { writeSafetyCopy(database!, join(app.getPath("userData"), "pre-update"), app.getVersion(), new Date()); },
+        publish: view => { if (!closing && window !== undefined && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("kolo:update", view); },
+        beforeInstall: async () => { await stop(); closed = true; },
+        afterInstall: started => { if (started) app.quit(); else { app.relaunch(); app.exit(0); } } });
+      for (const [channel, handler] of Object.entries(updateHandlers(updates, trusted, () => shell.openExternal("https://github.com/vanillaiice/kolo/releases")))) ipcMain.handle(channel, handler);
       window = new BrowserWindow({ width: 1280, height: 850, minWidth: 880, minHeight: 620, backgroundColor: windowBackground(), show: false,
         webPreferences: { preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: false, backgroundThrottling: !(workflowSmoke || benchmarkSmoke) } });
       // Shown after the first paint, so the entry screen appears whole instead of an empty frame.
@@ -141,6 +158,7 @@ if (selfCheck) {
       await window.loadFile(rendererPath);
       if (!window.isVisible()) window.show();
       loaded = true;
+      updates.start();
       if (benchmarkSmoke) {
         const { benchmarkDesktop } = await import("./benchmark.js");
         await benchmarkDesktop(window, database, performance.now() - bootStart); app.quit();

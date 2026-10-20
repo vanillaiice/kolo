@@ -403,7 +403,7 @@ export interface DesktopStatus {
 ```
 
 ```ts
-export interface DesktopBridge extends ShopService {
+export interface DesktopBridge extends ShopService, UpdateService {
     getStatus(): Promise<DesktopStatus>;
 }
 ```
@@ -656,10 +656,11 @@ recordReturn(host: Host, input: unknown): { readonly returnId: string; };
 
 The desktop runtime checks itself: every crypto primitive against known answers in Electron's BoringSSL, and its
 storage path (node:sqlite, every migration, the snapshot copy in a worker thread loaded from inside the asar).
-`--self-check` runs this in a packaged build; electron-runtime.test.ts runs it in the test suite.
+`--self-check` runs this in a packaged build; electron-runtime.test.ts runs it in the test suite. A packaged build
+passes its resources directory: electron-updater must load from the asar and the build must carry its update feed.
 
 ```ts
-desktopSelfCheck(): Promise<PlatformCheck>;
+desktopSelfCheck(resources?: string): Promise<PlatformCheck>;
 ```
 
 ## [apps/desktop/src/electron/server-sync.ts](../../apps/desktop/src/electron/server-sync.ts)
@@ -1120,6 +1121,134 @@ Discards a staged backup snapshot and closes a picked file; other staged kinds h
 
 ```ts
 release(file: StagedFile | undefined): Promise<void>;
+```
+
+## [apps/desktop/src/electron/updates.ts](../../apps/desktop/src/electron/updates.ts)
+
+How this copy of KOLO was installed, which decides whether it can replace itself.
+
+```ts
+export type InstallKind = "nsis" | "appimage" | "deb" | "portable" | "store" | "development" | "other";
+```
+
+Reads the install kind from the runtime: electron-builder's portable launcher and AppImage runtime set these variables.
+
+```ts
+installKind(runtime: {
+    readonly platform: string;
+    readonly packaged: boolean;
+    readonly windowsStore: boolean;
+    readonly env: Readonly<Record<string, string | undefined>>;
+    readonly packageType: string | undefined;
+}): InstallKind;
+```
+
+The part of electron-updater's AppUpdater that KOLO drives; tests substitute a fake.
+
+```ts
+export interface Updater {
+    autoDownload: boolean;
+    autoInstallOnAppQuit: boolean;
+    allowPrerelease: boolean;
+    fullChangelog: boolean;
+    checkForUpdates(): Promise<{
+        readonly isUpdateAvailable: boolean;
+        readonly updateInfo: {
+            readonly version: string;
+            readonly releaseNotes?: string | readonly {
+                readonly version: string;
+                readonly note: string | null;
+            }[] | null;
+        };
+    } | null>;
+    downloadUpdate(): Promise<unknown>;
+    install(isSilent: boolean, isForceRunAfter: boolean): boolean;
+    on(event: "download-progress", listener: (progress: {
+        readonly percent: number;
+    }) => void): unknown;
+}
+```
+
+Whether going from `current` to `next` is non-breaking under semver's caret rule (`^current`): the same major from
+1.0.0, the same minor before it, and never a pre-release.
+
+```ts
+nonBreaking(current: string, next: string): boolean;
+```
+
+A pre-release (`-beta.1`) is offered only to a copy that is itself on a pre-release.
+
+```ts
+offered(current: string, next: string): boolean;
+```
+
+The notes electron-updater read from GitHub, newest first and bounded; a missing note is left out.
+
+```ts
+releaseNotes(version: string, notes: string | readonly {
+    readonly version: string;
+    readonly note: string | null;
+}[] | null | undefined): ReleaseNote[];
+```
+
+What the main process provides to .
+
+```ts
+export interface UpdateOptions {
+    readonly kind: InstallKind;
+    readonly currentVersion: string;
+    readonly preferences: string;
+    readonly updater: () => Promise<Updater>;
+    readonly publish: (view: UpdateView) => void;
+    readonly safetyCopy: () => Promise<void>;
+    readonly beforeInstall: () => Promise<void>;
+    readonly afterInstall: (started: boolean) => void;
+    readonly now: () => string;
+}
+```
+
+Checks GitHub Releases for a newer KOLO and, as the person chooses, downloads and installs it. Before 1.0.0 every
+release is a GitHub pre-release, so pre-releases are read but a `-beta` version is offered only to a beta copy; from
+1.0.0 only full releases are read. A found version is downloaded only on request, or in the background when automatic
+updates are on and the version is non-breaking (). Every install first copies the shop database
+(`safetyCopy`) and closes the shop (`beforeInstall`); the automatic install on close runs after the same copy and
+KOLO's own shutdown, and is cancelled when the copy fails. The preference is a small file in user data, kept like the
+other per-computer preferences when the computer is reset.
+
+```ts
+class DesktopUpdates {
+  constructor(options: UpdateOptions);
+  /** The state shown to the renderer. */
+  view(): UpdateView;
+  /** Checks shortly after start, then every six hours while KOLO stays open. */
+  start(first = 20000, every = 6 * HOUR): void;
+  /** Stops the scheduled checks. */
+  dispose(): void;
+  /** Looks for a newer version; a check already running, a download or a downloaded update is left as it is. */
+  check(): Promise<UpdateView>;
+  /** Downloads the version the last check found. */
+  download(): Promise<UpdateView>;
+  /** Copies the shop, closes it, starts the installer and quits. When the copy fails nothing is installed; when the
+   * installer cannot start, KOLO restarts on its current version. */
+  install(): Promise<UpdateView>;
+  /** Before KOLO closes: copies the shop when an update will install on close, or cancels that install if the copy fails. */
+  beforeQuit(): Promise<void>;
+  /** Saves the preference; turning it on downloads a non-breaking update that was already found. */
+  setAutomatic(enabled: boolean): UpdateView;
+}
+```
+
+A consistent copy of the open shop database, taken before an update migrates it: `<version>-<time>.db` in `directory`
+(private to this user), keeping the newest `keep`. It holds what the shop database holds and nothing more.
+
+```ts
+writeSafetyCopy(database: Database, directory: string, version: string, now: Date, keep = 3): string;
+```
+
+IPC handlers for the update bridge; like the shop handlers, untrusted senders and malformed arguments are refused.
+
+```ts
+updateHandlers(updates: DesktopUpdates, trusted: (event: unknown) => boolean, openDownloads: () => Promise<void>): Readonly<Record<string, (event: unknown, ...args: unknown[]) => unknown>>;
 ```
 
 ## [apps/desktop/src/electron/validation.ts](../../apps/desktop/src/electron/validation.ts)
@@ -2441,6 +2570,76 @@ export interface ShopService {
 }
 ```
 
+One release's notes as GitHub renders them (HTML); the renderer shows their text only.
+
+```ts
+export interface ReleaseNote {
+    readonly version: string;
+    readonly html: string;
+}
+```
+
+A newer version: its notes for every release since this one, and whether it may break what this version does.
+
+```ts
+export interface FoundUpdate {
+    readonly version: string;
+    readonly notes: readonly ReleaseNote[];
+    readonly breaking: boolean;
+}
+```
+
+Where an update stands on this computer; failures carry no detail beyond the step that failed.
+
+```ts
+export type UpdateStatus = {
+    readonly state: "idle";
+} | {
+    readonly state: "checking";
+} | {
+    readonly state: "current";
+    readonly checkedAt: string;
+} | ({
+    readonly state: "available";
+} & FoundUpdate) | ({
+    readonly state: "downloading";
+    readonly percent: number;
+} & FoundUpdate) | ({
+    readonly state: "ready";
+} & FoundUpdate) | {
+    readonly state: "failed";
+    readonly step: "check" | "download" | "backup" | "install";
+};
+```
+
+This computer's update state and preference.
+
+```ts
+export interface UpdateView {
+    readonly currentVersion: string;
+    readonly mode: "install" | "notify" | "none";
+    readonly automatic: boolean;
+    readonly installsOnClose: boolean;
+    readonly status: UpdateStatus;
+}
+```
+
+Desktop application updates; a per-computer concern outside any shop, so no session is needed.
+
+```ts
+export interface UpdateService {
+    updateState(): Promise<Result<UpdateView>>;
+    checkForUpdate(): Promise<Result<UpdateView>>;
+    downloadUpdate(): Promise<Result<UpdateView>>;
+    installUpdate(): Promise<Result<UpdateView>>;
+    setAutomaticUpdates(input: {
+        readonly enabled: boolean;
+    }): Promise<Result<UpdateView>>;
+    openDownloads(): Promise<Result<null>>;
+    onUpdate(listener: (view: UpdateView) => void): () => void;
+}
+```
+
 ## [apps/server/src/admin/accounts.ts](../../apps/server/src/admin/accounts.ts)
 
 Operator roles: `admin` changes things, `viewer` only reads.
@@ -2857,7 +3056,7 @@ recordPayment(tx: Transaction<ServerDatabase>, input: PaymentInput, now: Date): 
 A shop's payments, newest first.
 
 ```ts
-listPayments(db: Kysely<ServerDatabase>, shopId: string): Promise<{ paymentId: string; months: number; amountMinor: number; method: "cash" | "mtn_momo" | "orange_money" | "bank" | "card" | "other"; reference: string; source: "manual" | "webhook" | "code"; recordedBy: string; recordedAt: string; paidUntilAfter: string; }[]>;
+listPayments(db: Kysely<ServerDatabase>, shopId: string): Promise<{ paymentId: string; months: number; amountMinor: number; method: "other" | "cash" | "mtn_momo" | "orange_money" | "bank" | "card"; reference: string; source: "manual" | "webhook" | "code"; recordedBy: string; recordedAt: string; paidUntilAfter: string; }[]>;
 ```
 
 A payment provider's webhook, reduced to what kolo needs. Each provider gets one adapter that verifies its own

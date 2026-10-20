@@ -1,4 +1,4 @@
-import type { ShopService } from "../shared/service.js";
+import type { ShopService, UpdateService } from "../shared/service.js";
 
 /** Legacy boot-status read retained for compatibility and diagnostics. */
 export interface DesktopStatus {
@@ -6,7 +6,7 @@ export interface DesktopStatus {
   readonly shopName: string | null;
 }
 
-export interface DesktopBridge extends ShopService {
+export interface DesktopBridge extends ShopService, UpdateService {
   /** Read installation status from the main process's local database. */
   getStatus(): Promise<DesktopStatus>;
 }

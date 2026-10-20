@@ -23,9 +23,45 @@ does not delete app-data on uninstall. Portable means portable application binar
 it still stores the shop under that Windows user's app-data and OS-protected credentials
 remain tied to that user. Move shops using encrypted backup/restore or trusted pairing.
 
-Updates initially use a downloaded full installer: export an encrypted backup, close
-KOLO, install the next version, unlock and verify the existing shop. No background
-download or automatic update restart is implemented. Database migrations are forward;
+### In-app updates
+
+KOLO checks GitHub Releases (electron-updater) 20 seconds after start and every six hours, and
+Settings → Updates has "Check for updates". Below 1.0.0 it reads pre-releases, since every release is
+one, but offers a `-beta` version only to a beta copy; from 1.0.0 it reads only full releases (see
+[releasing](../releasing.md#signing-and-updates)). A newer version shows a banner with the release notes
+of every version since the installed one (plain text from the GitHub release body up to its `---` rule,
+in the reader's language), Download, then "Restart and install".
+
+Installing first writes a **safety copy** of the open shop database (`VACUUM INTO`, the newest three
+kept in `pre-update/` in user data, deleted by a computer reset), then closes the shop cleanly
+(sessions, sealing, SQLite) before the installer starts, and reopens KOLO locked. If the copy fails
+nothing is installed; if the installer does not start, KOLO restarts on its current version. The copy is
+not offered in the interface: opening it as a shop would fork the till's event history. It is for
+support, when a release's migration has gone wrong: a fixed release can migrate it again.
+
+"Download and install updates automatically" is a per-computer setting (`updates.json` in user data,
+kept by a computer reset) and is **off by default**: nothing downloads until the person chooses. With it
+on, only a **non-breaking** version (semver caret: same major from 1.0.0, same minor before it) downloads
+in the background, and the NSIS installer or AppImage installs it when KOLO closes, after the same
+safety copy (a failed copy cancels that install). A `.deb` downloads but waits for "Restart and install",
+because it installs through a password prompt (pkexec/sudo, `dpkg`). A breaking version is never
+downloaded or installed by itself, even when it was downloaded by hand: its notes open by default and
+the person decides.
+
+| Copy | Behaviour |
+| --- | --- |
+| Windows installer (NSIS) | Check, download, silent install, relaunch |
+| Linux AppImage | Check, download, replace the AppImage, relaunch |
+| Linux `.deb` | Check, download, install with a password prompt |
+| Windows portable | Check only; "Open the download page" |
+| Microsoft Store, development, other Linux | Never checks (the Store updates it) |
+
+Smoke, workflow and benchmark runs never check. The packaged `--self-check` loads electron-updater from
+the asar and requires `resources/app-update.yml`. The update check is the only network request KOLO makes
+without a configured server; checks fail quietly offline and are reported only in Settings.
+
+A full installer remains the fallback: export an encrypted backup, close KOLO, install the next
+version, unlock and verify the existing shop. Database migrations are forward;
 do not promise binary downgrade after a schema upgrade. Retain the pre-upgrade backup
 and previous installer for a separately verified recovery procedure.
 

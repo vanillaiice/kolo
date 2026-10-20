@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ShopService, WorkspaceView } from "../shared/service.ts";
+import type { ShopService, UpdateService, WorkspaceView } from "../shared/service.ts";
 import { Workspace } from "./components/Workspace.tsx";
 import { Products } from "./components/Products.tsx";
 import { Till } from "./components/Till.tsx";
@@ -19,12 +19,13 @@ import { call, ErrorText, Field, TextContext, useAction, useText, type Message }
 import { text, type Language } from "./text.ts";
 import { dropNav, saveNavOrder, storedNavOrder, type NavId } from "./nav-order.ts";
 import { AlertsButton, AlertsPanel, useNotifications, type AlertTarget } from "./components/Notifications.tsx";
+import { UpdateBanner, useUpdates } from "./components/Updates.tsx";
 
-/** Reusable DOM application: platform operations enter only through the injected service. */
-export function App({service}:{readonly service:ShopService}):React.JSX.Element{
+/** Reusable DOM application: platform operations enter only through the injected services; updates are optional. */
+export function App({service,updates}:{readonly service:ShopService;readonly updates?:UpdateService|undefined}):React.JSX.Element{
   const [language,setLanguage]=useState<Language>(()=>{try{return localStorage.getItem("kolo.language")==="en"?"en":"fr";}catch{return "fr";}});
   const [appearance,setAppearance]=useState<Appearance>(storedAppearance),[legal,setLegal]=useState<LegalKind>();
-  const [navOrder,setNavOrder]=useState<NavId[]>(storedNavOrder);
+  const [navOrder,setNavOrder]=useState<NavId[]>(storedNavOrder),updateView=useUpdates(updates);
   // Saved only when the person reorders, so a later default reaches computers that never chose their own.
   const changeNavOrder=useCallback((order:NavId[]):void=>{setNavOrder(order);saveNavOrder(order);},[]);
   const [view,setView]=useState<WorkspaceView>(),[error,setError]=useState<Message>(),[revision,setRevision]=useState(0);
@@ -51,7 +52,7 @@ export function App({service}:{readonly service:ShopService}):React.JSX.Element{
           <Workspace service={service} view={view} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})} onLegal={setLegal}/>
           <footer className="entry-legal"><span>kolo {__KOLO_VERSION__} · made by hblabs</span><LegalLinks onOpen={setLegal}/></footer></main>:
           <Shop key={view.sessionId} service={service} view={view} sessionId={view.sessionId} revision={revision} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})}
-            preferences={{appearance,onAppearance:setAppearance,language,onLanguage:setLanguage,onLegal:setLegal,navOrder,onNavOrder:changeNavOrder}}/>
+            preferences={{appearance,onAppearance:setAppearance,language,onLanguage:setLanguage,onLegal:setLegal,navOrder,onNavOrder:changeNavOrder,updates,updateView}}/>
       }
       {view!==undefined&&error&&<div className="connection-error"><ErrorText message={error}/><button className="secondary" onClick={refresh}>{t("retry")}</button></div>}
       {legal!==undefined&&<LegalDialog key={legal} initial={legal} onClose={()=>setLegal(undefined)}/>}
@@ -77,6 +78,7 @@ function Shop({service,view,sessionId,revision,refresh,onRecoveryKey,preferences
     </aside>
     <main id="main-content" tabIndex={-1} className="main-content"><header className="topbar"><span>{view.shopName}</span><div className="topbar-actions"><AlertsButton unread={alerts.data?.unread??0} expanded={alertsOpen} onToggle={()=>setAlertsOpen(!alertsOpen)}/><span className="user-name">{view.actor?.name}</span>{view.actor?.isOwner&&<button className="text-button" onClick={()=>setKeyForm(!keyForm)}>{t("viewKey")}</button>}<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.lock()).then(()=>refresh());}}>{t("lock")}</button></div></header>
       <ErrorText message={action.error}/>
+      <UpdateBanner updates={preferences.updates} view={preferences.updateView}/>
       {alertsOpen&&<AlertsPanel view={alerts.data} error={alerts.error} permissions={permissions} onOpen={openAlert} onMarkAll={()=>{void alerts.markAll();}} onClose={()=>setAlertsOpen(false)}/>}
       {keyForm&&<div className="panel recovery-form"><form onSubmit={event=>{event.preventDefault();void action.run(()=>service.recoveryKey({sessionId,secret})).then(value=>{setSecret("");if(value===null)action.setError({code:"keyUnavailable"});else if(value!==undefined){setKeyForm(false);onRecoveryKey(value,sessionId);}});}}><Field id="owner-proof" label={t("secret")} value={secret} onChange={setSecret} secret maxLength={256} disabled={action.busy}/><div className="actions"><button type="submit" className="primary" disabled={action.busy}>{t("showKey")}</button><button type="button" className="secondary" onClick={()=>{setKeyForm(false);setSecret("");}}>{t("cancel")}</button></div></form></div>}
       {canTill&&<div hidden={section!=="till"}><Till service={service} sessionId={sessionId} revision={revision} permissions={permissions} onReceipt={id=>{setReceiptId(id);if(canReceipts)setSelected("receipts");}}/></div>}

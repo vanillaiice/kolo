@@ -6,7 +6,10 @@ Android retain their own app versions, which appear in filenames and release not
 
 ## A release
 
-1. Run `npm run check` and the manual **Desktop Windows acceptance** workflow.
+1. Run `npm run check` and the manual **Desktop Windows acceptance** workflow. Rename
+   `## Unreleased` in `CHANGELOG.md` to `## X.Y.Z` and check it reads well for a shopkeeper, in
+   French and English: installed apps show it before updating, and the release script refuses a
+   version without its section.
 2. Bump the root `package.json` release version. Bump changed apps as needed:
    desktop in `apps/desktop/package.json`; Android in `apps/mobile/package.json` and
    `app.json` (`expo.version`, and raise `android.versionCode`). Run
@@ -108,7 +111,22 @@ beside it instead of updating it. To move a shop, make an encrypted backup in th
 then uninstall the old app. The ID can never change once the app is on the Play Store. The desktop ID stays
 `com.hblabs.kolo`: Windows ties installer upgrades to it.
 
-KOLO has no in-app updater: users install the next version over the old one (see
-[desktop release](implementation/desktop-release.md)). The release carries `latest*.yml` so an
-updater can be added later. Shared tags use the standard `v` prefix; an updater would
-still need to select the desktop assets from the combined pre-release.
+Desktop KOLO updates itself from GitHub Releases with electron-updater (see
+[desktop release](implementation/desktop-release.md#in-app-updates)). It reads `latest.yml` /
+`latest-linux.yml` from the newest published release, which is why every desktop upload must keep
+them, the `.blockmap` files and the installers' names. A draft is invisible to it until the publish
+step completes. Copies up to 0.8.0 have no updater and are updated by hand once.
+
+- **Release kind.** `scripts/release-info.mjs` marks a release as a GitHub pre-release while the
+  version is below 1.0.0 or has a suffix (`1.1.0-beta.1`). From 1.0.0 full releases are normal ones, and
+  installed apps read only those (GitHub's latest release); before 1.0.0 they read pre-releases but skip a
+  `-beta` version unless they run a beta themselves.
+- **Version numbers carry the update policy.** Automatic updates install only non-breaking versions
+  under semver's caret rule: from 1.0.0, a minor or patch release (`1.2.0` → `1.3.0`, `1.3.1`); before it,
+  only a patch (`0.8.0` → `0.8.1`). A new major (`2.0.0`), or a new minor before 1.0.0, always waits for
+  the person, who sees the notes first. So bump the major for anything that changes how a shop works
+  or needs every till updated together, and never ship a breaking change as a minor or patch.
+- **Notes.** The release body is the version's `CHANGELOG.md` section, a `---` rule, then download
+  instructions; the app shows what precedes the rule, in the reader's language, for every release since
+  the installed version. Keep the root and desktop versions equal: the app compares its own version
+  with the release tags to choose which notes to show, and with `latest*.yml` to decide whether to update.

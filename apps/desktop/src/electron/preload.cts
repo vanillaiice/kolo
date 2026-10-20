@@ -137,6 +137,17 @@ const bridge: DesktopBridge = {
   checkout: input => ipcRenderer.invoke("kolo:checkout", input),
   getReceipt: input => ipcRenderer.invoke("kolo:receipt", input),
   listReceipts: input => ipcRenderer.invoke("kolo:receipts", input),
+  updateState: () => ipcRenderer.invoke("kolo:update-state"),
+  checkForUpdate: () => ipcRenderer.invoke("kolo:check-update"),
+  downloadUpdate: () => ipcRenderer.invoke("kolo:download-update"),
+  installUpdate: () => ipcRenderer.invoke("kolo:install-update"),
+  setAutomaticUpdates: input => ipcRenderer.invoke("kolo:automatic-updates", input),
+  openDownloads: () => ipcRenderer.invoke("kolo:open-downloads"),
+  onUpdate: listener => {
+    const notify = (_event: unknown, view: Parameters<typeof listener>[0]): void => listener(view);
+    ipcRenderer.on("kolo:update", notify);
+    return () => { ipcRenderer.removeListener("kolo:update", notify); };
+  },
   onChanged: listener => {
     const notify = (): void => listener();
     ipcRenderer.on("kolo:changed", notify);

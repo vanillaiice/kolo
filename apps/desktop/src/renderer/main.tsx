@@ -12,4 +12,4 @@ applyAppearance(storedAppearance());
 const service: ShopService = window.kolo;
 const element = document.getElementById("root");
 if (element === null) throw new Error("missing application root");
-createRoot(element).render(<App service={service} />);
+createRoot(element).render(<App service={service} updates={window.kolo} />);

@@ -1,8 +1,9 @@
-import type { ShopService } from "../../shared/service.ts";
+import type { ShopService, UpdateService, UpdateView } from "../../shared/service.ts";
 import type { Language } from "../text.ts";
 import { useState } from "react";
 import { ErrorText, Field, useAction, useRead, useText } from "./ui.tsx";
 import { LegalLinks } from "./Legal.tsx";
+import { UpdatesPanel } from "./Updates.tsx";
 import { SystemNotificationsPanel, TaxPanel, TermsPanel } from "./ShopSettings.tsx";
 import { moveNav, NAV_IDS, type NavId } from "../nav-order.ts";
 import type { LegalKind } from "../legal.ts";
@@ -21,7 +22,7 @@ export function applyAppearance(value: Appearance): void {
 }
 
 /** Per-computer display and session preferences, available to every signed-in user. */
-export function Settings({ service, sessionId, canChangeFiles, canShopSettings, canViewProducts, appearance, onAppearance, language, onLanguage, onLegal, navOrder, onNavOrder }: {
+export function Settings({ service, sessionId, canChangeFiles, canShopSettings, canViewProducts, appearance, onAppearance, language, onLanguage, onLegal, navOrder, onNavOrder, updates, updateView }: {
   readonly service: ShopService; readonly sessionId: string; readonly canChangeFiles: boolean; readonly canViewProducts: boolean;
   /** business.settings: shop-wide tax and payment terms, which sync to every till. */
   readonly canShopSettings: boolean;
@@ -29,6 +30,8 @@ export function Settings({ service, sessionId, canChangeFiles, canShopSettings, 
   readonly language: Language; readonly onLanguage: (value: Language) => void; readonly onLegal: (kind: LegalKind) => void;
   /** This computer's sidebar order; also changed by dragging menu items. */
   readonly navOrder: readonly NavId[]; readonly onNavOrder: (order: NavId[]) => void;
+  /** This computer's application updates, when the host provides them. */
+  readonly updates?: UpdateService | undefined; readonly updateView?: UpdateView | undefined;
 }): React.JSX.Element {
   const { t } = useText(), action = useAction();
   const preferences = useRead(() => service.sessionPreferences({ sessionId }), [service, sessionId]);
@@ -65,6 +68,7 @@ export function Settings({ service, sessionId, canChangeFiles, canShopSettings, 
           <button className="text-button" aria-label={`${t("moveDown")} : ${t(id)}`} disabled={index === navOrder.length - 1} onClick={() => onNavOrder(moveNav(navOrder, id, 1))}>↓</button></li>)}</ol>
         <button className="secondary" disabled={navOrder.every((id, index) => NAV_IDS[index] === id)} onClick={() => onNavOrder([...NAV_IDS])}>{t("resetMenuOrder")}</button>
       </div>
+      <UpdatesPanel updates={updates} view={updateView}/>
       {canChangeFiles && <ResetPanel service={service} sessionId={sessionId}/>}
       <div className="panel about-panel"><h2>{t("about")}</h2><p className="hint">{t("aboutHelp")}</p>
         <dl className="facts"><dt>{t("version")}</dt><dd>KOLO {__KOLO_VERSION__}</dd></dl>

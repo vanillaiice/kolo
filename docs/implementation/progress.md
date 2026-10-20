@@ -2090,3 +2090,55 @@ holds them.
   into the role, exceptions against it, rename, `role_in_use`, move off and delete, deleted role unassignable, invalid
   inputs and staff access refused.
 - Not verified on a device: the mobile role screens on Android.
+
+## 2026-10-20: Desktop in-app updates
+
+Desktop KOLO looks for a newer version on GitHub Releases and offers to install it; automatic updates are an opt-in,
+per-computer setting, off by default ([desktop release](desktop-release.md#in-app-updates)).
+
+- **Desktop.** `electron/updates.ts` (`DesktopUpdates`, `installKind`, `updateHandlers`) drives electron-updater 6.8.9:
+  pre-releases allowed, no download without a click unless the setting is on. Checks 20 s after start and every six
+  hours. "Restart and install" closes the shop and database before the installer starts, and restarts the current
+  version if it cannot start. NSIS and AppImage install when KOLO closes in automatic mode; a `.deb` waits for an
+  explicit restart (password prompt); portable copies only link to the download page; Store, development and smoke
+  runs never check. Bridge: `updateState`, `checkForUpdate`, `downloadUpdate`, `installUpdate`, `setAutomaticUpdates`,
+  `openDownloads`, `onUpdate` (`UpdateService`, `UpdateView`). Renderer: an update banner with "Later", and
+  Settings → Updates (state, check now, automatic setting). French/English text.
+- **Self-check.** A packaged build's `--self-check` loads electron-updater from the asar and requires `app-update.yml`.
+
+### Verification
+
+- Inside Electron: install-kind matrix; found/current/failed checks with no error detail; concurrent checks reach the
+  updater once; progress clamped and ignored outside a download; failed download retried; automatic mode persists,
+  downloads, and installs on close only for NSIS/AppImage; defensive preference reads (default off); install closes
+  the shop first and reports an installer that did not start; portable never downloads; Store/development never load
+  the updater; scheduled checks stop on dispose; the bridge refuses untrusted senders and malformed input.
+- `npm run check`, `npm run bundle:mobile`, `npm run dist:desktop:linux` and `npm run verify:desktop:linux` passed,
+  including the new `updater` self-check entry. A live electron-updater check against `vanillaiice/kolo` from
+  version 0.7.0 found the 0.8.0 pre-release.
+- Not verified: an actual install transition (NSIS silent install and relaunch on Windows, AppImage replacement, `.deb`
+  through pkexec), unsigned-installer behaviour under SmartScreen during a silent update, and the banner on Windows.
+  Copies up to 0.8.0 have no updater and must be updated by hand once.
+
+### Follow-up: safety copy, beta channel, update policy and release notes
+
+- **Safety copy.** Every install (button, or on close in automatic mode) first writes `pre-update/<version>-<time>.db`
+  with `VACUUM INTO` (`writeSafetyCopy`, newest three kept, removed by a computer reset). A failed copy installs
+  nothing (`failed` step `backup`; on close, the install is cancelled). An automatic encrypted backup was not used:
+  those need an owner session and a pinned recovery key (ADR-036) and are not implemented yet.
+- **Policy.** `nonBreaking` (semver `^current`) gates automatic download and install on close; `offered` hides
+  pre-release versions from non-pre-release copies. Pre-releases are read only below 1.0.0 or on a beta copy.
+  `UpdateStatus` carries `breaking` and `notes` (`FoundUpdate`, `ReleaseNote`).
+- **Notes.** electron-updater's full changelog (every release since the installed one, newest first, bounded) is
+  shown as plain text by `release-notes.ts` (`noteBlocks`, `parseNotes`): the part before the first rule, in the
+  reader's language when split by "Français"/"English" headings. Breaking updates show a warning and open the notes.
+- **Releases.** `CHANGELOG.md` (new, bilingual sections) is required: `releaseNotes()` puts the version's section
+  before the download instructions and fails without it. `isPrerelease` marks GitHub pre-releases only below
+  1.0.0 or with a suffix; `release-github.mjs` passes `--prerelease=<flag>`.
+
+Verification: Electron tests for the caret and beta matrices, bounded notes, allowPrerelease by version, beta not
+offered, automatic off by default, breaking versions never auto-downloaded or installed on close, copy → close →
+install order, failed copy installs nothing, close-time copy and cancellation, a real SQLite safety copy and pruning
+across versions that sort wrongly as text, and the notes reader (language choice, rule, dropped scripts, bounds).
+`node --test scripts/release-info.test.mjs` covers the changelog section and the pre-release flag. Not verified:
+the notes rendering of a real GitHub release body in the packaged app, and every item listed above.
