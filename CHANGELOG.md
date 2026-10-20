@@ -9,7 +9,7 @@ GitHub release, and installed desktop apps show it before updating, so write it 
 - Say what someone will notice: new things they can do, fixes, and anything that works differently. Leave out
   internal changes. Do not use a `---` line inside a section: it ends the notes shown in the app.
 
-## Unreleased
+## 0.9.0
 
 ### Français
 
