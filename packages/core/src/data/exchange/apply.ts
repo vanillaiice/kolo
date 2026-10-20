@@ -162,6 +162,7 @@ function applyAuthority(tx: Queryable, event: JournalEnvelope): void {
   if (event.event_type === "SERVER_ENDPOINT_SET" || event.event_type === "SERVER_ENDPOINT_CLEARED") { applyServerEndpoint(tx,event); return; }
   if (event.event_type === "SHOP_BACKUP_KEY") { applyBackupKey(tx,event); return; }
   if (event.event_type === "ROLE_PERMISSIONS_SET") { applyRolePermissions(tx,event); return; }
+  if (event.event_type === "CUSTOM_ROLE_SET") { applyCustomRole(tx,event); return; }
   if (!("user_id" in payload) || !("revision" in payload)) throw new ExchangeError("unsupported_event");
   const target = tx.get(`SELECT * FROM local_memberships WHERE business_id=? AND user_id=?`,[event.business_id,payload.user_id]);
   if (event.event_type === "MEMBER_CREATED") {
@@ -190,7 +191,13 @@ function applyAuthority(tx: Queryable, event: JournalEnvelope): void {
   } else if (event.event_type === "MEMBER_ROLE_CHANGED") {
     const change = parseEventPayload("MEMBER_ROLE_CHANGED",2,payload);
     if (change.user_id === installation["owner_id"] || target["role"] === "OWNER") throw new ExchangeError("permission_denied");
-    tx.run(`UPDATE local_memberships SET role=?,revision=? WHERE business_id=? AND user_id=?`,[change.role,change.revision,event.business_id,change.user_id]);
+    if (change.custom_role_id !== undefined) {
+      // The role fact may still be on its way; a role this till knows must have the same base. A deleted one still applies.
+      const custom = tx.get(`SELECT base_role FROM custom_roles WHERE business_id=? AND id=?`,[event.business_id,change.custom_role_id]);
+      if (custom === undefined) throw new ExchangeError("missing_dependency");
+      if (custom["base_role"] !== change.role) throw new ExchangeError("conflict");
+    }
+    tx.run(`UPDATE local_memberships SET role=?,custom_role_id=?,revision=? WHERE business_id=? AND user_id=?`,[change.role,change.custom_role_id ?? null,change.revision,event.business_id,change.user_id]);
     tx.run(`UPDATE users SET role=?,updated_at=max(updated_at,?) WHERE business_id=? AND id=?`,[change.role,event.occurred_at,event.business_id,change.user_id]);
   } else if (["MEMBER_SUSPENDED","MEMBER_REINSTATED"].includes(event.event_type)) {
     if (payload.user_id === installation["owner_id"]) throw new ExchangeError("permission_denied");
@@ -267,6 +274,24 @@ function applyRolePermissions(tx: Queryable, event: JournalEnvelope): void {
   if (old !== undefined && revision === old["revision"]) { if (old["permissions"] !== value) throw new ExchangeError("conflict"); return; }
   tx.run(`INSERT INTO role_permissions(business_id,role,permissions,revision) VALUES (?,?,?,?)
     ON CONFLICT(business_id,role) DO UPDATE SET permissions=excluded.permissions,revision=excluded.revision`,[event.business_id,role,value,revision]);
+}
+
+// A shop-defined role: the higher revision wins, an equal revision must say the same thing, and its base never changes.
+function applyCustomRole(tx: Queryable, event: JournalEnvelope): void {
+  const { role_id, name, base_role, permissions, deleted, revision } = parseEventPayload("CUSTOM_ROLE_SET",2,event.payload);
+  const value = JSON.stringify(PERMISSIONS.filter(permission => permissions.includes(permission)));
+  const owner = tx.get(`SELECT business_id FROM custom_roles WHERE id=?`,[role_id]);
+  if (owner !== undefined && owner["business_id"] !== event.business_id) throw new ExchangeError("scope_mismatch");
+  const old = tx.get(`SELECT name,base_role,permissions,deleted,revision FROM custom_roles WHERE business_id=? AND id=?`,[event.business_id,role_id]);
+  if (old !== undefined && old["base_role"] !== base_role) throw new ExchangeError("conflict");
+  if (old !== undefined && revision < Number(old["revision"])) return;
+  if (old !== undefined && revision === old["revision"]) {
+    if (old["name"] !== name || old["permissions"] !== value || old["deleted"] !== (deleted ? 1 : 0)) throw new ExchangeError("conflict");
+    return;
+  }
+  tx.run(`INSERT INTO custom_roles(business_id,id,name,base_role,permissions,deleted,revision) VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(business_id,id) DO UPDATE SET name=excluded.name,permissions=excluded.permissions,deleted=excluded.deleted,revision=excluded.revision`,
+  [event.business_id,role_id,name,base_role,value,deleted ? 1 : 0,revision]);
 }
 
 // The owner's chosen server address: the higher revision wins; an equal revision must say the same thing.

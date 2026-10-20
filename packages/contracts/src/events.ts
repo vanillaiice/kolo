@@ -80,13 +80,21 @@ export const EVENT_PAYLOAD_SCHEMAS = {
   /** Owner removes a member's exception for one permission, so it follows the member's role again (ADR-037). */
   PERMISSION_OVERRIDE_CLEARED: z.strictObject({ user_id: uuid, permission, revision: positive }),
   /** Owner moves a staff member to another role; the member's own exceptions are kept (ADR-037). */
-  MEMBER_ROLE_CHANGED: z.strictObject({ user_id: uuid, role: role.exclude(["OWNER"]), revision: positive }),
+  MEMBER_ROLE_CHANGED: z.strictObject({ user_id: uuid, role: role.exclude(["OWNER"]), revision: positive,
+    /** A shop-defined role the member now holds; `role` is then that role's base. Absent for a built-in role. */
+    custom_role_id: uuid.optional() }),
   /**
    * The shop's permissions for one staff role (ADR-037), replacing its built-in defaults; null returns to the defaults.
    * Per role, the higher revision wins and an equal revision must say the same thing.
    */
   ROLE_PERMISSIONS_SET: z.strictObject({ role: role.exclude(["OWNER"]),
     permissions: z.array(permission).max(PERMISSIONS.length).refine(values => new Set(values).size === values.length).nullable(), revision: positive }),
+  /**
+   * A shop-defined role: its name, the built-in role it was copied from (fixed for the role's life), its permissions,
+   * and whether the owner deleted it. Per role, the higher revision wins and an equal revision must say the same thing.
+   */
+  CUSTOM_ROLE_SET: z.strictObject({ role_id: uuid, name: z.string().trim().min(1).max(60), base_role: role.exclude(["OWNER"]),
+    permissions: z.array(permission).max(PERMISSIONS.length).refine(values => new Set(values).size === values.length), deleted: z.boolean(), revision: positive }),
   MEMBER_SUSPENDED: z.strictObject({ user_id: uuid, revision: positive }),
   MEMBER_REINSTATED: z.strictObject({ user_id: uuid, revision: positive }),
   MEMBER_ACCESS_RESET: z.strictObject({ user_id: uuid, revision: positive }),

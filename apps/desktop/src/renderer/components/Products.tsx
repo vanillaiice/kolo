@@ -19,7 +19,7 @@ export function Products({ service, sessionId, revision, permissions }: Props): 
       {tab==="products"&&selectedId===undefined&&permissions.includes("products.create")&&<button className="primary" onClick={()=>setCreating(true)}>+ {t("newProduct")}</button>}</div>
     <div className="tabs" role="tablist">{(["products","categories"] as const).map(id=><button key={id} role="tab" aria-selected={tab===id} className={tab===id?"selected":""} onClick={()=>setTab(id)}>{t(id==="products"?"catalogue":"categories")}</button>)}</div>
     <div hidden={tab!=="products"}>
-      {creating&&<CreateProduct service={service} sessionId={sessionId} canAdjust={permissions.includes("inventory.adjust")} onClose={()=>setCreating(false)}/>}
+      {creating&&<CreateProduct service={service} sessionId={sessionId} canAdjust={permissions.includes("inventory.adjust")} canAddCategory={permissions.includes("products.create")} onClose={()=>setCreating(false)}/>}
       <div hidden={selectedId!==undefined}><ProductList service={service} sessionId={sessionId} revision={revision} onOpen={setSelectedId}/></div>
       {selectedId!==undefined&&<ProductDetail key={selectedId} service={service} sessionId={sessionId} revision={revision} permissions={permissions} productId={selectedId} onBack={()=>setSelectedId(undefined)}/>}
     </div>
@@ -67,7 +67,7 @@ function ProductDetail({service,sessionId,revision,permissions,productId,onBack}
         <dt>{t("unit")}</dt><dd>{shown.unit} · {t(shown.divisible?"fractional":"wholeUnits")}</dd><dt>{t("barcodeLabel")}</dt><dd>{shown.barcode??"—"}</dd>
         <dt>{t("minimumStock")}</dt><dd>{formatQuantityWithUnit(shown.minimumStockThousandths,shown.unit,language)}</dd></dl>
     </div>
-    {editing!==undefined&&<EditProduct key={editing.version} service={service} sessionId={sessionId} product={editing} onReload={()=>setEditing(shown)} onSaved={value=>{setShown(value);setEditing(undefined);}} onClose={()=>setEditing(undefined)}/>}
+    {editing!==undefined&&<EditProduct key={editing.version} service={service} sessionId={sessionId} product={editing} canAddCategory={permissions.includes("products.create")} onReload={()=>setEditing(shown)} onSaved={value=>{setShown(value);setEditing(undefined);}} onClose={()=>setEditing(undefined)}/>}
     {shown.active&&canMove&&<StockMovement service={service} sessionId={sessionId} product={shown} permissions={permissions} onSaved={setShown}/>}
     <ProductTax service={service} sessionId={sessionId} revision={revision} productId={shown.id} canEdit={canEdit&&shown.active}/>
     {permissions.includes("inventory.view")&&<StockHistory service={service} sessionId={sessionId} revision={revision} product={shown}/>}
@@ -101,7 +101,7 @@ function ProductTax({service,sessionId,revision,productId,canEdit}:{service:Shop
       :<p>{t(`taxRule.${shown.rule}`)}{shown.rule==="RATE"&&shown.rateBasisPoints!==undefined?` · ${formatRate(shown.rateBasisPoints,language)}`:""}</p>}
   </div>;
 }
-function EditProduct({service,sessionId,product,onReload,onSaved,onClose}:{service:ShopService;sessionId:string;product:ProductView;onReload:()=>void;onSaved:(value:ProductView)=>void;onClose:()=>void}):React.JSX.Element{
+function EditProduct({service,sessionId,product,canAddCategory,onReload,onSaved,onClose}:{service:ShopService;sessionId:string;product:ProductView;canAddCategory:boolean;onReload:()=>void;onSaved:(value:ProductView)=>void;onClose:()=>void}):React.JSX.Element{
   const {t}=useText(),action=useAction();
   const [name,setName]=useState(product.name),[unit,setUnit]=useState(product.unit),[barcode,setBarcode]=useState(product.barcode??""),[price,setPrice]=useState(String(product.sellingPriceMinor));
   const [cost,setCost]=useState(product.purchasePriceMinor===undefined?"":String(product.purchasePriceMinor)),[minimum,setMinimum]=useState(quantityInput(product.minimumStockThousandths)),[categoryId,setCategoryId]=useState(product.categoryId??""),[others,setOthers]=useState<readonly string[]>(product.otherCategoryIds??[]);
@@ -116,10 +116,9 @@ function EditProduct({service,sessionId,product,onReload,onSaved,onClose}:{servi
     });
     if(value!==undefined)onSaved(value);
   };
-  const choices=[{value:"",label:t("noCategory")},...(options.data?.items??[]).filter(item=>item.active||item.id===product.categoryId).map(item=>({value:item.id,label:item.active?item.name:`${item.name} · ${t("archived")}`}))];
   return <div className="panel form-panel"><h2>{t("editProduct")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}>
     <fieldset disabled={action.busy}><div className="two-fields"><Field id="edit-name" label={t("name")} value={name} onChange={setName}/><Field id="edit-unit" label={t("unit")} value={unit} onChange={setUnit}/></div>
-      <div className="two-fields"><Field id="edit-barcode" label={t("barcode")} value={barcode} onChange={setBarcode} required={false} maxLength={256}/><Select id="edit-category" label={t("category")} value={categoryId} onChange={setCategoryId} options={choices}/></div>
+      <div className="two-fields"><Field id="edit-barcode" label={t("barcode")} value={barcode} onChange={setBarcode} required={false} maxLength={256}/><CategoryChoice id="edit-category" service={service} sessionId={sessionId} items={options.data?.items??[]} kept={product.categoryId} value={categoryId} onChange={setCategoryId} canAdd={canAddCategory} onAdded={options.retry}/></div>
       <div className="two-fields"><Field id="edit-price" label={t("price")} value={price} onChange={setPrice} numeric/><Field id="edit-cost" label={t("cost")} value={cost} onChange={setCost} numeric required={false}/></div>
       <Field id="edit-minimum" label={t("minimumStock")} value={minimum} onChange={setMinimum} numeric/>
       <fieldset className="permission-group"><legend>{t("otherCategories")}</legend>
@@ -221,15 +220,16 @@ function ArchiveCategory({service,sessionId,category}:{service:ShopService;sessi
   return <><button className="text-button" disabled={action.busy} onClick={()=>{void action.run(()=>service.updateCategory({sessionId,categoryId:category.id,version:category.version,name:category.name,active:!category.active}));}}>{t(category.active?"archive":"restore")}</button>
     <ErrorText message={action.error} conflictMessage="staleVersion"/></>;
 }
-function CreateProduct({service,sessionId,canAdjust,onClose}:{service:ShopService;sessionId:string;canAdjust:boolean;onClose:()=>void}):React.JSX.Element{
+function CreateProduct({service,sessionId,canAdjust,canAddCategory,onClose}:{service:ShopService;sessionId:string;canAdjust:boolean;canAddCategory:boolean;onClose:()=>void}):React.JSX.Element{
   const {t}=useText(),action=useAction();
+  const options=useRead(()=>service.listCategories({sessionId,limit:100}),[service,sessionId]),[categoryId,setCategoryId]=useState("");
   const [name,setName]=useState(""),[unit,setUnit]=useState(()=>t("defaultUnit")),[barcode,setBarcode]=useState(""),[price,setPrice]=useState(""),[cost,setCost]=useState(""),[opening,setOpening]=useState("0"),[divisible,setDivisible]=useState(false),[requestId]=useState(()=>crypto.randomUUID());
   const [uncertain,setUncertain]=useState(false);
   const submit=async():Promise<void>=>{
     await action.run(async()=>{
       let input;
       try{input={sessionId,requestId,name,unit,divisible,sellingPriceMinor:moneyEntry(price),openingThousandths:canAdjust?quantityEntry(opening,divisible):0,
-        ...(barcode.trim()===""?{}:{barcode:barcode.trim()}),...(cost.trim()===""?{}:{purchasePriceMinor:moneyEntry(cost)})};}
+        ...(barcode.trim()===""?{}:{barcode:barcode.trim()}),...(cost.trim()===""?{}:{purchasePriceMinor:moneyEntry(cost)}),...(categoryId===""?{}:{categoryId})};}
       catch{return {ok:false,error:{code:"invalid_input"}};}
       const result=await service.createProduct(input).catch(()=>({ok:false as const,error:{code:"unavailable" as const}}));
       setUncertain(!result.ok&&result.error.code==="unavailable");
@@ -238,11 +238,39 @@ function CreateProduct({service,sessionId,canAdjust,onClose}:{service:ShopServic
   };
   return <div className="panel form-panel"><h2>{t("newProduct")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}>
     <fieldset disabled={action.busy||uncertain}><div className="two-fields"><Field id="product-name" label={t("name")} value={name} onChange={setName}/><Field id="product-unit" label={t("unit")} value={unit} onChange={setUnit}/></div>
-      <Field id="product-barcode" label={t("barcode")} value={barcode} onChange={setBarcode} required={false} maxLength={256}/>
+      <div className="two-fields"><Field id="product-barcode" label={t("barcode")} value={barcode} onChange={setBarcode} required={false} maxLength={256}/>
+        <CategoryChoice id="product-category" service={service} sessionId={sessionId} items={options.data?.items??[]} value={categoryId} onChange={setCategoryId} canAdd={canAddCategory} onAdded={options.retry}/></div>
       <div className="two-fields"><Field id="product-price" label={t("price")} value={price} onChange={setPrice} numeric/><Field id="product-cost" label={t("cost")} value={cost} onChange={setCost} numeric required={false}/></div>
       <label className="check"><input type="checkbox" checked={divisible} onChange={event=>setDivisible(event.target.checked)}/>{t("divisible")}</label>
       {canAdjust&&<Field id="opening-stock" label={t("openingStock")} value={opening} onChange={setOpening} numeric/>}
     </fieldset>
     <ErrorText message={action.error}/><div className="actions"><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):uncertain?t("retry"):t("saveProduct")}</button><button type="button" className="secondary" disabled={action.busy||uncertain} onClick={onClose}>{t("cancel")}</button></div>
   </form></div>;
+}
+/**
+ * Main-category picker for product forms. "New category…" opens an inline name field that creates the
+ * category (one request ID per draft, retried identically if the outcome is uncertain) and selects it,
+ * so a product never has to be saved twice to file it under a new category.
+ */
+function CategoryChoice({id,service,sessionId,items,kept,value,onChange,canAdd,onAdded}:{id:string;service:ShopService;sessionId:string;items:readonly CategoryView[];kept?:string|undefined;value:string;onChange:(value:string)=>void;canAdd:boolean;onAdded:()=>void}):React.JSX.Element{
+  const {t}=useText(),action=useAction();
+  const [adding,setAdding]=useState(false),[name,setName]=useState(""),[requestId,setRequestId]=useState(()=>crypto.randomUUID()),[uncertain,setUncertain]=useState(false),[added,setAdded]=useState<CategoryView>();
+  const shown=added===undefined||items.some(item=>item.id===added.id)?items:[...items,added];
+  const choices=[{value:"",label:t("noCategory")},...shown.filter(item=>item.active||item.id===kept).map(item=>({value:item.id,label:item.active?item.name:`${item.name} · ${t("archived")}`})),
+    ...(canAdd?[{value:"new",label:t("newCategoryOption")}]:[])];
+  const add=async():Promise<void>=>{
+    if(name.trim()===""){action.setError({code:"invalid_input"});return;}
+    const category=await action.run(async()=>{
+      const result=await service.createCategory({sessionId,requestId,name:name.trim()}).catch(()=>({ok:false as const,error:{code:"unavailable" as const}}));
+      setUncertain(!result.ok&&result.error.code==="unavailable"); return result;
+    });
+    if(category===undefined)return;
+    setAdded(category);onChange(category.id);setAdding(false);setName("");setRequestId(crypto.randomUUID());onAdded();
+  };
+  if(!adding)return <Select id={id} label={t("category")} value={value} onChange={next=>{if(next==="new"){setAdding(true);action.setError(undefined);}else onChange(next);}} options={choices}/>;
+  return <div className="field" onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();if(!action.busy)void add();}}}><div className="inline-form">
+    <fieldset disabled={action.busy||uncertain}><Field id={`${id}-new`} label={t("categoryName")} value={name} onChange={setName} required={false}/></fieldset>
+    <button type="button" className="primary" disabled={action.busy} onClick={()=>{void add();}}>{action.busy?t("recording"):uncertain?t("retry"):t("addCategoryHere")}</button>
+    <button type="button" className="secondary" disabled={action.busy||uncertain} onClick={()=>{setAdding(false);setName("");action.setError(undefined);}}>{t("cancel")}</button>
+  </div><ErrorText message={action.error}/></div>;
 }

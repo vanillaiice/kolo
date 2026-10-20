@@ -26,7 +26,7 @@ function codeText(entry: AuditEntry, language: Language): string | undefined {
   const code = entry.facts.code;
   if (code === undefined) return undefined;
   if (entry.type.startsWith("PERMISSION_") && Object.hasOwn(permissionKeys, code)) return translate(language, permissionKeys[code as Permission]);
-  const key = [["MEMBER_CREATED", "MEMBER_ROLE_CHANGED", "ROLE_PERMISSIONS_SET"].includes(entry.type) ? `role.${code}` : "", entry.type === "PAYMENT_TERMS_SET" ? (code === "SUPPLIER" ? "suppliers" : "customers") : "",
+  const key = [["MEMBER_CREATED", "MEMBER_ROLE_CHANGED", "ROLE_PERMISSIONS_SET", "CUSTOM_ROLE_SET"].includes(entry.type) ? `role.${code}` : "", entry.type === "PAYMENT_TERMS_SET" ? (code === "SUPPLIER" ? "suppliers" : "customers") : "",
     entry.type === "CASH_MOVED" ? `jd.cash.${code}` : "", `jd.${code}`, `movement.${code}`, code].find(known);
   return key === undefined ? code : translate(language, key);
 }

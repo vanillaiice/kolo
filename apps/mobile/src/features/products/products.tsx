@@ -97,6 +97,14 @@ export function ProductFormScreen(): React.JSX.Element {
   const dirty = loaded === undefined ? name !== "" || price !== "" || barcode !== "" : name !== loaded.name || price !== String(loaded.sellingPriceMinor) || barcode !== (loaded.barcode ?? "") || unit !== loaded.unit;
   useLeaveGuard(dirty);
   const canPrice = loaded === undefined || permissions.includes("products.price");
+  const categoryAction = useAction();
+  /** Records a new category from the picker so the product form keeps its draft. */
+  const newCategory = permissions.includes("products.create") ? { label: t("newCategory"), notice: categoryAction.notice, add: (title: string, select: (item: Category) => void): void => categoryAction.run(() => {
+    if (title.trim() === "") throw new FormProblem("nameRequired");
+    const now = new Date().toISOString(), id = newIdOnDevice();
+    saveCategory(context, { id, name: title.trim(), active: true, createdAt: now, updatedAt: now });
+    return categoryRead(context, id)!;
+  }, select) } : undefined;
   /** Writes the additional categories only when they changed; the main category is never among them. */
   const saveExtras = (id: string): void => {
     const set = productCategories(context, id), wanted = extras.map(item => item.id).filter(item => item !== group?.id).sort();
@@ -136,11 +144,11 @@ export function ProductFormScreen(): React.JSX.Element {
       {loaded === undefined ? <Toggle label={t("divisible")} value={divisible} onChange={setDivisible} hint={t("divisibleHelp")} /> : <Text style={s.muted}>{t("divisibleFixed")}</Text>}
       <Field label={t("minimum")} value={minimum} onChange={setMinimum} kind="quantity" />
       <Picker<Category> label={t("mainCategory")} value={group} onChange={value => { setGroup(value); if (value !== undefined) setExtras(current => current.filter(item => item.id !== value.id)); }} optional
-        load={page => categories(context, page)} revision={revision} />
+        load={page => categories(context, page)} revision={revision} create={newCategory} />
       <Text style={[s.muted, { fontWeight: "600" }]}>{t("otherCategories")}</Text>
       <RowGroup>{extras.map(item => <ListRow key={item.id} title={item.name} trailing={t("remove")} trailingTone="muted" accessibilityLabel={t("removeLineLabel", { name: item.name })}
         onPress={() => setExtras(current => current.filter(other => other.id !== item.id))} />)}</RowGroup>
-      {extras.length < 20 && <Picker<Category> label={t("addCategory")} value={undefined} placeholder={t("choose")} load={page => categories(context, page)} revision={revision}
+      {extras.length < 20 && <Picker<Category> label={t("addCategory")} value={undefined} placeholder={t("choose")} load={page => categories(context, page)} revision={revision} create={newCategory}
         onChange={value => { if (value !== undefined && value.id !== group?.id) setExtras(current => current.some(item => item.id === value.id) ? current : [...current, { id: value.id, name: value.name }]); }} />}
       <Text style={s.muted}>{t("otherCategoriesHelp")}</Text>
       {loaded === undefined && permissions.includes("inventory.adjust") && <Field label={t("openingQuantity")} value={opening} onChange={setOpening} kind="quantity" hint={t("openingHelp")} />}

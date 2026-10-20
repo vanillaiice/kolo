@@ -172,6 +172,11 @@ class DesktopApplication implements ShopService {
   listRoles(input: unknown): Promise<Result<readonly RoleView[]>>;
   setRolePermission(input: unknown): Promise<Result<readonly RoleView[]>>;
   resetRole(input: unknown): Promise<Result<readonly RoleView[]>>;
+  listCustomRoles(input: unknown): Promise<Result<readonly CustomRoleView[]>>;
+  createCustomRole(input: unknown): Promise<Result<readonly CustomRoleView[]>>;
+  renameCustomRole(input: unknown): Promise<Result<readonly CustomRoleView[]>>;
+  setCustomRolePermission(input: unknown): Promise<Result<readonly CustomRoleView[]>>;
+  deleteCustomRole(input: unknown): Promise<Result<readonly CustomRoleView[]>>;
   setStaffActive(input: unknown): Promise<Result<StaffView>>;
   resetStaffSecret(input: unknown): Promise<Result<StaffView>>;
   /** The shop's pinned backup recovery keys (ADR-036), newest first; owner settings access. */
@@ -805,7 +810,7 @@ and a request for the current effective state changes nothing.
 setStaffPermission(host: Host, input: unknown): StaffView;
 ```
 
-Owner-only move of another member to a staff role; their exceptions stay.
+Owner-only move of another member to a staff role or a live custom role; their exceptions stay.
 
 ```ts
 setStaffRole(host: Host, input: unknown): StaffView;
@@ -827,6 +832,36 @@ Owner-only: a role back to its built-in defaults.
 
 ```ts
 resetRole(host: Host, input: unknown): readonly RoleView[];
+```
+
+Shop-defined roles under users.view.
+
+```ts
+listCustomRoles(host: Host, input: unknown): readonly CustomRoleView[];
+```
+
+Owner-only: a new custom role copied from a staff role; an identical retry of the request returns it.
+
+```ts
+createCustomRole(host: Host, input: unknown): readonly CustomRoleView[];
+```
+
+Owner-only: renames a live custom role.
+
+```ts
+renameCustomRole(host: Host, input: unknown): readonly CustomRoleView[];
+```
+
+Owner-only: one permission of a live custom role; the current state changes nothing.
+
+```ts
+setCustomRolePermission(host: Host, input: unknown): readonly CustomRoleView[];
+```
+
+Owner-only: deletes a custom role nobody holds.
+
+```ts
+deleteCustomRole(host: Host, input: unknown): readonly CustomRoleView[];
 ```
 
 Owner-only suspension/reinstatement of another member; the current state is a no-op.
@@ -1152,7 +1187,7 @@ runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void>;
 Stable application failures; native exception text, credentials and paths never cross the bridge.
 
 ```ts
-export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" | "invalid_file" | "too_large" | "invalid_password" | "invalid_recovery_key" | "recovery_key_required" | "untrusted_backup" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "sync_keys_unavailable" | "inconsistent_records" | "invalid_photo" | "photo_storage_full" | "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" | "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" | "no_server" | "join_not_found" | "join_conflict";
+export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "role_in_use" | "duplicate_name" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" | "invalid_file" | "too_large" | "invalid_password" | "invalid_recovery_key" | "recovery_key_required" | "untrusted_backup" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "sync_keys_unavailable" | "inconsistent_records" | "invalid_photo" | "photo_storage_full" | "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" | "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" | "no_server" | "join_not_found" | "join_conflict";
 ```
 
 Serializable results make transport and operation failures explicit.
@@ -1276,6 +1311,7 @@ export interface ProductRequest extends SessionRequest {
     readonly sellingPriceMinor: number;
     readonly purchasePriceMinor?: number;
     readonly openingThousandths: number;
+    readonly categoryId?: string;
 }
 ```
 
@@ -1594,6 +1630,11 @@ export interface StaffView {
     readonly isSelf: boolean;
     readonly permissions: readonly Permission[];
     readonly exceptions: readonly Permission[];
+    readonly customRole?: {
+        readonly id: string;
+        readonly name: string;
+        readonly deleted: boolean;
+    };
 }
 ```
 
@@ -1604,6 +1645,20 @@ export interface RoleView {
     readonly role: Exclude<StaffView["role"], "OWNER">;
     readonly permissions: readonly Permission[];
     readonly customized: boolean;
+}
+```
+
+A shop-defined role: a named copy of a built-in staff role with its own permissions. A deleted role is listed only
+while members still hold it, and can no longer be assigned.
+
+```ts
+export interface CustomRoleView {
+    readonly id: string;
+    readonly name: string;
+    readonly baseRole: RoleView["role"];
+    readonly permissions: readonly Permission[];
+    readonly deleted: boolean;
+    readonly holders: number;
 }
 ```
 
@@ -2172,6 +2227,7 @@ export interface ShopService {
         readonly name: string;
         readonly role: Exclude<StaffView["role"], "OWNER">;
         readonly secret: string;
+        readonly customRoleId?: string;
     }): Promise<Result<StaffView>>;
     setStaffPermission(input: SessionRequest & {
         readonly userId: string;
@@ -2180,8 +2236,11 @@ export interface ShopService {
     }): Promise<Result<StaffView>>;
     setStaffRole(input: SessionRequest & {
         readonly userId: string;
+    } & ({
         readonly role: RoleView["role"];
-    }): Promise<Result<StaffView>>;
+    } | {
+        readonly customRoleId: string;
+    })): Promise<Result<StaffView>>;
     listRoles(input: SessionRequest): Promise<Result<readonly RoleView[]>>;
     setRolePermission(input: SessionRequest & {
         readonly role: RoleView["role"];
@@ -2191,6 +2250,24 @@ export interface ShopService {
     resetRole(input: SessionRequest & {
         readonly role: RoleView["role"];
     }): Promise<Result<readonly RoleView[]>>;
+    listCustomRoles(input: SessionRequest): Promise<Result<readonly CustomRoleView[]>>;
+    createCustomRole(input: SessionRequest & {
+        readonly requestId: string;
+        readonly name: string;
+        readonly baseRole: RoleView["role"];
+    }): Promise<Result<readonly CustomRoleView[]>>;
+    renameCustomRole(input: SessionRequest & {
+        readonly roleId: string;
+        readonly name: string;
+    }): Promise<Result<readonly CustomRoleView[]>>;
+    setCustomRolePermission(input: SessionRequest & {
+        readonly roleId: string;
+        readonly permission: Permission;
+        readonly allowed: boolean;
+    }): Promise<Result<readonly CustomRoleView[]>>;
+    deleteCustomRole(input: SessionRequest & {
+        readonly roleId: string;
+    }): Promise<Result<readonly CustomRoleView[]>>;
     setStaffActive(input: SessionRequest & {
         readonly userId: string;
         readonly active: boolean;
@@ -3480,7 +3557,7 @@ receiptSigningMessage(receipt: PeerReceipt): string;
 Strict v2 payload schemas for every current business/authority event. No credentials/tokens.
 
 ```ts
-const EVENT_PAYLOAD_SCHEMAS: { readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly PURCHASE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly CATEGORY_SAVED: ZodObject<{ category: ZodObject<{ id: ZodUUID; name: ZodString; active: ZodBoolean; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_SAVED: ZodObject<{ product: ZodObject<{ id: ZodUUID; category_id: ZodOptional<ZodUUID>; name: ZodString; unit: ZodString; selling_price_minor: ZodNumber; purchase_price_minor: ZodOptional<ZodNumber>; sku: ZodOptional<ZodString>; barcode: ZodOptional<ZodString>; description: ZodOptional<ZodString>; brand: ZodOptional<ZodString>; divisible: ZodOptional<ZodBoolean>; active: ZodOptional<ZodBoolean>; tax_rate_basis_points: ZodOptional<ZodNumber>; minimum_stock: ZodOptional<ZodNumber>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_CATEGORIES_SET: ZodObject<{ product_id: ZodUUID; category_ids: ZodArray<ZodUUID>; updated_at: ZodISODateTime; }, $strict>; readonly TAX_SETTINGS_SET: ZodObject<{ enabled: ZodBoolean; label: ZodString; standard_rate_basis_points: ZodNumber; registration: ZodOptional<ZodString>; updated_at: ZodISODateTime; }, $strict>; readonly PRODUCT_TAX_SET: ZodObject<{ product_id: ZodUUID; rule: ZodEnum<{ STANDARD: "STANDARD"; EXEMPT: "EXEMPT"; RATE: "RATE"; }>; rate_basis_points: ZodOptional<ZodNumber>; updated_at: ZodISODateTime; }, $strict>; readonly PAYMENT_TERMS_SET: ZodObject<{ party: ZodEnum<{ CUSTOMER: "CUSTOMER"; SUPPLIER: "SUPPLIER"; }>; party_id: ZodOptional<ZodUUID>; days: ZodNullable<ZodNumber>; updated_at: ZodISODateTime; }, $strict>; readonly CUSTOMER_SAVED: ZodObject<{ customer: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; credit_limit_minor: ZodOptional<ZodNumber>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_SAVED: ZodObject<{ supplier: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; contact: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly ACCOUNT_SAVED: ZodObject<{ account: ZodObject<{ id: ZodUUID; branch_id: ZodOptional<ZodUUID>; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; number: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SALE_COMPLETED: ZodObject<{ sale: ZodObject<{ id: ZodUUID; number: ZodString; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; name: ZodString; unit_price_minor: ZodNumber; quantity: ZodNumber; discount_minor: ZodOptional<ZodNumber>; tax_rate_basis_points: ZodOptional<ZodNumber>; unit_cost_minor: ZodOptional<ZodNumber>; }, $strict>>; customer_id: ZodOptional<ZodUUID>; credit_transaction_id: ZodOptional<ZodUUID>; discount_minor: ZodOptional<ZodNumber>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly PURCHASE_RECORDED: ZodObject<{ purchase: ZodObject<{ id: ZodUUID; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; unit_cost_minor: ZodNumber; quantity: ZodNumber; }, $strict>>; supplier_id: ZodOptional<ZodUUID>; supplier_transaction_id: ZodOptional<ZodUUID>; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reason: ZodString; occurred_at: ZodISODateTime; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CUSTOMER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; customer_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; supplier_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly STOCK_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CASH_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; ADJUSTMENT: "ADJUSTMENT"; CASH_IN: "CASH_IN"; CASH_OUT: "CASH_OUT"; TRANSFER_IN: "TRANSFER_IN"; TRANSFER_OUT: "TRANSFER_OUT"; }>; amount_minor: ZodNumber; counterpart_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>>; }, $strict>; readonly EXPENSE_RECORDED: ZodObject<{ expense: ZodObject<{ id: ZodUUID; category: ZodEnum<{ OTHER: "OTHER"; RENT: "RENT"; ELECTRICITY: "ELECTRICITY"; WATER: "WATER"; TRANSPORT: "TRANSPORT"; SALARY: "SALARY"; PACKAGING: "PACKAGING"; MAINTENANCE: "MAINTENANCE"; INTERNET: "INTERNET"; MARKETING: "MARKETING"; }>; account_id: ZodUUID; amount_minor: ZodNumber; occurred_at: ZodISODateTime; description: ZodOptional<ZodString>; reference: ZodOptional<ZodString>; reverses_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly WORKSPACE_CREATED: ZodObject<{ business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; accounts: ZodArray<ZodObject<{ id: ZodUUID; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; }, $strict>>; }, $strict>; readonly LEGACY_WORKSPACE_ADOPTED: ZodObject<{ business_id: ZodUUID; owner_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; provenance: ZodLiteral<"unsigned_v1_snapshot">; }, $strict>; readonly MEMBER_CREATED: ZodObject<{ user_id: ZodUUID; name: ZodString; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodLiteral<1>; }, $strict>; readonly PERMISSION_GRANTED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; "data.export": "data.export"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_REVOKED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; "data.export": "data.export"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_OVERRIDE_CLEARED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; "data.export": "data.export"; }>; revision: ZodNumber; }, $strict>; readonly MEMBER_ROLE_CHANGED: ZodObject<{ user_id: ZodUUID; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodNumber; }, $strict>; readonly ROLE_PERMISSIONS_SET: ZodObject<{ role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; permissions: ZodNullable<ZodArray<ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; "data.export": "data.export"; }>>>; revision: ZodNumber; }, $strict>; readonly MEMBER_SUSPENDED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_REINSTATED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_ACCESS_RESET: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly OWNER_ACCESS_RECOVERED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_TRUSTED: ZodObject<{ device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; SERVER: "SERVER"; }>; public_key: ZodString; }, $strict>; authority_allowed: ZodBoolean; revision: ZodNumber; }, $strict>; readonly DEVICE_REVOKED: ZodObject<{ device_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_ENCRYPTION_KEY: ZodObject<{ device_id: ZodUUID; public_key: ZodString; }, $strict>; readonly SHOP_KEY_GRANTED: ZodObject<{ key_id: ZodUUID; epoch: ZodNumber; device_id: ZodUUID; sealed: ZodObject<{ ephemeral_public_key: ZodString; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>; readonly SERVER_ENDPOINT_SET: ZodObject<{ server_device_id: ZodUUID; url: ZodString; fingerprint: ZodString; revision: ZodNumber; }, $strict>; readonly SERVER_ENDPOINT_CLEARED: ZodObject<{ server_device_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly SHOP_BACKUP_KEY: ZodObject<{ key_id: ZodString; version: ZodNumber; public_key: ZodString; created_at: ZodISODateTime; }, $strict>; };
+const EVENT_PAYLOAD_SCHEMAS: { readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly PURCHASE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<{ id: ZodUUID; original_item_id: ZodUUID; quantity: ZodNumber; movement_id: ZodUUID; }, $strict>>; refunds: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; }, $strict>>; debt_transaction_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly CATEGORY_SAVED: ZodObject<{ category: ZodObject<{ id: ZodUUID; name: ZodString; active: ZodBoolean; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_SAVED: ZodObject<{ product: ZodObject<{ id: ZodUUID; category_id: ZodOptional<ZodUUID>; name: ZodString; unit: ZodString; selling_price_minor: ZodNumber; purchase_price_minor: ZodOptional<ZodNumber>; sku: ZodOptional<ZodString>; barcode: ZodOptional<ZodString>; description: ZodOptional<ZodString>; brand: ZodOptional<ZodString>; divisible: ZodOptional<ZodBoolean>; active: ZodOptional<ZodBoolean>; tax_rate_basis_points: ZodOptional<ZodNumber>; minimum_stock: ZodOptional<ZodNumber>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly PRODUCT_CATEGORIES_SET: ZodObject<{ product_id: ZodUUID; category_ids: ZodArray<ZodUUID>; updated_at: ZodISODateTime; }, $strict>; readonly TAX_SETTINGS_SET: ZodObject<{ enabled: ZodBoolean; label: ZodString; standard_rate_basis_points: ZodNumber; registration: ZodOptional<ZodString>; updated_at: ZodISODateTime; }, $strict>; readonly PRODUCT_TAX_SET: ZodObject<{ product_id: ZodUUID; rule: ZodEnum<{ STANDARD: "STANDARD"; EXEMPT: "EXEMPT"; RATE: "RATE"; }>; rate_basis_points: ZodOptional<ZodNumber>; updated_at: ZodISODateTime; }, $strict>; readonly PAYMENT_TERMS_SET: ZodObject<{ party: ZodEnum<{ CUSTOMER: "CUSTOMER"; SUPPLIER: "SUPPLIER"; }>; party_id: ZodOptional<ZodUUID>; days: ZodNullable<ZodNumber>; updated_at: ZodISODateTime; }, $strict>; readonly CUSTOMER_SAVED: ZodObject<{ customer: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; credit_limit_minor: ZodOptional<ZodNumber>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_SAVED: ZodObject<{ supplier: ZodObject<{ id: ZodUUID; name: ZodString; phone: ZodOptional<ZodString>; address: ZodOptional<ZodString>; contact: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly ACCOUNT_SAVED: ZodObject<{ account: ZodObject<{ id: ZodUUID; branch_id: ZodOptional<ZodUUID>; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; number: ZodOptional<ZodString>; notes: ZodOptional<ZodString>; active: ZodOptional<ZodBoolean>; created_at: ZodISODateTime; updated_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SALE_COMPLETED: ZodObject<{ sale: ZodObject<{ id: ZodUUID; number: ZodString; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; name: ZodString; unit_price_minor: ZodNumber; quantity: ZodNumber; discount_minor: ZodOptional<ZodNumber>; tax_rate_basis_points: ZodOptional<ZodNumber>; unit_cost_minor: ZodOptional<ZodNumber>; }, $strict>>; customer_id: ZodOptional<ZodUUID>; credit_transaction_id: ZodOptional<ZodUUID>; discount_minor: ZodOptional<ZodNumber>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly PURCHASE_RECORDED: ZodObject<{ purchase: ZodObject<{ id: ZodUUID; occurred_at: ZodISODateTime; items: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; unit_cost_minor: ZodNumber; quantity: ZodNumber; }, $strict>>; supplier_id: ZodOptional<ZodUUID>; supplier_transaction_id: ZodOptional<ZodUUID>; reference: ZodOptional<ZodString>; note: ZodOptional<ZodString>; }, $strict>; payments: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; reason: ZodString; occurred_at: ZodISODateTime; }, $strict>>; movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CUSTOMER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; customer_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly SUPPLIER_PAYMENT: ZodObject<{ payment: ZodObject<{ id: ZodUUID; supplier_id: ZodUUID; account_id: ZodUUID; amount_minor: ZodNumber; note: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>; }, $strict>; readonly STOCK_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; product_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; PURCHASE: "PURCHASE"; SALE: "SALE"; SALE_RETURN: "SALE_RETURN"; PURCHASE_RETURN: "PURCHASE_RETURN"; ADJUSTMENT: "ADJUSTMENT"; STOCK_COUNT: "STOCK_COUNT"; DAMAGE: "DAMAGE"; }>; quantity: ZodNumber; unit_cost_minor: ZodOptional<ZodNumber>; reference_kind: ZodOptional<ZodEnum<{ PURCHASE: "PURCHASE"; SALE: "SALE"; }>>; reference_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodOptional<ZodISODateTime>; }, $strict>>; }, $strict>; readonly CASH_MOVED: ZodObject<{ movements: ZodArray<ZodObject<{ id: ZodUUID; account_id: ZodUUID; type: ZodEnum<{ OPENING_BALANCE: "OPENING_BALANCE"; ADJUSTMENT: "ADJUSTMENT"; CASH_IN: "CASH_IN"; CASH_OUT: "CASH_OUT"; TRANSFER_IN: "TRANSFER_IN"; TRANSFER_OUT: "TRANSFER_OUT"; }>; amount_minor: ZodNumber; counterpart_id: ZodOptional<ZodUUID>; reason: ZodOptional<ZodString>; occurred_at: ZodISODateTime; }, $strict>>; }, $strict>; readonly EXPENSE_RECORDED: ZodObject<{ expense: ZodObject<{ id: ZodUUID; category: ZodEnum<{ OTHER: "OTHER"; RENT: "RENT"; ELECTRICITY: "ELECTRICITY"; WATER: "WATER"; TRANSPORT: "TRANSPORT"; SALARY: "SALARY"; PACKAGING: "PACKAGING"; MAINTENANCE: "MAINTENANCE"; INTERNET: "INTERNET"; MARKETING: "MARKETING"; }>; account_id: ZodUUID; amount_minor: ZodNumber; occurred_at: ZodISODateTime; description: ZodOptional<ZodString>; reference: ZodOptional<ZodString>; reverses_id: ZodOptional<ZodUUID>; }, $strict>; }, $strict>; readonly WORKSPACE_CREATED: ZodObject<{ business: ZodObject<{ id: ZodUUID; name: ZodString; currency: ZodLiteral<"XAF">; }, $strict>; owner: ZodObject<{ id: ZodUUID; name: ZodString; }, $strict>; device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; }>; public_key: ZodString; }, $strict>; accounts: ZodArray<ZodObject<{ id: ZodUUID; name: ZodString; kind: ZodEnum<{ CASH: "CASH"; MOBILE_MONEY: "MOBILE_MONEY"; BANK: "BANK"; CARD: "CARD"; OTHER: "OTHER"; }>; }, $strict>>; }, $strict>; readonly LEGACY_WORKSPACE_ADOPTED: ZodObject<{ business_id: ZodUUID; owner_id: ZodUUID; device_id: ZodUUID; public_key: ZodString; provenance: ZodLiteral<"unsigned_v1_snapshot">; }, $strict>; readonly MEMBER_CREATED: ZodObject<{ user_id: ZodUUID; name: ZodString; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodLiteral<1>; }, $strict>; readonly PERMISSION_GRANTED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; "data.export": "data.export"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_REVOKED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; "data.export": "data.export"; }>; revision: ZodNumber; }, $strict>; readonly PERMISSION_OVERRIDE_CLEARED: ZodObject<{ user_id: ZodUUID; permission: ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; "data.export": "data.export"; }>; revision: ZodNumber; }, $strict>; readonly MEMBER_ROLE_CHANGED: ZodObject<{ user_id: ZodUUID; role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; revision: ZodNumber; custom_role_id: ZodOptional<ZodUUID>; }, $strict>; readonly ROLE_PERMISSIONS_SET: ZodObject<{ role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; permissions: ZodNullable<ZodArray<ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; "data.export": "data.export"; }>>>; revision: ZodNumber; }, $strict>; readonly CUSTOM_ROLE_SET: ZodObject<{ role_id: ZodUUID; name: ZodString; base_role: ZodEnum<{ MANAGER: "MANAGER"; CASHIER: "CASHIER"; INVENTORY: "INVENTORY"; ACCOUNTANT: "ACCOUNTANT"; }>; permissions: ZodArray<ZodEnum<{ "products.view": "products.view"; "products.create": "products.create"; "products.edit": "products.edit"; "products.price": "products.price"; "products.archive": "products.archive"; "inventory.view": "inventory.view"; "inventory.receive": "inventory.receive"; "inventory.adjust": "inventory.adjust"; "inventory.count": "inventory.count"; "sales.create": "sales.create"; "sales.view": "sales.view"; "sales.view_own": "sales.view_own"; "sales.refund": "sales.refund"; "sales.discount": "sales.discount"; "customers.view": "customers.view"; "customers.manage": "customers.manage"; "customers.credit": "customers.credit"; "suppliers.view": "suppliers.view"; "suppliers.manage": "suppliers.manage"; "purchases.view": "purchases.view"; "purchases.create": "purchases.create"; "purchases.pay": "purchases.pay"; "expenses.view": "expenses.view"; "expenses.create": "expenses.create"; "finance.accounts.view": "finance.accounts.view"; "finance.accounts.manage": "finance.accounts.manage"; "cash.view": "cash.view"; "cash.count": "cash.count"; "cash.reconcile": "cash.reconcile"; "reports.sales": "reports.sales"; "reports.inventory": "reports.inventory"; "reports.customers": "reports.customers"; "reports.suppliers": "reports.suppliers"; "reports.financial": "reports.financial"; "users.view": "users.view"; "users.manage": "users.manage"; "business.settings": "business.settings"; "audit.view": "audit.view"; "customers.pay": "customers.pay"; "customers.credit_override": "customers.credit_override"; "sales.price_override": "sales.price_override"; "cash.move": "cash.move"; "data.export": "data.export"; }>>; deleted: ZodBoolean; revision: ZodNumber; }, $strict>; readonly MEMBER_SUSPENDED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_REINSTATED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly MEMBER_ACCESS_RESET: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly OWNER_ACCESS_RECOVERED: ZodObject<{ user_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_TRUSTED: ZodObject<{ device: ZodObject<{ id: ZodUUID; label: ZodString; platform: ZodEnum<{ ANDROID: "ANDROID"; IOS: "IOS"; DESKTOP: "DESKTOP"; SERVER: "SERVER"; }>; public_key: ZodString; }, $strict>; authority_allowed: ZodBoolean; revision: ZodNumber; }, $strict>; readonly DEVICE_REVOKED: ZodObject<{ device_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly DEVICE_ENCRYPTION_KEY: ZodObject<{ device_id: ZodUUID; public_key: ZodString; }, $strict>; readonly SHOP_KEY_GRANTED: ZodObject<{ key_id: ZodUUID; epoch: ZodNumber; device_id: ZodUUID; sealed: ZodObject<{ ephemeral_public_key: ZodString; nonce: ZodString; ciphertext: ZodString; tag: ZodString; }, $strict>; }, $strict>; readonly SERVER_ENDPOINT_SET: ZodObject<{ server_device_id: ZodUUID; url: ZodString; fingerprint: ZodString; revision: ZodNumber; }, $strict>; readonly SERVER_ENDPOINT_CLEARED: ZodObject<{ server_device_id: ZodUUID; revision: ZodNumber; }, $strict>; readonly SHOP_BACKUP_KEY: ZodObject<{ key_id: ZodString; version: ZodNumber; public_key: ZodString; created_at: ZodISODateTime; }, $strict>; };
 ```
 
 Current supported event names; unknown signed names/versions can be retained unapplied.
@@ -3533,7 +3610,7 @@ parseJournalEnvelope(input: unknown): { event_id: string; business_id: string; o
 Rejects unknown current payload fields; unsupported signed versions are distinguishable.
 
 ```ts
-parseEventPayload<T extends EventType>(type: T, version: number, input: unknown): output<{ readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<...>>; refunds: ZodArray<...>; debt_transaction_id: ZodOptional<...>; }, $strict>; }, $strict>; ... 35 more ...; readonly SHOP_BACKUP_KEY:...;
+parseEventPayload<T extends EventType>(type: T, version: number, input: unknown): output<{ readonly SALE_RETURNED: ZodObject<{ returned: ZodObject<{ id: ZodUUID; original_id: ZodUUID; prior_id: ZodOptional<ZodUUID>; reason: ZodString; items: ZodArray<ZodObject<...>>; refunds: ZodArray<...>; debt_transaction_id: ZodOptional<...>; }, $strict>; }, $strict>; ... 36 more ...; readonly SHOP_BACKUP_KEY:...;
 ```
 
 ## [packages/contracts/src/index.ts](../../packages/contracts/src/index.ts)
@@ -7482,6 +7559,18 @@ Durable native/SQLite credential and staff provisioning gaps; no secret values.
 const CREDENTIAL_RECOVERY_MIGRATION: Migration;
 ```
 
+## [packages/core/src/data/database/custom-roles-migration.ts](../../packages/core/src/data/database/custom-roles-migration.ts)
+
+Shop-defined roles: a named copy of a built-in staff role with its own permissions, set through signed
+`CUSTOM_ROLE_SET` facts. A deleted role stays as a tombstone so a late fact cannot bring it back and a member who
+still holds it keeps the same access. A membership's `custom_role_id` points at the role it holds; its `role`
+column is then that role's base, so every check of the built-in role keeps working. Business data, so snapshots
+carry it.
+
+```ts
+const CUSTOM_ROLES_MIGRATION: Migration;
+```
+
 ## [packages/core/src/data/database/driver.ts](../../packages/core/src/data/database/driver.ts)
 
 The narrow surface the data layer needs from a SQLite driver.
@@ -11125,6 +11214,7 @@ export interface LocalMember {
     readonly role: Role;
     readonly active: boolean;
     readonly revision: number;
+    readonly customRoleId?: string;
 }
 ```
 
@@ -11216,11 +11306,59 @@ those defaults. Members' own grants and revocations still apply on top. Asking f
 setRolePermissions(context: OperationContext, role: StaffRole, permissions: readonly Permission[] | null): void;
 ```
 
-Owner-only: moves a staff member to another staff role, keeping their own grants and revocations. The owner's role
-never changes and no member becomes owner. Asking for the current role changes nothing.
+A shop-defined role: a named copy of a built-in staff role with its own permissions.
 
 ```ts
-changeMemberRole(context: OperationContext, userId: string, role: StaffRole): void;
+export interface CustomRoleView {
+    readonly id: string;
+    readonly name: string;
+    readonly baseRole: StaffRole;
+    readonly permissions: readonly Permission[];
+    readonly deleted: boolean;
+    readonly holders: number;
+    readonly revision: number;
+}
+```
+
+Shop-defined roles under users.view, by name: every live role, and deleted ones that members still hold.
+
+```ts
+listCustomRoles(context: OperationContext): readonly CustomRoleView[];
+```
+
+Owner-only: a new role named `name`, starting from the shop's current permissions for `baseRole`. `id` is the
+caller's request ID: repeating the same creation returns the stored role. Names are unique, ignoring case.
+
+```ts
+createCustomRole(context: OperationContext, input: {
+    readonly id: string;
+    readonly name: string;
+    readonly baseRole: StaffRole;
+}): CustomRoleView;
+```
+
+Owner-only: renames a live custom role or replaces its permissions; it reaches every holder's next command.
+
+```ts
+updateCustomRole(context: OperationContext, id: string, change: {
+    readonly name?: string;
+    readonly permissions?: readonly Permission[];
+}): CustomRoleView;
+```
+
+Owner-only: deletes a custom role nobody holds (`role_in_use` otherwise). Deleting a deleted role changes nothing.
+
+```ts
+deleteCustomRole(context: OperationContext, id: string): void;
+```
+
+Owner-only: moves a staff member to another staff role or to a live custom role, keeping their own grants and
+revocations. The owner's role never changes and no member becomes owner. Asking for the current role changes nothing.
+
+```ts
+changeMemberRole(context: OperationContext, userId: string, role: StaffRole | {
+    readonly customRoleId: string;
+}): void;
 ```
 
 ## [packages/core/src/identity/types.ts](../../packages/core/src/identity/types.ts)
@@ -11228,7 +11366,7 @@ changeMemberRole(context: OperationContext, userId: string, role: StaffRole): vo
 Stable failures for local setup, authentication and application authorization.
 
 ```ts
-export type WorkspaceErrorCode = "invalid_input" | "already_configured" | "legacy_installation" | "setup_pending" | "not_configured" | "credential_unavailable" | "invalid_credential" | "retry_later" | "recovery_required" | "locked" | "actor_inactive" | "permission_denied" | "scope_mismatch";
+export type WorkspaceErrorCode = "invalid_input" | "already_configured" | "legacy_installation" | "setup_pending" | "not_configured" | "credential_unavailable" | "invalid_credential" | "retry_later" | "recovery_required" | "locked" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "role_in_use" | "duplicate_name";
 ```
 
 Contains a stable code and optional retry time, never a PIN or native error.

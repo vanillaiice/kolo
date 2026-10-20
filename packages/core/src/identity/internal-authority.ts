@@ -78,12 +78,23 @@ export function activeMember(tx: Queryable, install: Pick<Installation, "busines
   return member;
 }
 
-/** @internal Resolves current authority through the shop's role matrix, failing closed on corrupt storage. */
+/**
+ * @internal Resolves current authority through the shop's role matrix, or the member's custom role when they hold
+ * one, failing closed on corrupt storage or a custom role this till does not know.
+ */
 export function memberPermissions(tx: Queryable, member: Row): readonly Permission[] {
   try {
+    const businessId = String(member["business_id"]), custom = member["custom_role_id"];
     return resolvePermissions(member["role"] as Role, permissionArray(member["granted"]), permissionArray(member["revoked"]),
-      rolePermissions(tx, String(member["business_id"]), member["role"] as Role));
+      typeof custom === "string" ? customRolePermissions(tx, businessId, custom) : rolePermissions(tx, businessId, member["role"] as Role));
   } catch { throw new WorkspaceError("permission_denied"); }
+}
+
+/** @internal A custom role's permissions; a deleted role keeps its last set for anyone still holding it. */
+export function customRolePermissions(tx: Queryable, businessId: string, roleId: string): Permission[] {
+  const row = tx.get(`SELECT permissions FROM custom_roles WHERE business_id = ? AND id = ?`, [businessId, roleId]);
+  if (row === undefined) throw new WorkspaceError("permission_denied");
+  return permissionArray(row["permissions"]);
 }
 
 /** @internal The shop's edited permissions for a role (ADR-037), or null when it keeps the built-in defaults. */

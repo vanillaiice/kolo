@@ -280,6 +280,11 @@ it("archived products leave the till and stock workflows until restored; categor
     assert.deepEqual(value(await f.application.listCategories({sessionId})).items.map(item=>item.name),["Cold drinks"]);
     value(await f.application.updateCategory({sessionId,categoryId:created.id,version:renamed.version,name:"Cold drinks",active:false}));
     assert.equal(value(await f.application.listCategories({sessionId})).items.length,0);assert.equal(value(await f.application.listCategories({sessionId,includeInactive:true})).items.length,1);
+    const snacks=value(await f.application.createCategory({sessionId,requestId:randomUUID(),name:"Snacks"})),filed=product(sessionId,{name:"Peanuts",barcode:"2000001",categoryId:snacks.id});
+    assert.equal(value(await f.application.createProduct(filed)).categoryId,snacks.id);assert.equal(value(await f.application.createProduct(filed)).categoryId,snacks.id);
+    const {categoryId:_filed,...unfiled}=filed;failure(await f.application.createProduct(unfiled),"request_conflict");
+    for(const categoryId of [created.id,randomUUIDv7(),"../x"])failure(await f.application.createProduct(product(sessionId,{name:"Crisps",barcode:"2000002",categoryId})),"invalid_input");
+    assert.equal(f.database.get(`SELECT count(*) AS n FROM products WHERE name='Crisps'`)!["n"],0);
     const context=await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports);
     const staff=await createLocalMember(context,{name:"Cashier",role:"CASHIER",secret:"765432"}),cashier=value(await f.application.unlock({userId:staff,secret:"765432"})).sessionId!;
     failure(await f.application.createCategory({sessionId:cashier,requestId:randomUUID(),name:"Snacks"}),"permission_denied");
@@ -772,6 +777,36 @@ it("owner edits the role matrix and moves staff; ticking back to the role clears
     const staff=value(await f.application.unlock({userId:created.id,secret:"765432"})).sessionId!;
     failure(await f.application.setRolePermission({sessionId:staff,role:"INVENTORY",permission:"users.manage",allowed:true}),"permission_denied");
     failure(await f.application.listRoles({sessionId:staff}),"permission_denied");
+  }finally{await f.dispose();}
+});
+it("owner creates, edits, assigns and deletes custom roles; a held role cannot be deleted",async()=>{
+  const f=fixture();try{
+    const workspace=await owner(f),sessionId=workspace.sessionId!;
+    const requestId=randomUUID(),request={sessionId,requestId,name:"Night cashier",baseRole:"CASHIER" as const};
+    let custom=value(await f.application.createCustomRole(request));assert.deepEqual(value(await f.application.createCustomRole(request)),custom,"an identical retry");
+    const night=custom[0]!;assert.deepEqual([night.name,night.baseRole,night.holders,night.deleted],["Night cashier","CASHIER",0,false]);
+    failure(await f.application.createCustomRole({...request,requestId:randomUUID(),name:"night CASHIER"}),"duplicate_name");
+    custom=value(await f.application.setCustomRolePermission({sessionId,roleId:night.id,permission:"reports.sales",allowed:true}));
+    assert.equal(custom[0]!.permissions.includes("reports.sales"),true);
+    let member=value(await f.application.createStaff({sessionId,name:"Awa",role:"MANAGER",secret:"765432",customRoleId:night.id}));
+    assert.deepEqual([member.role,member.customRole,member.permissions.includes("reports.sales"),member.permissions.includes("users.view"),member.exceptions],
+      ["CASHIER",{id:night.id,name:"Night cashier",deleted:false},true,false,[]],"created straight into the custom role");
+    member=value(await f.application.setStaffPermission({sessionId,userId:member.id,permission:"reports.sales",allowed:false}));assert.deepEqual(member.exceptions,["reports.sales"],"exceptions are against the custom role");
+    custom=value(await f.application.renameCustomRole({sessionId,roleId:night.id,name:"Late shift"}));
+    assert.equal(value(await f.application.listStaff({sessionId})).find(item=>item.id===member.id)!.customRole!.name,"Late shift");
+    failure(await f.application.deleteCustomRole({sessionId,roleId:night.id}),"role_in_use");
+    member=value(await f.application.setStaffRole({sessionId,userId:member.id,role:"CASHIER"}));assert.equal(member.customRole,undefined);
+    custom=value(await f.application.deleteCustomRole({sessionId,roleId:night.id}));assert.deepEqual(custom,[]);
+    failure(await f.application.setStaffRole({sessionId,userId:member.id,customRoleId:night.id}),"scope_mismatch");
+    failure(await f.application.setCustomRolePermission({sessionId,roleId:night.id,permission:"sales.create",allowed:true}),"scope_mismatch");
+    failure(await f.application.createStaff({sessionId,name:"Bob",role:"CASHIER",secret:"765433",customRoleId:night.id}),"scope_mismatch");
+    for(const bad of [{baseRole:"OWNER"},{name:""},{name:"x".repeat(61)},{requestId:"../x"},{extra:1}])failure(await f.application.createCustomRole({...request,requestId:randomUUID(),...bad} as never),"invalid_input");
+    failure(await f.application.setStaffRole({sessionId,userId:member.id,role:"CASHIER",customRoleId:randomUUID()} as never),"invalid_input");
+    failure(await f.application.setStaffRole({sessionId,userId:member.id} as never),"invalid_input");
+    failure(await f.application.setCustomRolePermission({sessionId,roleId:randomUUID(),permission:"everything",allowed:true} as never),"invalid_input");
+    const staff=value(await f.application.unlock({userId:member.id,secret:"765432"})).sessionId!;
+    failure(await f.application.createCustomRole({...request,sessionId:staff,requestId:randomUUID(),name:"Mine"}),"permission_denied");
+    failure(await f.application.listCustomRoles({sessionId:staff}),"permission_denied");
   }finally{await f.dispose();}
 });
 // Stay signed in: real SQLite, real vault files and the real session-memory module across restarts.

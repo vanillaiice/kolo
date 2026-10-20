@@ -360,6 +360,41 @@ it("change kept on account travels as an ordinary customer payment and reads bac
   assert.deepEqual(b.db.all(`SELECT a.status FROM applied_events a JOIN event_journal e ON e.event_id=a.event_id WHERE e.provenance='received' AND a.status<>'applied'`), []);
 });
 
+it("custom roles and moves onto them converge; a move waits for its role, a changed base or same-revision rewrite is a conflict",async()=>{
+ const [a,b]=await replicas() as [Replica,Replica];
+ const { createLocalMember }=await import("../identity/members.ts");
+ const { createCustomRole,updateCustomRole,deleteCustomRole,changeMemberRole,listCustomRoles }=await import("../identity/roles.ts");
+ const member=await createLocalMember(a.context,{name:"Staff",role:"CASHIER",secret:"654321"});
+ const night=createCustomRole(a.context,{id:randomUUIDv7(),name:"Night",baseRole:"CASHIER"}),gone=createCustomRole(a.context,{id:randomUUIDv7(),name:"Gone",baseRole:"MANAGER"});
+ updateCustomRole(a.context,night.id,{permissions:["sales.create","reports.sales"]});deleteCustomRole(a.context,gone.id);
+ changeMemberRole(a.context,member,{customRoleId:night.id});
+ await send(a,b);
+ assert.deepEqual(listCustomRoles(b.context),listCustomRoles(a.context));assert.equal(listCustomRoles(b.context)[0]!.holders,1);
+ assert.equal(b.db.get(`SELECT deleted FROM custom_roles WHERE id=?`,[gone.id])!["deleted"],1,"the tombstone travels");
+ const row=(r:Replica)=>r.db.get(`SELECT m.role,m.custom_role_id,m.revision,u.role AS user_role FROM local_memberships m JOIN users u ON u.id=m.user_id WHERE m.user_id=?`,[member]);
+ assert.deepEqual(row(b),row(a));assert.equal(row(b)!["custom_role_id"],night.id);
+ assert.ok(auditTrail(b.context,{}).items.some(entry=>entry.type==="MEMBER_ROLE_CHANGED"&&entry.facts.reference==="Night"),"the journal names the custom role");
+ const later=createCustomRole(a.context,{id:randomUUIDv7(),name:"Later",baseRole:"INVENTORY"});changeMemberRole(a.context,member,{customRoleId:later.id});
+ const facts=(type:string)=>a.db.all(`SELECT canonical FROM event_journal WHERE event_type=?`,[type]).map(r=>JSON.parse(String(r["canonical"])) as JournalEnvelope);
+ const fact=facts("CUSTOM_ROLE_SET").find(e=>e.payload["role_id"]===night.id&&e.payload["revision"]===2)!;
+ let next=Number(a.db.get(`SELECT max(origin_sequence) AS n FROM event_journal WHERE origin_device_id=?`,[a.install.deviceId])!["n"]);
+ const variant=async(payload:Record<string,unknown>,base=fact)=>{const e:JournalEnvelope={...base,event_id:randomUUIDv7(),origin_sequence:++next,payload:payload as JournalEnvelope["payload"]};return [e,applyEvent(b.context,await verifyEvent(b.context,await signed(a,e),crypto))] as const;};
+ assert.equal((await variant({...fact.payload,revision:1,permissions:[]}))[1],"applied","a stale revision loses");
+ assert.deepEqual(listCustomRoles(b.context)[0]!.permissions,["sales.create","reports.sales"]);
+ const [rewrite,rewritten]=await variant({...fact.payload,name:"Day"});assert.equal(rewritten,"quarantined");
+ assert.equal(b.db.get(`SELECT reason FROM applied_events WHERE event_id=?`,[rewrite.event_id])!["reason"],"conflict");
+ assert.equal((await variant({...fact.payload,base_role:"MANAGER",revision:9}))[1],"quarantined","a role's base never changes");
+ assert.equal((await variant({...fact.payload,base_role:"OWNER",revision:9}))[1],"quarantined");
+ // A move onto a role the other till has not seen waits for that role.
+ const move=facts("MEMBER_ROLE_CHANGED").at(-1)!,laterFact=facts("CUSTOM_ROLE_SET").find(e=>e.payload["role_id"]===later.id)!;
+ assert.notEqual(applyEvent(b.context,await verifyEvent(b.context,await signed(a,move),crypto)),"applied");
+ assert.equal(row(b)!["custom_role_id"],night.id);
+ assert.equal(applyEvent(b.context,await verifyEvent(b.context,await signed(a,laterFact),crypto)),"applied");
+ await retryDeferred(b.context);assert.equal(row(b)!["custom_role_id"],later.id);assert.equal(row(b)!["role"],"INVENTORY");
+ const staffFact:JournalEnvelope={...fact,event_id:randomUUIDv7(),origin_sequence:++next,actor_id:member,authority_revision:Number(row(a)!["revision"]),payload:{...fact.payload,revision:20}};
+ assert.equal(applyEvent(b.context,await verifyEvent(b.context,await signed(a,staffFact),crypto)),"quarantined","only the owner sets roles");
+});
+
 it("the role matrix, role moves and cleared exceptions converge; stale role facts lose and a same-revision rewrite is a conflict",async()=>{
  const [a,b]=await replicas() as [Replica,Replica];
  const { createLocalMember }=await import("../identity/members.ts");const { grantPermission,clearPermissionOverride }=await import("../identity/workspace.ts");

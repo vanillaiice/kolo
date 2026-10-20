@@ -2042,3 +2042,51 @@ role keep exactly the built-in defaults.
 - Desktop inside Electron: matrix cell, reset, role move, exception clearing that leaves no stored override, invalid
   roles/permissions/flags, owner role move and staff access refused. The workflow smoke ticks a matrix cell.
 - Not verified on a device: the mobile Roles screen and member role picker on Android.
+
+## 2026-10-20: Add a category while adding a product
+
+A product can be filed under a new category from its own form, without leaving it.
+
+- **Desktop.** New product now has a category picker (it had none; the category could only be set by editing
+  afterwards). In both the new and edit forms, "+ New category…" opens an inline name field that creates the category
+  and selects it; the product draft is kept. `createProduct` takes an optional `categoryId`, which must be an active
+  category of the shop, and is part of the same-request retry identity.
+- **Mobile.** The main and additional category pickers on the product form offer "New category" inside the sheet,
+  under `products.create`, and select what they create.
+
+### Verification
+
+- Desktop inside Electron: creating a product with a category and its identical retry; a retry without the category
+  conflicts; archived, unknown and malformed categories are refused with nothing written.
+- Not verified on a device: the mobile picker's create row on Android.
+
+## 2026-10-20: Shop-defined roles (ADR-038)
+
+The owner can add their own roles next to the four built-in ones, assign them to members and delete them once nobody
+holds them.
+
+- **Core.** `identity/roles`: `listCustomRoles`, `createCustomRole` (a named copy of a built-in role's current
+  permissions), `updateCustomRole` (rename or permissions), `deleteCustomRole` (`role_in_use` while held), and
+  `changeMemberRole` accepts `{ customRoleId }`. `LocalMember.customRoleId`. New `WorkspaceError` codes `role_in_use` and
+  `duplicate_name`. SQLite migration 32 adds `custom_roles` and `local_memberships.custom_role_id`; authority resolves
+  through the held custom role and fails closed if it is unknown or corrupt.
+- **Facts.** Owner-signed `CUSTOM_ROLE_SET` (higher revision wins, equal revision must match, base never changes);
+  `MEMBER_ROLE_CHANGED` carries an optional `custom_role_id` and waits for its role. The journal names custom roles.
+- **Desktop.** Roles tab: "New role" (name + based on), custom columns with Rename/Delete (Delete disabled while held);
+  member and new-member pickers list custom roles. Commands `listCustomRoles`, `createCustomRole`, `renameCustomRole`,
+  `setCustomRolePermission`, `deleteCustomRole`; `setStaffRole` takes `customRoleId`, `createStaff` an optional one.
+- **Mobile.** More → Staff → Roles lists custom roles with the built-in ones; new, rename, delete. Member and new-member
+  screens list them.
+
+### Verification
+
+- Core: a new role copies the shop's current base set; holders follow its edits but not the base role's; exceptions
+  apply on top; moving back to a built-in role clears it; unique names ignoring case; no fact for unchanged edits;
+  delete refused while held (suspended holders included), tombstoned, then unassignable and uneditable; owner-only;
+  malformed IDs, names, bases and permissions refused; unknown or corrupt custom role fails closed for its holder only.
+  Two replicas converge on roles, tombstones and a move; a stale revision loses; a same-revision rewrite, a changed
+  base and an `OWNER` base are quarantined; a move waits for its role then applies; a staff-signed role fact is refused.
+- Desktop inside Electron: create with identical retry, duplicate name, tick a permission, create a member straight
+  into the role, exceptions against it, rename, `role_in_use`, move off and delete, deleted role unassignable, invalid
+  inputs and staff access refused.
+- Not verified on a device: the mobile role screens on Android.

@@ -5,7 +5,9 @@ import type { AccountKind } from "../data/finance/accounts.ts";
 export type WorkspaceErrorCode =
   | "invalid_input" | "already_configured" | "legacy_installation" | "setup_pending"
   | "not_configured" | "credential_unavailable" | "invalid_credential" | "retry_later"
-  | "recovery_required" | "locked" | "actor_inactive" | "permission_denied" | "scope_mismatch";
+  | "recovery_required" | "locked" | "actor_inactive" | "permission_denied" | "scope_mismatch"
+  /** A custom role that members still hold, or a role name the shop already uses. */
+  | "role_in_use" | "duplicate_name";
 
 /** Contains a stable code and optional retry time, never a PIN or native error. */
 export class WorkspaceError extends Error {

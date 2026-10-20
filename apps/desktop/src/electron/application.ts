@@ -325,11 +325,12 @@ export class DesktopApplication implements ShopService {
   /** Creates product and optional opening stock in one transaction; safe matching retries reuse the product ID. */
   createProduct(input: unknown): ReturnType<ShopService["createProduct"]> {
     return this.#run(() => {
-      const data = object(input, ["sessionId", "requestId", "name", "unit", "divisible", "barcode", "sellingPriceMinor", "purchasePriceMinor", "openingThousandths"]);
+      const data = object(input, ["sessionId", "requestId", "name", "unit", "divisible", "barcode", "sellingPriceMinor", "purchasePriceMinor", "openingThousandths", "categoryId"]);
       const context = this.#actor(data, ["products.create"]), id = uuid(data["requestId"]), at = this.ports.now();
       const product = { id, name: text(data["name"]), unit: text(data["unit"]), divisible: boolean(data["divisible"]),
         sellingPriceMinor: whole(data["sellingPriceMinor"]), ...(data["purchasePriceMinor"] === undefined ? {} : { purchasePriceMinor: whole(data["purchasePriceMinor"]) }),
-        ...(data["barcode"] === undefined ? {} : { barcode: text(data["barcode"], 256) }), currency: "XAF", taxRateBasisPoints: 0,
+        ...(data["barcode"] === undefined ? {} : { barcode: text(data["barcode"], 256) }),
+        ...(data["categoryId"] === undefined ? {} : { categoryId: uuid(data["categoryId"]) }), currency: "XAF", taxRateBasisPoints: 0,
         minimumStock: 0, active: true, createdAt: at, updatedAt: at };
       const opening = whole(data["openingThousandths"]);
       if (!product.divisible && opening % 1000 !== 0) throw new WorkspaceError("invalid_input");
@@ -342,9 +343,10 @@ export class DesktopApplication implements ShopService {
           const stock = tx.get(`SELECT coalesce(sum(quantity),0) AS n FROM inventory_movements WHERE business_id=? AND product_id=? AND type='OPENING_BALANCE'`, [context.businessId, id]);
           if (original === undefined || actor?.["user_id"] !== context.userId || original.updatedByDevice !== context.deviceId ||
             original.name !== product.name || original.unit !== product.unit || original.divisible !== product.divisible || original.barcode !== product.barcode ||
-            original.sellingPriceMinor !== product.sellingPriceMinor || original.purchasePriceMinor !== product.purchasePriceMinor || Number(stock?.["n"]) !== opening) throw new CommandError("request_conflict");
+            original.sellingPriceMinor !== product.sellingPriceMinor || original.purchasePriceMinor !== product.purchasePriceMinor || original.categoryId !== product.categoryId || Number(stock?.["n"]) !== opening) throw new CommandError("request_conflict");
           return this.#product(context, original);
         }
+        if (product.categoryId !== undefined && categoryOf(tx, context.businessId, product.categoryId)?.active !== true) throw new WorkspaceError("invalid_input");
         saveProduct(context, product);
         if (opening > 0) adjustStock(context, { id: this.ports.newId(), productId: id, type: "OPENING_BALANCE", quantity: opening,
           reason: "Initial stock", occurredAt: at, branchId: unlockedActor(context).branchId }, this.ports.newId());
@@ -709,6 +711,11 @@ export class DesktopApplication implements ShopService {
   listRoles(input: unknown): ReturnType<ShopService["listRoles"]> { return this.#run(() => staff.listRoles(this.#host, input)); }
   setRolePermission(input: unknown): ReturnType<ShopService["setRolePermission"]> { return this.#run(() => staff.setRolePermission(this.#host, input)); }
   resetRole(input: unknown): ReturnType<ShopService["resetRole"]> { return this.#run(() => staff.resetRole(this.#host, input)); }
+  listCustomRoles(input: unknown): ReturnType<ShopService["listCustomRoles"]> { return this.#run(() => staff.listCustomRoles(this.#host, input)); }
+  createCustomRole(input: unknown): ReturnType<ShopService["createCustomRole"]> { return this.#run(() => staff.createCustomRole(this.#host, input)); }
+  renameCustomRole(input: unknown): ReturnType<ShopService["renameCustomRole"]> { return this.#run(() => staff.renameCustomRole(this.#host, input)); }
+  setCustomRolePermission(input: unknown): ReturnType<ShopService["setCustomRolePermission"]> { return this.#run(() => staff.setCustomRolePermission(this.#host, input)); }
+  deleteCustomRole(input: unknown): ReturnType<ShopService["deleteCustomRole"]> { return this.#run(() => staff.deleteCustomRole(this.#host, input)); }
   setStaffActive(input: unknown): ReturnType<ShopService["setStaffActive"]> { return this.#run(() => staff.setStaffActive(this.#host, input)); }
   resetStaffSecret(input: unknown): ReturnType<ShopService["resetStaffSecret"]> { return this.#run(() => this.#identity(() => staff.resetStaffSecret(this.#host, input))); }
   /** The shop's pinned backup recovery keys (ADR-036), newest first; owner settings access. */

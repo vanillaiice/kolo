@@ -43,4 +43,4 @@ to let the owner move a member to another role.
 - Tills running a build without these facts keep them unapplied as unsupported until upgraded. No shop has been
   deployed to customers yet, so no mixed fleet is expected.
 - Shop-defined roles (new names, deletion) remain out of scope; they would need a role ID on memberships and new
-  member facts.
+  member facts. Superseded on this point by [ADR-038](ADR-038-custom-roles.md).

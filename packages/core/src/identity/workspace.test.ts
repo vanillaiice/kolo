@@ -12,7 +12,8 @@ import { stockOf } from "../data/inventory/movements.ts";
 import * as commands from "../application/operations.ts";
 import { currentInstallation, createWorkspace, recoverWorkspaceSetup, unlockWorkspace, lockWorkspace,
   grantPermission, revokePermission, clearPermissionOverride, rememberMember, resumeWorkspace } from "./workspace.ts";
-import { changeMemberRole, listRoles, setRolePermissions } from "./roles.ts";
+import { changeMemberRole, createCustomRole, deleteCustomRole, listCustomRoles, listRoles, setRolePermissions, updateCustomRole } from "./roles.ts";
+import { listLocalMembers } from "./members.ts";
 import { authorizedOperation } from "./internal-authority.ts";
 import { resolvePermissions, defaultPermissions, PERMISSIONS, STAFF_ROLES } from "./permissions.ts";
 import { WorkspaceError, type CreateWorkspaceInput, type CredentialPort, type Installation,
@@ -643,3 +644,86 @@ describe("role matrix (ADR-037)", () => {
     assert.throws(() => database.run(`INSERT INTO role_permissions(business_id,role,permissions,revision) VALUES (?,'OWNER',NULL,1)`, [installation.businessId]));
   });
 });
+
+describe("custom roles", () => {
+  const can = async (userId: string, permission: (typeof PERMISSIONS)[number]): Promise<boolean> => {
+    const context = await unlockWorkspace({ userId, secret: "staff-secret" }, ports);
+    try { return authorizedOperation(context, [permission], () => true); } catch (error) { if (code("permission_denied")(error)) return false; throw error; }
+  };
+  it("a new role copies the shop's current base role, and its holders follow its edits", async () => {
+    const installation = await createWorkspace(input, ports); let context = await owner(installation);
+    setRolePermissions(context, "CASHIER", ["sales.create", "products.view"]);
+    const night = createCustomRole(context, { id: id(), name: "  Night cashier ", baseRole: "CASHIER" });
+    assert.deepEqual([night.name, night.baseRole, night.permissions, night.revision, night.holders, night.deleted], ["Night cashier", "CASHIER", ["products.view", "sales.create"], 1, 0, false]);
+    assert.deepEqual(createCustomRole(context, { id: night.id, name: "Night cashier", baseRole: "CASHIER" }), night, "a repeated creation is the same role");
+    assert.throws(() => createCustomRole(context, { id: night.id, name: "Other", baseRole: "CASHIER" }), code("invalid_input"));
+    const userId = staff(installation, "MANAGER"); context = await owner(installation);
+    changeMemberRole(context, userId, { customRoleId: night.id });
+    assert.equal(listLocalMembers(context).find(member => member.userId === userId)!.customRoleId, night.id);
+    const row = database.get(`SELECT m.role,u.role AS user_role,m.custom_role_id FROM local_memberships m JOIN users u ON u.id=m.user_id WHERE m.user_id=?`, [userId])!;
+    assert.deepEqual([row["role"], row["user_role"], row["custom_role_id"]], ["CASHIER", "CASHIER", night.id], "the base role is held underneath");
+    assert.equal(await can(userId, "sales.create"), true); assert.equal(await can(userId, "reports.sales"), false);
+    context = await owner(installation); updateCustomRole(context, night.id, { permissions: ["reports.sales"] });
+    assert.equal(await can(userId, "sales.create"), false); assert.equal(await can(userId, "reports.sales"), true);
+    context = await owner(installation); setRolePermissions(context, "CASHIER", null);
+    assert.equal(await can(userId, "sales.create"), false, "editing the base role does not reach the custom role");
+    context = await owner(installation); grantPermission(context, userId, "audit.view");
+    assert.equal(await can(userId, "audit.view"), true, "member exceptions still apply on top");
+    context = await owner(installation); changeMemberRole(context, userId, "INVENTORY");
+    assert.equal(database.get(`SELECT custom_role_id FROM local_memberships WHERE user_id=?`, [userId])!["custom_role_id"], null);
+    assert.equal(await can(userId, "inventory.adjust"), true); assert.equal(await can(userId, "audit.view"), true);
+  });
+  it("names are unique ignoring case, renames and repeated edits record facts only when something changes", async () => {
+    const installation = await createWorkspace(input, ports); const context = await owner(installation);
+    const a = createCustomRole(context, { id: id(), name: "Stock lead", baseRole: "INVENTORY" }), b = createCustomRole(context, { id: id(), name: "Auditor", baseRole: "ACCOUNTANT" });
+    assert.throws(() => createCustomRole(context, { id: id(), name: "STOCK LEAD", baseRole: "MANAGER" }), code("duplicate_name"));
+    assert.throws(() => updateCustomRole(context, b.id, { name: "stock lead" }), code("duplicate_name"));
+    const audits = count("local_audit");
+    updateCustomRole(context, a.id, { name: "Stock lead", permissions: [...a.permissions].reverse() }); assert.equal(count("local_audit"), audits, "nothing changed");
+    assert.equal(updateCustomRole(context, a.id, { name: "stock Lead" }).revision, 2, "a change of case is a rename");
+    assert.deepEqual(listCustomRoles(context).map(role => role.name), ["Auditor", "stock Lead"]);
+    deleteCustomRole(context, a.id);
+    assert.equal(createCustomRole(context, { id: id(), name: "Stock lead", baseRole: "INVENTORY" }).revision, 1, "a deleted role's name is free again");
+  });
+  it("a role can be deleted only once nobody holds it, and a deleted role cannot be assigned or edited", async () => {
+    const installation = await createWorkspace(input, ports); let context = await owner(installation);
+    const role = createCustomRole(context, { id: id(), name: "Weekend", baseRole: "CASHIER" });
+    const userId = staff(installation); context = await owner(installation);
+    changeMemberRole(context, userId, { customRoleId: role.id }); database.run(`UPDATE local_memberships SET active=0 WHERE user_id=?`, [userId]);
+    assert.throws(() => deleteCustomRole(context, role.id), code("role_in_use"), "a suspended holder still holds it");
+    assert.equal(listCustomRoles(context)[0]!.holders, 1);
+    changeMemberRole(context, userId, "CASHIER"); deleteCustomRole(context, role.id);
+    const audits = count("local_audit"); deleteCustomRole(context, role.id); assert.equal(count("local_audit"), audits, "already deleted");
+    assert.deepEqual(listCustomRoles(context), []);
+    assert.throws(() => changeMemberRole(context, userId, { customRoleId: role.id }), code("scope_mismatch"));
+    assert.throws(() => updateCustomRole(context, role.id, { name: "Back" }), code("scope_mismatch"));
+    assert.equal(database.get(`SELECT deleted,revision FROM custom_roles WHERE id=?`, [role.id])!["revision"], 2, "kept as a tombstone");
+  });
+  it("only the owner manages custom roles; malformed requests are refused", async () => {
+    const installation = await createWorkspace(input, ports);
+    const managerId = staff(installation, "MANAGER"); grantPermission(await owner(installation), managerId, "users.manage");
+    const manager = await unlockWorkspace({ userId: managerId, secret: "staff-secret" }, ports);
+    assert.throws(() => createCustomRole(manager, { id: id(), name: "Mine", baseRole: "MANAGER" }), code("permission_denied"));
+    const context = await owner(installation), role = createCustomRole(context, { id: id(), name: "Ok", baseRole: "CASHIER" });
+    for (const bad of [{ id: "x", name: "A", baseRole: "CASHIER" }, { id: id(), name: " ", baseRole: "CASHIER" }, { id: id(), name: "a".repeat(61), baseRole: "CASHIER" },
+      { id: id(), name: "A", baseRole: "OWNER" }, { id: "abcdef00-0000-7000-8000-000000000001".toUpperCase(), name: "A", baseRole: "CASHIER" }, { id: id(), name: 5, baseRole: "CASHIER" }])
+      assert.throws(() => createCustomRole(context, bad as never), code("invalid_input"));
+    assert.throws(() => updateCustomRole(context, role.id, { permissions: ["typo" as "sales.create"] }), code("invalid_input"));
+    assert.throws(() => changeMemberRole(context, installation.ownerId, { customRoleId: role.id }), code("permission_denied"));
+    assert.throws(() => changeMemberRole(context, managerId, { customRoleId: id() }), code("scope_mismatch"));
+    assert.throws(() => changeMemberRole(context, managerId, null as never), code("invalid_input"));
+    assert.equal(count("custom_roles"), 1);
+  });
+  it("a holder of a missing or corrupt custom role fails closed; nobody else is affected", async () => {
+    const installation = await createWorkspace(input, ports); const userId = staff(installation), other = staff(installation, "MANAGER");
+    database.run(`UPDATE local_memberships SET custom_role_id=? WHERE user_id=?`, [id(), userId]);
+    await assert.rejects(() => unlockWorkspace({ userId, secret: "staff-secret" }, ports), code("permission_denied"));
+    assert.equal(await can(other, "sales.create"), true);
+    const third = staff(installation), context = await owner(installation), role = createCustomRole(context, { id: id(), name: "Odd", baseRole: "CASHIER" });
+    database.run(`UPDATE local_memberships SET custom_role_id=? WHERE user_id=?`, [role.id, third]);
+    database.run(`UPDATE custom_roles SET permissions='["typo"]' WHERE id=?`, [role.id]);
+    await assert.rejects(() => unlockWorkspace({ userId: third, secret: "staff-secret" }, ports), code("permission_denied"));
+    assert.deepEqual(domainsForWrite(`UPDATE custom_roles SET name='x'`), ["authority"]);
+  });
+});
+

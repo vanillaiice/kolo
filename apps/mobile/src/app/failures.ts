@@ -21,7 +21,8 @@ export function failureKey(error: unknown): TextKey {
   if (error instanceof StaleRecord) return "changedMeanwhile";
   if (error instanceof ExchangeError) return error.code === "return_conflict" ? "returnConflict" : error.code === "permission_denied" ? "denied" : error.code === "locked" ? "locked" : "error";
   if (error instanceof WorkspaceError) return error.code === "permission_denied" ? "denied" : error.code === "locked" ? "locked" : error.code === "actor_inactive" ? "identity.actor_inactive"
-    : error.code === "scope_mismatch" ? "scopeMismatch" : error.code === "invalid_input" ? "invalidInput" : "error";
+    : error.code === "scope_mismatch" ? "scopeMismatch" : error.code === "invalid_input" ? "invalidInput"
+    : error.code === "role_in_use" ? "roleInUse" : error.code === "duplicate_name" ? "duplicateRole" : "error";
   if (error instanceof PhotoError) return error.code === "photo_storage_full" ? "photoStorageFull" : "invalidPhoto";
   if (error instanceof TransferError) return transferErrorKey(error);
   if (error instanceof RuleError) return error.code === "overflow" ? "TOO_LARGE" : "INVALID_AMOUNT";

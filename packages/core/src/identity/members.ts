@@ -25,6 +25,8 @@ export interface LocalMember {
   readonly role: Role;
   readonly active: boolean;
   readonly revision: number;
+  /** The shop-defined role the member holds, if any; `role` is then that role's base. */
+  readonly customRoleId?: string;
 }
 
 /** Owner-only staff creation with durable intent around asynchronous native provisioning. */
@@ -100,10 +102,11 @@ export async function resumeMemberProvisioning(context: OperationContext): Promi
 
 /** Lists current staff under users.view, without credential references or secrets. */
 export function listLocalMembers(context: OperationContext): readonly LocalMember[] {
-  return authorizedOperation(context, ["users.view"], (_database, tx) => tx.all(`SELECT m.user_id,u.name,m.role,m.active,m.revision
+  return authorizedOperation(context, ["users.view"], (_database, tx) => tx.all(`SELECT m.user_id,u.name,m.role,m.custom_role_id,m.active,m.revision
     FROM local_memberships m JOIN users u ON u.id = m.user_id AND u.business_id = m.business_id
     WHERE m.business_id = ? ORDER BY u.name,m.user_id`, [context.businessId]).map(row => ({ userId: String(row["user_id"]),
-    name: String(row["name"]), role: row["role"] as Role, active: row["active"] === 1, revision: Number(row["revision"]) })));
+    name: String(row["name"]), role: row["role"] as Role, active: row["active"] === 1, revision: Number(row["revision"]),
+    ...(typeof row["custom_role_id"] === "string" ? { customRoleId: row["custom_role_id"] } : {}) })));
 }
 
 function finishMember(context: OperationContext, intent: MemberIntent, material: ProvisionedIdentity): void {

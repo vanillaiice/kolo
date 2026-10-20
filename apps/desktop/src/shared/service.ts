@@ -7,7 +7,7 @@ import type { JoinInvitation } from "@kolo/core/application/join";
 export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" |
   "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" |
   "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" |
-  "request_conflict" | "price_changed" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" |
+  "request_conflict" | "price_changed" | "role_in_use" | "duplicate_name" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" |
   /** File transfer failures; file contents and paths never cross the bridge. */
   "invalid_file" | "too_large" | "invalid_password" | "invalid_recovery_key" | "recovery_key_required" | "untrusted_backup" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" |
   "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" |
@@ -68,6 +68,8 @@ export interface ProductRequest extends SessionRequest {
   readonly requestId: string; readonly name: string; readonly unit: string; readonly divisible: boolean;
   readonly barcode?: string; readonly sellingPriceMinor: number; readonly purchasePriceMinor?: number;
   readonly openingThousandths: number;
+  /** Optional main category; it must be an active category of the shop. */
+  readonly categoryId?: string;
 }
 /**
  * Detail edit made from a displayed version. An identical retry returns the stored product;
@@ -201,9 +203,19 @@ export interface ReturnRequest extends SessionRequest {
 export interface StaffView {
   readonly id: string; readonly name: string; readonly role: "OWNER" | "MANAGER" | "CASHIER" | "INVENTORY" | "ACCOUNTANT"; readonly active: boolean;
   readonly isSelf: boolean; readonly permissions: readonly Permission[]; readonly exceptions: readonly Permission[];
+  /** The shop-defined role the member holds, if any; `role` is then that role's base. */
+  readonly customRole?: { readonly id: string; readonly name: string; readonly deleted: boolean };
 }
 /** One column of the shop's role matrix (ADR-037); `customized` is false while the role keeps its built-in defaults. */
 export interface RoleView { readonly role: Exclude<StaffView["role"], "OWNER">; readonly permissions: readonly Permission[]; readonly customized: boolean; }
+/**
+ * A shop-defined role: a named copy of a built-in staff role with its own permissions. A deleted role is listed only
+ * while members still hold it, and can no longer be assigned.
+ */
+export interface CustomRoleView {
+  readonly id: string; readonly name: string; readonly baseRole: RoleView["role"]; readonly permissions: readonly Permission[];
+  readonly deleted: boolean; readonly holders: number;
+}
 /** A checked backup file waiting for an explicit restore confirmation. */
 export interface BackupFileView { readonly businessName: string; readonly ownerName: string; readonly createdAt: string; readonly appliedEvents: number; }
 /** A checked pairing invite: compare the fingerprint with the owner's screen before accepting. */
@@ -455,20 +467,35 @@ export interface ShopService {
   /** Local staff under users.view. */
   listStaff(input: SessionRequest): Promise<Result<readonly StaffView[]>>;
   /** Owner-only: adds a member with a role and their own code; names must be unique among staff. */
-  createStaff(input: SessionRequest & { readonly name: string; readonly role: Exclude<StaffView["role"], "OWNER">; readonly secret: string }): Promise<Result<StaffView>>;
+  createStaff(input: SessionRequest & { readonly name: string; readonly role: Exclude<StaffView["role"], "OWNER">; readonly secret: string;
+    /** A live custom role to put the member in once created; `role` is ignored then. */
+    readonly customRoleId?: string }): Promise<Result<StaffView>>;
   /**
    * Owner-only: gives or removes one permission for one member. Asking for what the member's role gives clears their
    * exception instead of recording one; asking for the current state changes nothing.
    */
   setStaffPermission(input: SessionRequest & { readonly userId: string; readonly permission: Permission; readonly allowed: boolean }): Promise<Result<StaffView>>;
-  /** Owner-only: moves another member to a staff role, keeping their exceptions. */
-  setStaffRole(input: SessionRequest & { readonly userId: string; readonly role: RoleView["role"] }): Promise<Result<StaffView>>;
+  /** Owner-only: moves another member to a staff role or a live custom role (`customRoleId`), keeping their exceptions. */
+  setStaffRole(input: SessionRequest & { readonly userId: string } & ({ readonly role: RoleView["role"] } | { readonly customRoleId: string })): Promise<Result<StaffView>>;
   /** The role matrix under users.view: each staff role's permissions. The owner always holds every permission. */
   listRoles(input: SessionRequest): Promise<Result<readonly RoleView[]>>;
   /** Owner-only: ticks or unticks one cell of the role matrix; returns the whole matrix. */
   setRolePermission(input: SessionRequest & { readonly role: RoleView["role"]; readonly permission: Permission; readonly allowed: boolean }): Promise<Result<readonly RoleView[]>>;
   /** Owner-only: returns a role to its built-in defaults; returns the whole matrix. */
   resetRole(input: SessionRequest & { readonly role: RoleView["role"] }): Promise<Result<readonly RoleView[]>>;
+  /** Shop-defined roles under users.view, by name. */
+  listCustomRoles(input: SessionRequest): Promise<Result<readonly CustomRoleView[]>>;
+  /**
+   * Owner-only: a new role starting from the shop's current permissions for `baseRole`. The request ID names it, so an
+   * identical retry returns it. Names are unique ignoring case (`duplicate_name`). Returns every custom role.
+   */
+  createCustomRole(input: SessionRequest & { readonly requestId: string; readonly name: string; readonly baseRole: RoleView["role"] }): Promise<Result<readonly CustomRoleView[]>>;
+  /** Owner-only: renames a live custom role; returns every custom role. */
+  renameCustomRole(input: SessionRequest & { readonly roleId: string; readonly name: string }): Promise<Result<readonly CustomRoleView[]>>;
+  /** Owner-only: ticks or unticks one permission of a live custom role; returns every custom role. */
+  setCustomRolePermission(input: SessionRequest & { readonly roleId: string; readonly permission: Permission; readonly allowed: boolean }): Promise<Result<readonly CustomRoleView[]>>;
+  /** Owner-only: deletes a custom role nobody holds (`role_in_use` otherwise); returns every custom role. */
+  deleteCustomRole(input: SessionRequest & { readonly roleId: string }): Promise<Result<readonly CustomRoleView[]>>;
   /** Owner-only: suspends or reinstates another member. */
   setStaffActive(input: SessionRequest & { readonly userId: string; readonly active: boolean }): Promise<Result<StaffView>>;
   /** Owner-only: replaces another member's code. */

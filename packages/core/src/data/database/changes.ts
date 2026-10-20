@@ -12,7 +12,7 @@ const tables: Record<string, readonly ChangedDomain[]> = {
   purchases: ["purchases"], purchase_items: ["purchases"],
   financial_accounts: ["accounts"], account_movements: ["accounts"], expenses: ["expenses", "accounts"],
   shop_tax_settings: ["settings", "sales"], product_tax_rules: ["products"], payment_terms: ["settings", "customers", "suppliers"], notification_state: ["notifications"],
-  local_memberships: ["authority"], role_permissions: ["authority"], users: ["authority"], devices: ["authority"], businesses: ["authority"],
+  local_memberships: ["authority"], role_permissions: ["authority"], custom_roles: ["authority"], users: ["authority"], devices: ["authority"], businesses: ["authority"],
 };
 type Listener = { domains: readonly ChangedDomain[]; notify: () => void };
 const listeners = new WeakMap<Database, Set<Listener>>();

@@ -115,7 +115,8 @@ ports. A structurally identical object, serialized context or stale/locked conte
 cannot authorize anything. Every command/report re-reads active shop/device/user,
 local membership, the shop's role matrix and granular grants in the same SQLite transaction.
 A role's permissions are the shop's edited set or, until the owner edits it, the built-in
-defaults ([ADR-037](../adr/ADR-037-role-permission-matrix.md)); member grants and revocations
+defaults ([ADR-037](../adr/ADR-037-role-permission-matrix.md)); a member holding a shop-defined
+role uses that role's set instead ([ADR-038](../adr/ADR-038-custom-roles.md)); member grants and revocations
 are exceptions on top, and revocation wins. Cached cloud `users.permissions` is not local authority.
 Owner alone manages members/grants on an authority-approved device, and cannot revoke
 their own `users.manage`. Pairing defaults secondary devices to business operations;

@@ -352,11 +352,17 @@ export function PagedList<T>({ load, revision, identify, render, header, empty, 
 }
 
 /** Searchable local chooser in a sheet; shows bounded pages and keeps the chosen label visible. */
-export function Picker<T extends { readonly id: string; readonly name: string }>({ label, value, onChange, load, revision, optional = false, describe, placeholder }: {
+export function Picker<T extends { readonly id: string; readonly name: string }>({ label, value, onChange, load, revision, optional = false, describe, placeholder, create }: {
   readonly label: string; readonly value: T | undefined; readonly onChange: (value: T | undefined) => void; readonly load: (query: PageQuery) => Page<T>;
   readonly revision: string; readonly optional?: boolean; readonly describe?: (item: T) => string | undefined; readonly placeholder?: string;
+  /**
+   * Lets the sheet create the item it lacks: `add` records it and calls `select` with the stored item,
+   * which is then chosen. `notice` shows the caller's outcome inside the sheet.
+   */
+  readonly create?: { readonly label: string; readonly add: (name: string, select: (item: T) => void) => void; readonly notice?: React.ReactNode } | undefined;
 }): React.JSX.Element {
-  const { t } = useText(), s = useStyles(), { colors } = useTheme(), [open, setOpen] = useState(false);
+  const { t } = useText(), s = useStyles(), { colors } = useTheme(), [open, setOpen] = useState(false), [draft, setDraft] = useState("");
+  const add = (): void => create?.add(draft, item => { onChange(item); setDraft(""); setOpen(false); });
   return <View style={{ gap: 6 }}>
     <Text style={{ ...typography.label, color: colors.muted }}>{label}</Text>
     <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${value?.name ?? placeholder ?? t("none")}`} accessibilityHint={t("opensChooser")} onPress={() => setOpen(true)}
@@ -367,6 +373,9 @@ export function Picker<T extends { readonly id: string; readonly name: string }>
       {open && <View style={{ height: 480 }}><PagedList<T> load={load} revision={revision} identify={item => item.id}
         header={optional ? <Button label={t("none")} variant="secondary" onPress={() => { onChange(undefined); setOpen(false); }} /> : undefined}
         render={item => <ListRow title={item.name} subtitle={describe?.(item)} tag={item.id === value?.id ? t("selected") : undefined} onPress={() => { onChange(item); setOpen(false); }} />} /></View>}
+      {open && create !== undefined && <View style={{ gap: 8 }}>
+        <Field label={create.label} value={draft} onChange={setDraft} onSubmit={add} />
+        {create.notice}<Button label={t("add")} variant="secondary" onPress={add} /></View>}
     </Sheet>
   </View>;
 }
