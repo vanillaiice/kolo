@@ -9,6 +9,21 @@ GitHub release, and installed desktop apps show it before updating, so write it 
 - Say what someone will notice: new things they can do, fixes, and anything that works differently. Leave out
   internal changes. Do not use a `---` line inside a section: it ends the notes shown in the app.
 
+## 0.10.0
+
+### Français
+
+- Un ordinateur peut rejoindre une boutique avec le code à 10 caractères du propriétaire et l’adresse affichée
+  dessous, même si la caisse principale est un téléphone. Sur le téléphone, « Ajouter une caisse » peut envoyer le
+  lien à l’ordinateur.
+- Coller un code de partage du serveur au mauvais endroit affiche maintenant un message clair.
+
+### English
+
+- A computer can join a shop with the owner's 10-character code and the address shown under it, even when the main
+  till is a phone. On the phone, Add a till can send the link to the computer.
+- Pasting a server share code in the wrong place now shows a clear message.
+
 ## 0.9.0
 
 ### Français
