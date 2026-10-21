@@ -219,11 +219,11 @@ class DesktopApplication implements ShopService {
   cancelLocalJoin(input: unknown): Promise<Result<null>>;
   /** Immediately exchanges queued signed changes with this installation’s configured local hosts. */
   syncLocalNetwork(input: unknown): Promise<Result<{ readonly sent: number; readonly received: number; }>>;
-  /** Empty computer: verifies a copied LAN pairing link before displaying the shop. */
+  /** Empty computer: verifies a pasted join link or code before displaying the shop. */
   lookupLocalJoin(input: unknown): Promise<Result<JoinInvitation>>;
-  /** Empty computer: provisions a native identity and requests owner approval through the LAN mailbox. */
+  /** Empty computer: provisions a native identity and asks the owner, through the LAN or the server mailbox. */
   requestLocalJoin(input: unknown): Promise<Result<null>>;
-  /** Empty computer: activates the exact owner-approved local snapshot when ready. */
+  /** Empty computer: activates the exact owner-approved shop when ready; it then connects to the owner's shared server on its own. */
   finishLocalJoin(input: unknown): Promise<Result<{ readonly activated: boolean; }>>;
   /** Optional sync server; see server-sync.ts. Network work runs in the main process only. */
   serverState(input: unknown): Promise<Result<{ readonly servers: readonly ServerView[]; readonly canEnroll: boolean; }>>;
@@ -1316,7 +1316,7 @@ runDesktopWorkflowSmoke(window: BrowserWindow, phase: string): Promise<void>;
 Stable application failures; native exception text, credentials and paths never cross the bridge.
 
 ```ts
-export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "role_in_use" | "duplicate_name" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" | "invalid_file" | "too_large" | "invalid_password" | "invalid_recovery_key" | "recovery_key_required" | "untrusted_backup" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "sync_keys_unavailable" | "inconsistent_records" | "invalid_photo" | "photo_storage_full" | "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" | "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" | "no_server" | "join_not_found" | "join_conflict";
+export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later" | "recovery_required" | "credential_unavailable" | "actor_inactive" | "permission_denied" | "scope_mismatch" | "setup_pending" | "locked" | "legacy_installation" | "already_configured" | "not_configured" | "busy" | "unavailable" | "request_conflict" | "price_changed" | "role_in_use" | "duplicate_name" | "storage_failed" | "credit_limit" | "stale_return" | "local_network_unavailable" | "invalid_file" | "too_large" | "invalid_password" | "invalid_recovery_key" | "recovery_key_required" | "untrusted_backup" | "authentication_failed" | "unsupported_version" | "invalid_snapshot" | "confirmation_required" | "not_empty" | "pairing_pending" | "pairing_expired" | "pairing_conflict" | "invalid_pairing" | "activation_failed" | "cancelled" | "no_file" | "sync_keys_unavailable" | "inconsistent_records" | "invalid_photo" | "photo_storage_full" | "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" | "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" | "no_server" | "join_not_found" | "join_conflict" | "not_join_code" | "invalid_join_code" | "join_address_needed";
 ```
 
 Serializable results make transport and operation failures explicit.
@@ -2088,14 +2088,17 @@ export interface ShopService {
     }>>;
     lookupLocalJoin(input: {
         readonly link: string;
+        readonly url?: string;
     }): Promise<Result<JoinInvitation>>;
     requestLocalJoin(input: {
         readonly link: string;
+        readonly url?: string;
         readonly deviceLabel: string;
         readonly secret: string;
     }): Promise<Result<null>>;
     finishLocalJoin(input: {
         readonly link: string;
+        readonly url?: string;
     }): Promise<Result<{
         readonly activated: boolean;
     } | null>>;

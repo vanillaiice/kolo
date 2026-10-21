@@ -2142,3 +2142,24 @@ install order, failed copy installs nothing, close-time copy and cancellation, a
 across versions that sort wrongly as text, and the notes reader (language choice, rule, dropped scripts, bounds).
 `node --test scripts/release-info.test.mjs` covers the changelog section and the pre-release flag. Not verified:
 the notes rendering of a real GitHub release body in the packaged app, and every item listed above.
+
+## 2026-10-21: A new computer joins by the owner's code
+
+A fresh computer could only join through a same-Wi-Fi `kolo://local` link, so a shop whose main till is a phone (which
+shows a server code and address) could not add a computer, and pasting the phone's server share code
+(`kolo://connect`) produced the connection-code error "it starts with kolo://connect".
+
+- **Desktop entry.** "Rejoindre une boutique" accepts the owner's 10-character code plus the address shown under it
+  (`https://` assumed when typed bare), a server `kolo://join` link, or a local `kolo://local` link. The existing
+  `lookupLocalJoin`/`requestLocalJoin`/`finishLocalJoin` commands route a code or server link to the core
+  `lookupJoin`/`requestJoin`/`finishJoin` over the sync transport, and take an optional `url`. The joined computer
+  connects to the owner's shared server address on its own afterwards (`pendingShopServer`).
+- **Errors.** `not_join_code` (a share code was pasted: says to use Add a till → Show a code), `invalid_join_code`,
+  `join_address_needed`; `invalid_address` for a non-HTTPS public address.
+- **Mobile.** Add a till offers "Send the link (for a computer)" to share the `kolo://join` link; share-code help on
+  both apps says it is for already-paired tills, not new ones.
+
+Verification: Electron test `join-entry.test.ts` (share code named, malformed text and missing address refused before
+any network call, typed address defaults to HTTPS, a link brings its own address, request and finish take the same
+route). Not verified: a real phone-to-desktop join against `sync.kolo.hblabs.xyz`, or the Android share sheet.
+Desktop QR scanning by webcam is still not implemented.

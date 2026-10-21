@@ -29,7 +29,7 @@ import * as transfer from "./transfer.ts";
 import * as sync from "./server-sync.ts";
 import type { SealingCrypto } from "@kolo/core/application/sealed-sync";
 import * as join from "./join.ts";
-import type { SyncTransport } from "@kolo/core/application/server-sync";
+import { normalizeServerUrl, type SyncTransport } from "@kolo/core/application/server-sync";
 import type { Database } from "@kolo/core/data/database/driver";
 import { migrate } from "@kolo/core/data/database/migrations";
 import { createHash } from "node:crypto";
@@ -40,6 +40,8 @@ import { LocalNetwork } from "./local-network.ts";
 import { LocalSyncScheduler,localPeerConnections,synchronizeLocalPeer } from "@kolo/core/application/local-sync";
 import * as localJoin from "@kolo/core/application/local-join";
 import { parseLocalJoinLink } from "@kolo/contracts/local-sync";
+import { normalizeJoinCode, parseConnectionCode, parseJoinLink } from "@kolo/contracts/sync";
+import { finishJoin, lookupJoin, requestJoin } from "@kolo/core/application/join";
 
 const customerFields = ["name", "phone", "address", "notes", "creditLimitMinor"] as const;
 function customerDetails(data: Record<string, unknown>): CustomerDetails {
@@ -782,12 +784,30 @@ export class DesktopApplication implements ShopService {
   cancelLocalJoin(input:unknown):ReturnType<ShopService["cancelLocalJoin"]>{return this.#run(()=>{const data=object(input,["sessionId","joinId"]);this.#actor(data,["business.settings","users.manage"]);this.#local?.cancel(text(data["joinId"],64));return null;});}
   /** Immediately exchanges queued signed changes with this installation’s configured local hosts. */
   syncLocalNetwork(input:unknown):ReturnType<ShopService["syncLocalNetwork"]>{return this.#run(()=>sync.syncTranslated(async()=>{const context=this.#actor(object(input,["sessionId"]),["business.settings"]);if(this.#sealingCrypto===undefined)throw new CommandError("unavailable");let sent=0,received=0;for(const peer of localPeerConnections(context)){if(peer.url===null)continue;const outcome=await synchronizeLocalPeer(context,peer.deviceId,this.#sealingCrypto);sent+=outcome.sent;received+=outcome.received;}this.#notify();return {sent,received};}));}
-  /** Empty computer: verifies a copied LAN pairing link before displaying the shop. */
-  lookupLocalJoin(input:unknown):ReturnType<ShopService["lookupLocalJoin"]>{return this.#file(()=>sync.syncTranslated(async()=>{const data=object(input,["link"]),link=text(data["link"],4096),parsed=parseLocalJoinLink(link);if(parsed===undefined)throw new CommandError("invalid_code");if(this.#sealingCrypto===undefined)throw new CommandError("unavailable");if(currentInstallation(this.ports.database).state!=="empty")throw new CommandError("not_empty");return localJoin.lookupLocalJoin(link,localJoin.localJoinTransport(parsed.url),this.#sealingCrypto);}));}
-  /** Empty computer: provisions a native identity and requests owner approval through the LAN mailbox. */
-  requestLocalJoin(input:unknown):ReturnType<ShopService["requestLocalJoin"]>{return this.#file(()=>sync.syncTranslated(async()=>{const data=object(input,["link","deviceLabel","secret"]),link=text(data["link"],4096),parsed=parseLocalJoinLink(link);if(parsed===undefined)throw new CommandError("invalid_code");if(this.#sealingCrypto===undefined)throw new CommandError("unavailable");const transport=localJoin.localJoinTransport(parsed.url),invitation=await localJoin.lookupLocalJoin(link,transport,this.#sealingCrypto);await localJoin.requestLocalJoin(link,invitation,{label:text(data["deviceLabel"],120),secret:text(data["secret"],256,false),platform:"DESKTOP"},this.ports,transport,this.#sealingCrypto);return null;}));}
-  /** Empty computer: activates the exact owner-approved local snapshot when ready. */
-  finishLocalJoin(input:unknown):ReturnType<ShopService["finishLocalJoin"]>{return this.#file(host=>sync.syncTranslated(async()=>{const data=object(input,["link"]),link=text(data["link"],4096),parsed=parseLocalJoinLink(link);if(parsed===undefined)throw new CommandError("invalid_code");if(this.#sealingCrypto===undefined)throw new CommandError("unavailable");const result=await localJoin.finishLocalJoin(link,this.ports,host.transfer.files,localJoin.localJoinTransport(parsed.url),this.#sealingCrypto);if(result===undefined)return null;await host.activate(result.database);return {activated:true};}));}
+  /**
+   * What a new computer pasted to join: a local QR link, a server join link, or the owner's typed code with the server
+   * address shown beside it. A server share code (kolo://connect) is refused with its own error: it attaches a till
+   * already in the shop, it does not join one.
+   */
+  #joinTarget(data:Record<string,unknown>):{readonly local:true;readonly link:string;readonly url:string}|{readonly local:false;readonly code:string;readonly url:string}{
+    const link=text(data["link"],4096),local=parseLocalJoinLink(link);
+    if(local!==undefined)return {local:true,link,url:local.url};
+    if(parseConnectionCode(link)!==undefined)throw new CommandError("not_join_code");
+    const server=parseJoinLink(link),code=server?.code??normalizeJoinCode(link);
+    if(code===undefined)throw new CommandError("invalid_join_code");
+    const address=server?.url??optional(data["url"],value=>text(value,2048));
+    if(address===undefined)throw new CommandError("join_address_needed");
+    try{return {local:false,code,url:normalizeServerUrl(/^[a-z][a-z0-9+.-]*:\/\//i.test(address)?address:`https://${address}`)};}catch{throw new CommandError("invalid_address");}
+  }
+  /** Empty computer: verifies a pasted join link or code before displaying the shop. */
+  lookupLocalJoin(input:unknown):ReturnType<ShopService["lookupLocalJoin"]>{return this.#file(()=>sync.syncTranslated(async()=>{const target=this.#joinTarget(object(input,["link","url"]));if(this.#sealingCrypto===undefined)throw new CommandError("unavailable");if(currentInstallation(this.ports.database).state!=="empty")throw new CommandError("not_empty");return target.local?localJoin.lookupLocalJoin(target.link,localJoin.localJoinTransport(target.url),this.#sealingCrypto):lookupJoin(this.#syncTransport(target.url),this.#sealingCrypto,target.code);}));}
+  /** Empty computer: provisions a native identity and asks the owner, through the LAN or the server mailbox. */
+  requestLocalJoin(input:unknown):ReturnType<ShopService["requestLocalJoin"]>{return this.#file(()=>sync.syncTranslated(async()=>{const data=object(input,["link","url","deviceLabel","secret"]),target=this.#joinTarget(data),crypto=this.#sealingCrypto;if(crypto===undefined)throw new CommandError("unavailable");const device={label:text(data["deviceLabel"],120),secret:text(data["secret"],256,false),platform:"DESKTOP"} as const;
+    if(target.local){const transport=localJoin.localJoinTransport(target.url),invitation=await localJoin.lookupLocalJoin(target.link,transport,crypto);await localJoin.requestLocalJoin(target.link,invitation,device,this.ports,transport,crypto);}
+    else{const transport=this.#syncTransport(target.url);await requestJoin(target.code,await lookupJoin(transport,crypto,target.code),device,this.ports,transport,crypto);}
+    return null;}));}
+  /** Empty computer: activates the exact owner-approved shop when ready; it then connects to the owner's shared server on its own. */
+  finishLocalJoin(input:unknown):ReturnType<ShopService["finishLocalJoin"]>{return this.#file(host=>sync.syncTranslated(async()=>{const target=this.#joinTarget(object(input,["link","url"])),crypto=this.#sealingCrypto;if(crypto===undefined)throw new CommandError("unavailable");const result=target.local?await localJoin.finishLocalJoin(target.link,this.ports,host.transfer.files,localJoin.localJoinTransport(target.url),crypto):await finishJoin(target.code,this.ports,host.transfer.files,this.#syncTransport(target.url),crypto);if(result===undefined)return null;await host.activate(result.database);return {activated:true};}));}
   /** Optional sync server; see server-sync.ts. Network work runs in the main process only. */
   serverState(input: unknown): ReturnType<ShopService["serverState"]> { return this.#sync(host => sync.serverState(host, input)); }
   checkServer(input: unknown): ReturnType<ShopService["checkServer"]> { return this.#sync(host => sync.checkServer(host, input)); }

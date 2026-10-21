@@ -20,8 +20,9 @@ export type FailureCode = "invalid_input" | "invalid_credential" | "retry_later"
    *  device the owner has not yet approved, or a shop the operator suspended or removed. */
   "server_unreachable" | "server_refused" | "fingerprint_mismatch" | "invalid_address" | "invalid_code" | "invalid_connection_code" | "connection_code_used" |
   "connection_code_expired" | "enrollment_conflict" | "server_not_approved" | "shop_suspended" | "shop_removed" | "hosted_service_inactive" |
-  /** Adding a till by code: no server connected, the code expired or was refused. */
-  "no_server" | "join_not_found" | "join_conflict";
+  /** Adding a till by code: no server connected, the code expired or was refused; joining: a share code pasted instead
+   *  of a join code, text that is no join code, or a typed code without its server address. */
+  "no_server" | "join_not_found" | "join_conflict" | "not_join_code" | "invalid_join_code" | "join_address_needed";
 /** Serializable results make transport and operation failures explicit. */
 export type Result<T> = { readonly ok: true; readonly value: T } |
   { readonly ok: false; readonly error: { readonly code: FailureCode; readonly retryAt?: string } };
@@ -308,12 +309,15 @@ export interface ShopService {
   cancelLocalJoin(input:SessionRequest & {readonly joinId:string}):Promise<Result<null>>;
   /** Immediately exchanges queued signed/encrypted changes with configured local hosts. */
   syncLocalNetwork(input:SessionRequest):Promise<Result<{readonly sent:number;readonly received:number}>>;
-  /** Empty computer: verifies a pasted local QR link and reads whose shop it opens. */
-  lookupLocalJoin(input:{readonly link:string}):Promise<Result<JoinInvitation>>;
+  /**
+   * Empty computer: verifies a pasted join and reads whose shop it opens. `link` is a local QR link, a server join link
+   * (kolo://join) or the owner's typed code; a typed code also needs the server `url` shown beside it.
+   */
+  lookupLocalJoin(input:{readonly link:string;readonly url?:string}):Promise<Result<JoinInvitation>>;
   /** Empty computer: asks to join with a native identity and its own unlock code. */
-  requestLocalJoin(input:{readonly link:string;readonly deviceLabel:string;readonly secret:string}):Promise<Result<null>>;
+  requestLocalJoin(input:{readonly link:string;readonly url?:string;readonly deviceLabel:string;readonly secret:string}):Promise<Result<null>>;
   /** Empty computer: activates the owner-approved shop when ready; null while waiting. */
-  finishLocalJoin(input:{readonly link:string}):Promise<Result<{readonly activated:boolean}|null>>;
+  finishLocalJoin(input:{readonly link:string;readonly url?:string}):Promise<Result<{readonly activated:boolean}|null>>;
   /** Public boot status; no credentials or key references are returned. */
   getWorkspace(): Promise<Result<WorkspaceView>>;
   /**

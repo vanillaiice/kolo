@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Text, View } from "react-native";
+import { Platform, Share, Text, View } from "react-native";
 import { cancelBackupPreview, previewBackupFile, restoreWorkspace, writeBackup, type BackupPreview } from "@kolo/core/application/backup";
 import { confirmPairing, createPairingInvite, previewPairingInvite, previewPairingRequest } from "@kolo/core/application/pairing";
 import { exchangeDestinations, exchangeDiagnostics, exportBundle, exportReceipt, importBundle, importReceipt, previewBundle, receivedBatches, type BundlePreview } from "@kolo/core/application/file-exchange";
@@ -176,7 +176,7 @@ export function BackupRestoreScreen(): React.JSX.Element {
  * Needs a connected server; the file steps remain for shops without one.
  */
 function AddTillByCode({ allowStaff }: { readonly allowStaff: boolean }): React.JSX.Element {
-  const { t } = useText(), s = useStyles(), { colors } = useTheme(), { context, files } = useSession();
+  const { t } = useText(), s = useStyles(), { colors } = useTheme(), session = useSession(), { context, files } = session;
   const [server, setServer] = useState<{ url: string; fingerprint: string; serverDeviceId: string } | null>(), [join, setJoin] = useState<JoinStart>();
   const [candidate, setCandidate] = useState<JoinCandidate>(), [busy, setBusy] = useState(false), [message, setMessage] = useState<{ tone: "error" | "success" | "warning"; text: string }>();
   useEffect(() => { void serverConnections(context, sealingCryptoOnDevice).then(list => setServer(list[0] === undefined ? null : { url: list[0].url, fingerprint: list[0].fingerprint, serverDeviceId: list[0].serverDeviceId }), () => setServer(null)); }, [context]);
@@ -211,6 +211,7 @@ function AddTillByCode({ allowStaff }: { readonly allowStaff: boolean }): React.
     <Text selectable style={[s.mono, { fontSize: 34, fontWeight: "700", letterSpacing: 4, textAlign: "center", color: colors.text, paddingVertical: spacing.md }]}>{join.display}</Text>
     <Text selectable style={[s.mono, { textAlign: "center" }]}>{server.url}</Text>
     <Text style={s.muted}>{t("joinCodeWaiting")}</Text>{notice}
+    <Button label={t("sendJoinLink")} variant="secondary" onPress={() => { void session.systemUi(() => Share.share({ message: join.link })).catch(() => undefined); }} />
     <Button label={t("cancel")} variant="secondary" onPress={() => { void work(async () => { await endJoin(context, syncTransportOnDevice(server.url), join, true); setJoin(undefined); }); }} />
   </>;
 }
