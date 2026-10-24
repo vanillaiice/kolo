@@ -3,7 +3,8 @@ import { parseEventPayload } from "@kolo/contracts/events";
 import { authorizedOperation, appendLocalAudit } from "../identity/internal-authority.ts";
 import { WorkspaceError, type OperationContext } from "../identity/types.ts";
 import { enqueue } from "../data/sync/outbox.ts";
-import { applyReturn, planReturn, returnSource, type ReturnKind, type ReturnSelection, type ReturnSource } from "../data/returns/returns.ts";
+import { ExchangeError } from "../exchange/types.ts";
+import { applyReturn, planReturn, returnSource, returnsForked, type ReturnKind, type ReturnSelection, type ReturnSource } from "../data/returns/returns.ts";
 
 /** IDs and predecessor belong to one immutable return attempt; refunds are positive XAF allocations. */
 export interface ReturnCommand {
@@ -29,6 +30,8 @@ export function previewReturn(context: OperationContext, kind: ReturnKind, origi
 function record(context: OperationContext, kind: ReturnKind, input: ReturnCommand): void {
   authorizedOperation(context, permissions(kind), (_db, tx, ports, revision) => {
     const source = returnSource(tx,context.businessId,kind,input.originalId);
+    // After two tills' returns raced and the owner kept both, a new return could only count one of them (ADR-041).
+    if (returnsForked(tx,context.businessId,kind,input.originalId)) throw new ExchangeError("return_conflict");
     const branch = tx.get(`SELECT u.branch_id AS user_branch,d.branch_id AS device_branch FROM users u JOIN devices d ON d.business_id=u.business_id AND d.id=? WHERE u.business_id=? AND u.id=?`, [context.deviceId,context.businessId,context.userId]);
     if ([branch?.["user_branch"],branch?.["device_branch"]].some(value => typeof value === "string" && value !== source.branchId)) throw new WorkspaceError("scope_mismatch");
     for (const refund of input.refunds) if (tx.get(`SELECT id FROM financial_accounts WHERE business_id=? AND id=? AND active=1`, [context.businessId,refund.accountId])===undefined) throw new WorkspaceError("scope_mismatch");

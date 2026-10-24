@@ -592,14 +592,23 @@ it("the operation journal crosses the bridge under audit.view with strict filter
     const manager=value(await f.application.unlock({userId:staff,secret:"765432"})).sessionId!;
     failure(await f.application.journal({sessionId:manager}),"permission_denied");
     failure(await f.application.journalExport({sessionId:manager}),"permission_denied");
+    failure(await f.application.heldBack({sessionId:manager}),"permission_denied");
+    failure(await f.application.reviewHeldBack({sessionId:manager,eventId:sale.saleId,digest:"a".repeat(64)}),"permission_denied");
     const books=await createLocalMember(await unlockWorkspace({userId:workspace.members[0]!.id,secret:"654321"},f.ports),{name:"Books",role:"ACCOUNTANT",secret:"876543"});
     const accountant=value(await f.application.unlock({userId:books,secret:"876543"})).sessionId!;
     assert.ok(value(await f.application.journal({sessionId:accountant})).items.length>0,"an accountant reads the journal");
     failure(await f.application.journalExport({sessionId:accountant}),"permission_denied");
+    failure(await f.application.heldBack({sessionId:accountant}),"permission_denied");
     const ownerSession=value(await f.application.unlock({userId:workspace.members[0]!.id,secret:"654321"})).sessionId!;
     const exported=value(await f.application.journalExport({sessionId:ownerSession,group:"sales"}));
     assert.deepEqual([exported.truncated,exported.items.map(entry=>entry.subject?.id)],[false,[sale.saleId]]);
     failure(await f.application.journalExport({sessionId:ownerSession,limit:5} as never),"invalid_input");
+    // Held-back facts are the owner's to review; the bridge passes only an event ID and an exact digest.
+    assert.deepEqual(value(await f.application.heldBack({sessionId:ownerSession})),[]);
+    const digest="a".repeat(64);
+    for(const bad of [{eventId:"x",digest},{eventId:sale.saleId,digest:"A".repeat(64)},{eventId:sale.saleId,digest:"a".repeat(63)},{eventId:sale.saleId},{eventId:sale.saleId,digest,reason:"device_revoked"}])
+      failure(await f.application.reviewHeldBack({sessionId:ownerSession,...bad} as never),"invalid_input");
+    failure(await f.application.reviewHeldBack({sessionId:ownerSession,eventId:randomUUID(),digest}),"permission_denied");
   }finally{await f.dispose();}
 });
 it("reports read exact period figures under report authority and refuse malformed periods",async()=>{

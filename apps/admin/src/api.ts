@@ -3,18 +3,22 @@
 export type Role = "admin" | "viewer";
 export interface Me { readonly username: string; readonly role: Role; readonly idleMinutes: number }
 export interface Code { readonly codeId: string; readonly label: string; readonly createdBy: string; readonly createdAt: string; readonly expiresAt: string;
-  readonly state: "unused" | "used" | "expired" | "cancelled"; readonly usedAt: string | null; readonly shopId: string | null; readonly shopName: string | null; readonly includedMonths: number; readonly recoveryShopId: string | null }
+  readonly state: "unused" | "used" | "expired" | "cancelled"; readonly usedAt: string | null; readonly shopId: string | null; readonly shopName: string | null; readonly includedMonths: number; readonly recoveryShopId: string | null;
+  /** Trial days and the till limit the shop starts with (null unlimited; ADR-039). */
+  readonly includedDays: number; readonly maxTills: number | null }
 export interface Issued { readonly codeId: string; readonly code: string; readonly label: string; readonly expiresAt: string; readonly qr: string }
 export interface Shop { readonly shopId: string; readonly name: string; readonly status: "active" | "suspended" | "removed"; readonly enrolledAt: string;
   readonly removeAfter: string | null; readonly devices: number; readonly lastSeenAt: string | null; readonly facts: number; readonly bytes: number;
-  readonly service: "unlimited" | "active" | "grace" | "inactive"; readonly paidUntil: string | null }
+  readonly service: "unlimited" | "active" | "grace" | "inactive"; readonly paidUntil: string | null;
+  /** Till limit (null unlimited) and tills waiting for a place; `devices` counts those holding one. */
+  readonly maxTills: number | null; readonly heldTills: number }
 export type Method = "cash" | "mtn_momo" | "orange_money" | "bank" | "card" | "other";
-export interface Payment { readonly paymentId: string; readonly months: number; readonly amountMinor: number; readonly method: Method; readonly reference: string | null;
+export interface Payment { readonly paymentId: string; readonly months: number; readonly days: number; readonly amountMinor: number; readonly method: Method; readonly reference: string | null;
   readonly source: "manual" | "webhook" | "code"; readonly recordedBy: string; readonly recordedAt: string; readonly paidUntilAfter: string }
 export interface ShopDetail extends Shop {
   readonly ownerId: string; readonly conflicts: number; readonly keyEpoch: number | null; readonly connectionCode: string | null;
   readonly graceUntil: string | null; readonly payments: readonly Payment[]; readonly edition: "selfhost" | "hosted";
-  readonly deviceList: readonly { readonly deviceId: string; readonly label: string; readonly platform: string; readonly active: boolean; readonly authority: boolean; readonly lastSeenAt: string | null; readonly backlog: number }[];
+  readonly deviceList: readonly { readonly deviceId: string; readonly label: string; readonly platform: string; readonly active: boolean; readonly held: boolean; readonly authority: boolean; readonly lastSeenAt: string | null; readonly backlog: number }[];
 }
 export interface Health { readonly version: string; readonly edition: "selfhost" | "hosted"; readonly graceDays: number; readonly startedAt: string; readonly databaseBytes: number; readonly facts: number; readonly factsLastDay: number;
   readonly activeSessions: number; readonly shops: { readonly active: number; readonly suspended: number; readonly removed: number };
@@ -49,7 +53,10 @@ export const api = {
   signOut: () => call<void>("DELETE", "/session"),
   health: () => call<Health>("GET", "/health"),
   codes: () => call<{ codes: Code[]; canIssue: boolean; publicUrl: string | null }>("GET", "/codes"),
-  issue: (label: string, days: number, includedMonths: number) => call<Issued>("POST", "/codes", { label, days, includedMonths }),
+  /** `maxTills` null is unlimited; a hosted server requires the choice to be sent. */
+  issue: (label: string, days: number, includedMonths: number, includedDays: number, maxTills: number | null) => call<Issued>("POST", "/codes", { label, days, includedMonths, includedDays, maxTills }),
+  /** Sets or clears (null) a shop's till limit; returns how many waiting tills were released. */
+  setTillLimit: (shopId: string, maxTills: number | null) => call<{ released: number }>("POST", `/shops/${shopId}/till-limit`, { maxTills }),
   /** An owner-recovery code for an existing shop whose tills were all lost (ADR-036). */
   issueRecovery: (shopId: string) => call<Issued>("POST", "/codes", { label: "", days: 1, recoveryShopId: shopId }),
   cancel: (codeId: string) => call<void>("POST", `/codes/${codeId}/cancel`),

@@ -57,6 +57,8 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
         await wait(`window.matchMedia('(prefers-color-scheme: dark)').matches===${theme === "dark"}`);
         await evaluate("new Promise(resolve=>{const timer=setTimeout(resolve,100);requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));})");
         assert.equal(await evaluate("getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim()"), theme === "dark" ? "#1f2b25" : "#f4f7f3", "theme follows native appearance changes");
+        // Contrast is checked on the settled screen, not halfway through an entrance fade.
+        await wait("document.getAnimations().length===0", "animations settle before the audit");
         const violations = await evaluate(`axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']}}).then(result=>result.violations.map(item=>({id:item.id,nodes:item.nodes.map(node=>({target:node.target,summary:node.failureSummary}))})))`);
         assert.deepEqual(violations, [], `Accessibility audit: ${screen} (${theme}): ${JSON.stringify(violations)}`);
         await snapshot(`${screen.toLowerCase().replace(/[^a-z0-9]+/g,"-")}-${theme}`);
@@ -68,7 +70,13 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     const directory = process.env["KOLO_DESKTOP_SCREENSHOT_DIR"];
     if (directory === undefined) return;
     await evaluate("new Promise(resolve=>{const timer=setTimeout(resolve,100);requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));})");
+    await wait("document.getAnimations().length===0", "animations settle before the screenshot");
+    // Repaint the settled screen, then capture that frame rather than the last one composited.
+    window.webContents.invalidate();
+    await evaluate("new Promise(resolve=>{const timer=setTimeout(resolve,150);requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));})");
     await mkdir(directory, {recursive:true});
+    // The first capture after a theme switch can still return the frame presented before it; the second is current.
+    await window.webContents.capturePage(); await new Promise(resolve => setTimeout(resolve, 120));
     await writeFile(join(directory, `${name}.png`), (await window.webContents.capturePage()).toPNG());
   };
   const wait = async (condition: string, diagnostic = "screen transition"): Promise<void> => {
@@ -438,7 +446,7 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
   } else if (phase === "import-replace") {
     // Signed out, importing a backup replaces this computer's shop; the old one becomes a safety copy.
     await wait("document.querySelector('#local-secret')!==null");
-    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('.entry-choice')).map(element=>element.dataset.authAction)"), ["import"], "login offers only import besides signing in");
+    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('.entry-choice')).map(element=>element.dataset.authAction)"), ["import", "fresh"], "login offers import and starting over besides signing in");
     await audit("Login with import option"); await snapshot("login-import-en");
     await click("[data-auth-action=import]"); await wait("document.querySelector('#choose-import-file')!==null");
     await click("#choose-import-file"); await wait("document.querySelector('#restore-password')!==null", "backup recognized");
@@ -459,6 +467,28 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await fill("#local-secret", "654321"); await submit("#local-secret");
     await wait("document.querySelector('#till-search')!==null");
     process.stdout.write("Imported shop remains active across process restart\n");
+  } else if (phase === "start-over") {
+    // Without its code or recovery key, a locked till sets its shop aside, reaches the empty home and can reopen it.
+    await wait("document.querySelector('#local-secret')!==null");
+    const before = (await evaluate<{ id: string }[]>("window.kolo.savedShops().then(result=>result.value)")).map(shop => shop.id);
+    await click("[data-auth-action=recover]"); await wait("document.querySelector('#recovery-key')!==null");
+    await click(".entry-aside [data-auth-action=fresh]"); await wait("document.querySelector('#fresh-shop-confirmation')!==null", "start-over confirmation");
+    assert.equal(await evaluate("document.querySelector('#fresh-shop-confirmation').closest('form').querySelector('[type=submit]').disabled"), true, "the typed name is required");
+    await audit("Start over confirmation"); await snapshot("start-over-en");
+    await fill("#fresh-shop-confirmation", "Desktop validation"); await submit("#fresh-shop-confirmation");
+    await wait("document.querySelector('[data-auth-action=create]')!==null", "empty home after starting over");
+    assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.state)"), "empty");
+    const after = (await evaluate<{ id: string; name: string }[]>("window.kolo.savedShops().then(result=>result.value)"));
+    const aside = after.findIndex(shop => !before.includes(shop.id));
+    assert.ok(aside >= 0 && after[aside]!.name === "Desktop validation", "the shop is set aside, not erased");
+    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('.entry-choice')).map(element=>element.dataset.authAction)"),
+      ["create", "join", "import", ...after.map(() => "reopen")], "the empty home offers create, join, import and the set-aside shops");
+    await audit("Empty home with set-aside shops"); await snapshot("start-over-home-en");
+    await evaluate(`document.querySelectorAll('[data-auth-action=reopen]')[${aside}].click()`);
+    await wait("document.querySelector('#local-secret')!==null", "set-aside shop reopens locked");
+    assert.equal(await evaluate("window.kolo.getWorkspace().then(result=>result.value.shopName)"), "Desktop validation");
+    await fill("#local-secret", "654321"); await submit("#local-secret"); await wait("document.querySelector('#till-search')!==null", "set-aside shop opens with its own code");
+    process.stdout.write("Locked till started over without its code, reached the empty home and reopened the set-aside shop\n");
   } else if (phase === "remember-on") {
     await wait("document.querySelector('#local-secret')!==null");
     await fill("#local-secret", "654321"); await submit("#local-secret");

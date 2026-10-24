@@ -251,6 +251,45 @@ it("an owner revocation removes network access at once and rotates the shop key,
   assert.equal(count(c, "sales"), 1);
 });
 
+it("revoking a till still delivers the sales it pushed before to a till that was offline (ADR-040)", { skip }, async () => {
+  const target = await started(), a = await owner(), b = await paired(a, "Till B"), c = await paired(a, "Till C"), p = product(a);
+  await connect(a, target); await sync(a, target); await connect(b, target); await connect(c, target);
+  await settle([b, c, a, b, c], target, 1);
+  // C goes offline. B sells all day and pushes in the evening; A pulls, then the owner revokes B in the morning.
+  const id = sale(b, p, "V-EVENING"); await sync(b, target); await sync(a, target);
+  setExchangeDeviceActive(a.context, b.install.deviceId, false); await sync(a, target);
+  // C comes back: it learns of the revocation and still receives B's earlier sale.
+  await settle([c], target, 3);
+  assert.equal(c.db.get(`SELECT count(*) AS n FROM sales WHERE number=?`, [id])!["n"], 1, "the revoked till's earlier sale reached the offline till");
+  assert.equal(stockOf(c.db, c.install.businessId, p).onHandThousandths, stockOf(a.db, a.install.businessId, p).onHandThousandths);
+  assert.equal(c.db.get(`SELECT active FROM trusted_exchange_devices WHERE device_id=?`, [b.install.deviceId])!["active"], 0);
+});
+
+it("a trusted till cannot block another till's next facts by pushing sealed junk at its sequence numbers (ADR-043)", { skip }, async () => {
+  const target = await started(), a = await owner(), m = await paired(a, "Till M"), c = await paired(a, "Till C"), p = product(a);
+  await connect(a, target); await sync(a, target); await connect(m, target); await connect(c, target);
+  await settle([m, c, a, m, c], target, 1);
+  // M seals garbage under A's identity at A's next sequence numbers, before A pushes its real facts.
+  sale(m, p, "V-M"); const keys = await shopKeys(m.context, crypto), { signed } = await createSyncBatch(m.context, m.destination!, crypto, keys);
+  const template = signed!.batch.events.find(item => "sealed" in item)!, next = Number(a.db.get(`SELECT max(origin_sequence) AS s FROM event_journal WHERE origin_device_id=?`, [a.install.deviceId])!["s"]) + 1;
+  const junk = Array.from({ length: 5 }, (_, index) => ({ sealed: { ...("sealed" in template ? template.sealed : ({} as never)), event_id: randomUUIDv7(), origin_device_id: a.install.deviceId, origin_sequence: next + index, digest: randomUUIDv7().replace(/-/g, "").padEnd(64, "0") } }));
+  const batch: SyncBatch = { ...signed!.batch, batch_id: randomUUIDv7(), events: junk }, message = syncBatchSigningMessage(batch);
+  const pushed = await target.transport.push(await session(m, target), { batch, digest: createHash("sha256").update(message).digest("hex"), signature: sign(null, Buffer.from(message), m.privateKey).toString("hex") });
+  assert.ok(pushed.results.every(result => result.status === "stored"), "the server cannot tell junk from a forwarded fact");
+  // A's real sale takes those positions anyway, and reaches C.
+  const id = sale(a, p, "V-REAL"); for (let index = 1; index < junk.length; index++) sale(a, p);
+  const result = await sync(a, target);
+  assert.equal(result.rejected, 0, "nothing of A's was refused as an identity conflict");
+  await settle([c], target, 2);
+  assert.equal(c.db.get(`SELECT count(*) AS n FROM sales WHERE number=?`, [id])!["n"], 1);
+  // Junk at every position A's facts now hold is no longer offered: C's next pass has nothing it cannot open.
+  assert.equal((await sync(c, target)).locked, 0);
+  // Junk at a position A already holds is refused outright.
+  const late: SyncBatch = { ...batch, batch_id: randomUUIDv7(), events: [{ sealed: { ...junk[0]!.sealed, event_id: randomUUIDv7() } }] }, lateMessage = syncBatchSigningMessage(late);
+  const refused = await target.transport.push(await session(m, target), { batch: late, digest: createHash("sha256").update(lateMessage).digest("hex"), signature: sign(null, Buffer.from(lateMessage), m.privateKey).toString("hex") });
+  assert.deepEqual(refused.results.map(item => item.code), ["event_identity_conflict"]);
+});
+
 it("a suspended or removed shop cannot sync while its tills keep trading, and removal is purged after the grace period", { skip }, async () => {
   let clock = new Date("2026-10-11T06:00:00.000Z");
   const target = await started({ now: () => clock }), a = await owner(), p = product(a);
@@ -289,6 +328,25 @@ it("a database holding F6a plaintext business facts is migrated only when the op
     await assert.rejects(query({ databaseUrl: url }, `INSERT INTO journal(business_id,event_id,origin_device_id,origin_sequence,event_type,event_version,canonical,digest,signature,received_from) VALUES ($1,$2,$3,2,'SALE_COMPLETED',2,'{}',repeat('a',64),repeat('b',128),$3)`, [shop, randomUUIDv7(), device]), /journal_clear_types/);
     await query({ databaseUrl: url }, `INSERT INTO journal(business_id,event_id,origin_device_id,origin_sequence,event_type,event_version,canonical,digest,signature,received_from) VALUES ($1,$2,$3,3,'DEVICE_ENCRYPTION_KEY',2,'{}',repeat('a',64),repeat('b',128),$3)`, [shop, randomUUIDv7(), device]);
     await assert.rejects(query({ databaseUrl: url }, `DELETE FROM journal`), /append-only/, "the discard switch does not stay on");
+  } finally { await db.destroy(); }
+});
+
+it("upgrading to vouched positions keeps every stored fact and lets forwarded sealed facts share a position", { skip }, async () => {
+  const url = await freshDatabase(), db = openDatabase(url), run = (text: string, values: unknown[] = []) => query({ databaseUrl: url }, text, values);
+  try {
+    const before = Object.fromEntries(Object.entries(SERVER_MIGRATIONS).filter(([name]) => name < "0009"));
+    await new Migrator({ db, provider: { getMigrations: async () => before } }).migrateToLatest();
+    const shop = randomUUIDv7(), origin = randomUUIDv7(), other = randomUUIDv7();
+    await run(`INSERT INTO shops(business_id,name,owner_id,enrolled_by) VALUES ($1,'Shop',$2,$3)`, [shop, randomUUIDv7(), origin]);
+    for (const device of [origin, other]) await run(`INSERT INTO shop_devices(business_id,device_id,public_key,label,platform) VALUES ($1,$2,'-----BEGIN PUBLIC KEY-----','Till','DESKTOP')`, [shop, device]);
+    const sealed = (sequence: number, from: string) => run(`INSERT INTO journal(business_id,event_id,origin_device_id,origin_sequence,digest,sealed,received_from) VALUES ($1,$2,$3,$4,repeat('a',64),'{}'::jsonb,$5)`, [shop, randomUUIDv7(), origin, sequence, from]);
+    await sealed(1, origin); await sealed(2, other);
+    await assert.rejects(sealed(2, other), /unique/, "before: one fact per position, whoever pushed it");
+    assert.deepEqual(await migrateToLatest(db), ["0009_vouched_positions"]);
+    assert.deepEqual((await run(`SELECT origin_sequence::int AS s, vouched FROM journal ORDER BY seq`)).map(row => [row.s, row.vouched]), [[1, true], [2, false]]);
+    await sealed(2, other); await sealed(2, origin);
+    await assert.rejects(sealed(2, origin), /journal_vouched_position/, "a vouched position is still unique");
+    await assert.rejects(run(`UPDATE journal SET vouched=true`), /only be updated to DEFAULT|append-only/);
   } finally { await db.destroy(); }
 });
 

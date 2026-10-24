@@ -84,8 +84,8 @@ function RecordPurchase({service,sessionId,revision,permissions,onClose}:Props&{
   return <div className="panel form-panel purchase-form"><h2>{t("newPurchase")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}>
     <fieldset disabled={frozen}>
       <div className="two-fields"><PartyChoice service={service} sessionId={sessionId} revision={revision} value={supplier} disabled={frozen} onChange={value=>{pending.current=undefined;setSupplier(value);}}/>
-        <Field id="purchase-reference" label={t("reference")} value={reference} required={false} onChange={value=>{pending.current=undefined;setReference(value);}}/></div>
-      <Field id="purchase-product" label={t("findProduct")} value={term} required={false} onChange={setTerm}/>
+        <Field id="purchase-reference" label={t("reference")} hint={t("hint.documentReference")} value={reference} required={false} onChange={value=>{pending.current=undefined;setReference(value);}}/></div>
+      <Field id="purchase-product" label={t("findProduct")} hint={t("hint.purchaseProductSearch")} value={term} required={false} onChange={setTerm}/>
       {(found.data?.items.length??0)>0&&<ul className="customer-results">{found.data!.items.map(product=><li key={product.id}><button type="button" onClick={()=>{setTerm("");
         if(!lines.some(line=>line.product.id===product.id))change([...lines,{product,quantityText:"1",costText:String(product.purchasePriceMinor??"")}]);}}><strong>{product.name}</strong><small>{product.unit}</small></button></li>)}</ul>}
       {lines.length>0&&<div className="table-wrap"><table><thead><tr><th>{t("name")}</th><th>{t("quantity")}</th><th>{t("unitCostShort")}</th><th>{t("lineTotal")}</th><th/></tr></thead><tbody>
@@ -96,9 +96,9 @@ function RecordPurchase({service,sessionId,revision,permissions,onClose}:Props&{
             <td className="money">{amount}</td><td><button type="button" className="icon-button" aria-label={`${t("remove")}: ${line.product.name}`} onClick={()=>change(lines.filter(item=>item.product.id!==line.product.id))}>×</button></td></tr>;})}
       </tbody></table></div>}
       <div className="total-line"><span>{t("total")}</span><strong>{valid?formatMoney(total,language):"—"}</strong></div>
-      {canPay?<div className="two-fields"><Field id="purchase-paid" label={t("paidNow")} value={paidText??(valid?String(total):"")} numeric required={false} onChange={value=>{pending.current=undefined;setPaidText(value);}}/>
+      {canPay?<div className="two-fields"><Field id="purchase-paid" label={t("paidNow")} hint={t("hint.paidNow")} value={paidText??(valid?String(total):"")} numeric required={false} onChange={value=>{pending.current=undefined;setPaidText(value);}}/>
         <ReadState loading={accounts.loading} error={accounts.error} empty={accounts.data?.items.length===0} emptyText={t("noAccounts")} retry={accounts.retry}>
-          <Select id="purchase-account" label={t("account")} value={account} onChange={value=>{pending.current=undefined;setAccountId(value);}} options={(accounts.data?.items??[]).map(item=>({value:item.id,label:item.name}))}/></ReadState></div>
+          <Select id="purchase-account" label={t("account")} hint={t("hint.paidFromAccount")} value={account} onChange={value=>{pending.current=undefined;setAccountId(value);}} options={(accounts.data?.items??[]).map(item=>({value:item.id,label:item.name}))}/></ReadState></div>
         :<p className="hint">{t("noPurchasePay")}</p>}
       {valid&&owed>0&&<div className="settlement-line"><span>{t("owedToSupplier")}</span><strong>{formatMoney(owed,language)}</strong></div>}
     </fieldset>
@@ -113,7 +113,7 @@ function PartyChoice({service,sessionId,revision,value,disabled,onChange}:{servi
   const found=useRead(()=>term.trim()===""?Promise.resolve({ok:true as const,value:{items:[]}}):service.listSuppliers({sessionId,term,limit:5}),[service,sessionId,term,revision]);
   if(value!==undefined)return <div className="customer-choice"><div><span className="eyebrow">{t("supplier")}</span><strong>{value.name}</strong><small>{t("balance")}: <Balance value={value.outstandingMinor} owedLabel="toPay"/></small></div>
     <button type="button" className="icon-button" disabled={disabled} aria-label={t("clearSupplier")} onClick={()=>onChange(undefined)}>×</button></div>;
-  return <div className="customer-search"><Field id="supplier-search" label={t("findSupplier")} value={term} required={false} disabled={disabled} onChange={setTerm}/>
+  return <div className="customer-search"><Field id="supplier-search" label={t("findSupplier")} hint={t("hint.supplierSearch")} value={term} required={false} disabled={disabled} onChange={setTerm}/>
     {(found.data?.items.length??0)>0&&<ul className="customer-results">{found.data!.items.map(item=><li key={item.id}><button type="button" disabled={disabled} onClick={()=>{onChange(item);setTerm("");}}><strong>{item.name}</strong><small>{item.contact??item.phone??""}</small></button></li>)}</ul>}</div>;
 }
 function Suppliers({service,sessionId,revision,permissions}:Props):React.JSX.Element{
@@ -122,7 +122,7 @@ function Suppliers({service,sessionId,revision,permissions}:Props):React.JSX.Ele
   const list=useRead(()=>service.listSuppliers({sessionId,term,includeInactive:archived,...(cursor?.revision===revision?{after:cursor.after}:{})}),[service,sessionId,term,archived,cursor,revision]);
   return <>{selectedId===undefined&&permissions.includes("suppliers.manage")&&!creating&&<div className="actions spaced"><button className="secondary" onClick={()=>setCreating(true)}>+ {t("newSupplier")}</button></div>}
     {creating&&<SupplierForm service={service} sessionId={sessionId} onDone={value=>{setCreating(false);if(value!==undefined)setSelectedId(value.id);}}/>}
-    <div className="panel" hidden={selectedId!==undefined}><Field id="supplier-list-search" label={t("findSupplier")} value={term} required={false} onChange={value=>{setTerm(value);setCursor(undefined);}}/>
+    <div className="panel" hidden={selectedId!==undefined}><Field id="supplier-list-search" label={t("findSupplier")} hint={t("hint.supplierSearch")} value={term} required={false} onChange={value=>{setTerm(value);setCursor(undefined);}}/>
       <label className="check"><input type="checkbox" checked={archived} onChange={event=>{setArchived(event.target.checked);setCursor(undefined);}}/>{t("showArchived")}</label>
       <ReadState loading={list.loading} error={list.error} empty={list.data?.items.length===0} emptyText={t("noSuppliers")} retry={list.retry}>
         <div className="table-wrap"><table><thead><tr><th>{t("supplierName")}</th><th>{t("contactLabel")}</th><th>{t("balance")}</th></tr></thead><tbody>
@@ -171,9 +171,9 @@ function SupplierForm({service,sessionId,supplier,onReload,onDone}:{service:Shop
     if(value!==undefined)onDone(value);
   };
   return <div className="panel form-panel"><h2>{t(supplier===undefined?"newSupplier":"editSupplier")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}>
-    <fieldset disabled={action.busy||uncertain}><div className="two-fields"><Field id="supplier-name" label={t("supplierName")} value={name} onChange={setName}/><Field id="supplier-contact" label={t("contact")} value={contact} onChange={setContact} required={false}/></div>
-      <div className="two-fields"><Field id="supplier-phone" label={t("phone")} value={phone} onChange={setPhone} required={false} maxLength={40}/><Field id="supplier-address" label={t("address")} value={address} onChange={setAddress} required={false} maxLength={200}/></div>
-      <Field id="supplier-notes" label={t("notes")} value={notes} onChange={setNotes} required={false} maxLength={500}/></fieldset>
+    <fieldset disabled={action.busy||uncertain}><div className="two-fields"><Field id="supplier-name" label={t("supplierName")} hint={t("hint.personName")} value={name} onChange={setName}/><Field id="supplier-contact" label={t("contact")} hint={t("hint.supplierContact")} value={contact} onChange={setContact} required={false}/></div>
+      <div className="two-fields"><Field id="supplier-phone" label={t("phone")} hint={t("hint.personPhone")} value={phone} onChange={setPhone} required={false} maxLength={40}/><Field id="supplier-address" label={t("address")} hint={t("hint.address")} value={address} onChange={setAddress} required={false} maxLength={200}/></div>
+      <Field id="supplier-notes" label={t("notes")} hint={t("hint.notes")} value={notes} onChange={setNotes} required={false} maxLength={500}/></fieldset>
     <ErrorText message={action.error} {...(supplier===undefined?{}:{conflictMessage:"staleVersion" as const})}/><div className="actions"><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):uncertain?t("retry"):t("save")}</button>
       {action.error?.code==="request_conflict"&&onReload!==undefined&&<button type="button" className="secondary" onClick={onReload}>{t("reload")}</button>}
       <button type="button" className="secondary" disabled={action.busy||uncertain} onClick={()=>onDone(undefined)}>{t("cancel")}</button></div>
@@ -195,9 +195,9 @@ function PaySupplier({service,sessionId,supplier,onSaved}:{service:ShopService;s
   };
   return <div className="panel form-panel"><h2>{t("paySupplier")}</h2><ReadState loading={accounts.loading} error={accounts.error} empty={accounts.data?.items.length===0} emptyText={t("noAccounts")} retry={accounts.retry}>
     <form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={action.busy||uncertain}>
-      <div className="two-fields"><Field id="supplier-payment-amount" label={t("amount")} value={amount} onChange={setAmount} numeric/>
-        <Select id="supplier-payment-account" label={t("account")} value={account} onChange={setAccountId} options={(accounts.data?.items??[]).map(item=>({value:item.id,label:item.name}))}/></div>
-      <Field id="supplier-payment-note" label={t("note")} value={note} onChange={setNote} required={false} maxLength={200}/></fieldset>
+      <div className="two-fields"><Field id="supplier-payment-amount" label={t("amount")} hint={t("hint.supplierPayment")} value={amount} onChange={setAmount} numeric/>
+        <Select id="supplier-payment-account" label={t("account")} hint={t("hint.paidFromAccount")} value={account} onChange={setAccountId} options={(accounts.data?.items??[]).map(item=>({value:item.id,label:item.name}))}/></div>
+      <Field id="supplier-payment-note" label={t("note")} hint={t("hint.paymentNote")} value={note} onChange={setNote} required={false} maxLength={200}/></fieldset>
     <ErrorText message={action.error}/>{saved&&<p role="status" className="notice success">{t("paymentSaved")}</p>}
     <div className="actions"><button className="primary" type="submit" disabled={action.busy||account===""}>{action.busy?t("recording"):uncertain?t("retry"):t("paySupplier")}</button></div></form>
   </ReadState></div>;

@@ -20,6 +20,18 @@ Installed Android acceptance (F1/F3/F4 and the parity checks) has not run.
 - `components/theme.ts` translates the desktop tokens (light and dark); `components/ui.tsx`
   holds the shared primitives (screen header/footer, buttons, fields, rows, notices, segmented
   choices, searchable picker sheet, confirmation dialog, bounded paged list, stat tiles).
+- **Every form control has a description.** `Field`, `Toggle`, `Picker` and labelled `Segmented`
+  require `hint` (French/English in `app/strings-forms.ts`, keys `hint.*`); `null` is an explicit,
+  reviewed exception (search boxes, inline cart quantities, permission switches whose label says it
+  all). A missing description fails `tsc`. An error replaces the description under its control.
+- **Keyboard.** Scroll screens keep a focused input clear of the keyboard and footer with room for
+  its description; sheets shrink above the keyboard (their list gives up height, and a picker's
+  "create" field sits above the list); modals are edge-to-edge so the keyboard controller can follow
+  the keyboard in their window on Android.
+- **Motion** (`components/motion.ts`, Reanimated 4): pushed screens slide in from the right and
+  leave the same way, changing destination cross-fades, presses shrink controls slightly, selection
+  colours transition, and notices, errors and empty states fade in. Layout animations and timings
+  follow Android's "remove animations" setting; colour transitions check it explicitly.
 - Language and appearance (system/light/dark) live in the device preference database, outside
   backups and events; both are available before setup.
 

@@ -21,16 +21,16 @@ export function MoreScreen(): React.JSX.Element {
   const { t } = useText(), s = useStyles(), nav = useNav(), session = useSession(), permissions = usePermissions(), has = (p: Permission): boolean => permissions.includes(p);
   const unread = useUnreadAlerts();
   const items = [
-    <ListRow key="alerts" title={t("alerts")} subtitle={unread > 0 ? t("alertsUnread", { count: unread }) : undefined} trailing={unread > 0 ? String(unread) : undefined} trailingTone="danger" onPress={() => nav.push("alerts")} />,
-    has("customers.view") && <ListRow key="customers" title={t("customers")} onPress={() => nav.push("customers")} />,
-    has("suppliers.view") && <ListRow key="suppliers" title={t("suppliers")} onPress={() => nav.push("suppliers")} />,
-    has("finance.accounts.view") && has("cash.view") && <ListRow key="accounts" title={t("accounts")} onPress={() => nav.push("accounts")} />,
+    <ListRow key="alerts" title={t("alerts")} subtitle={unread > 0 ? t("alertsUnread", { count: unread }) : t("alertsMenuHelp")} trailing={unread > 0 ? String(unread) : undefined} trailingTone="danger" onPress={() => nav.push("alerts")} />,
+    has("customers.view") && <ListRow key="customers" title={t("customers")} subtitle={t("customersMenuHelp")} onPress={() => nav.push("customers")} />,
+    has("suppliers.view") && <ListRow key="suppliers" title={t("suppliers")} subtitle={t("suppliersMenuHelp")} onPress={() => nav.push("suppliers")} />,
+    has("finance.accounts.view") && has("cash.view") && <ListRow key="accounts" title={t("accounts")} subtitle={t("accountsMenuHelp")} onPress={() => nav.push("accounts")} />,
     (has("reports.sales") || has("reports.financial") || has("reports.inventory") || has("reports.customers") || has("reports.suppliers")) && <ListRow key="reports" title={t("reports")} subtitle={t("reportsMenuHelp")} onPress={() => nav.push("reports")} />,
-    has("reports.sales") && <ListRow key="analytics" title={t("analytics")} onPress={() => nav.push("analytics")} />,
-    has("users.view") && <ListRow key="staff" title={t("staff")} onPress={() => nav.push("staff")} />,
+    has("reports.sales") && <ListRow key="analytics" title={t("analytics")} subtitle={t("analyticsMenuHelp")} onPress={() => nav.push("analytics")} />,
+    has("users.view") && <ListRow key="staff" title={t("staff")} subtitle={t("staffMenuHelp")} onPress={() => nav.push("staff")} />,
     has("audit.view") && <ListRow key="journal" title={t("journal")} subtitle={t("journalMenuHelp")} onPress={() => nav.push("journal")} />,
-    session.isOwner && has("business.settings") && <ListRow key="devices" title={t("devicesTitle")} onPress={() => nav.push("devices")} />,
-    <ListRow key="settings" title={t("settings")} onPress={() => nav.push("settings")} />,
+    session.isOwner && has("business.settings") && <ListRow key="devices" title={t("devicesTitle")} subtitle={t("devicesMenuHelp")} onPress={() => nav.push("devices")} />,
+    <ListRow key="settings" title={t("settings")} subtitle={t("settingsMenuHelp")} onPress={() => nav.push("settings")} />,
   ].filter(Boolean);
   return <Screen title={t("tab.more")} eyebrow={session.businessName}>
     <Section><Text style={s.body}>{t("signedInAs", { name: session.userName })}</Text><Button label={t("lock")} variant="secondary" onPress={session.lock} /></Section>
@@ -125,8 +125,8 @@ export function ResetScreen(): React.JSX.Element {
       <Button label={t("createBackup")} variant="secondary" onPress={() => nav.push("backupCreate")} />
     </Section>
     <Section>
-      <Field label={t("typeCurrentShop", { name: session.businessName })} value={typed} onChange={setTyped} />
-      <Field label={t("localSecret")} value={secret} onChange={setSecret} kind="secret" />
+      <Field label={t("typeCurrentShop", { name: session.businessName })} value={typed} onChange={setTyped} hint={t("hint.resetTyped")} />
+      <Field label={t("localSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("hint.resetSecret")} />
     </Section>
     <Confirm visible={confirming} destructive title={t("resetDeviceTitle")} text={t("resetDeviceConfirm", { shop: session.businessName })} confirmLabel={t("resetDevice")}
       onCancel={() => setConfirming(false)} onConfirm={() => { setConfirming(false); reset(); }} />

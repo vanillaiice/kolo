@@ -5,6 +5,7 @@ import type { ServerDatabase } from "../database.js";
 import { sha256, type ServerKey } from "../identity.js";
 import { AdminError, audit, type Admin } from "./accounts.js";
 import { BillingError, entitlementOf, listPayments, recordPayment, type Edition, type PaymentMethod } from "../billing.js";
+import { releaseHeld } from "../sync/tills.js";
 
 /** Who performed a change and from where; the CLI acts as `cli`. */
 export interface Actor { readonly adminId: string | null; readonly username: string; readonly address: string | null }
@@ -18,6 +19,8 @@ export interface IssuedCode { readonly codeId: string; readonly code: string; re
 /** A connection code as listed, never with its token. */
 export interface CodeView { readonly codeId: string; readonly label: string; readonly createdBy: string; readonly createdAt: string; readonly expiresAt: string;
   readonly state: "unused" | "used" | "expired" | "cancelled"; readonly usedAt: string | null; readonly shopId: string | null; readonly shopName: string | null; readonly includedMonths: number;
+  /** Trial or extra paid days (ADR-039) and the till limit the shop starts with; null is unlimited. */
+  readonly includedDays: number; readonly maxTills: number | null;
   /** The shop an owner-recovery code may re-attach a restored owner device to (ADR-036); null for an ordinary code. */
   readonly recoveryShopId: string | null }
 
@@ -26,13 +29,18 @@ export interface CodeView { readonly codeId: string; readonly label: string; rea
  * and a 128-bit token, so the owner pastes or scans one thing and never retypes a fingerprint (ADR-030).
  * With `recoveryShopId` it is an owner-recovery code (ADR-036): it can only attach a restored owner device to that
  * existing shop after every till was lost, and never creates a shop. Issue one only after confirming the owner.
+ * An ordinary code may carry paid months and days (a trial) and the shop's till limit (`maxTills`, null unlimited;
+ * ADR-039).
  */
-export async function issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publicUrl: string, actor: Actor, input: { readonly label: string; readonly days: number; readonly now: Date; readonly includedMonths?: number; readonly recoveryShopId?: string }): Promise<IssuedCode> {
+export async function issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publicUrl: string, actor: Actor, input: { readonly label: string; readonly days: number; readonly now: Date; readonly includedMonths?: number; readonly includedDays?: number; readonly maxTills?: number | null; readonly recoveryShopId?: string }): Promise<IssuedCode> {
   const includedMonths = input.includedMonths ?? 0;
   if (!Number.isInteger(includedMonths) || includedMonths < 0 || includedMonths > 36) throw new AdminError(400, "invalid_months");
+  const includedDays = input.includedDays ?? 0, maxTills = input.maxTills ?? null;
+  if (!Number.isInteger(includedDays) || includedDays < 0 || includedDays > 90) throw new AdminError(400, "invalid_trial_days");
+  if (maxTills !== null && (!Number.isInteger(maxTills) || maxTills < 1 || maxTills > 1000)) throw new AdminError(400, "invalid_till_limit");
   let recovery: { id: string; name: string } | undefined;
   if (input.recoveryShopId !== undefined) {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(input.recoveryShopId) || includedMonths !== 0) throw new AdminError(400, "invalid_request");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(input.recoveryShopId) || includedMonths !== 0 || includedDays !== 0 || maxTills !== null) throw new AdminError(400, "invalid_request");
     const shop = await db.selectFrom("shops").select(["business_id", "name", "status"]).where("business_id", "=", input.recoveryShopId).executeTakeFirst();
     if (shop === undefined || shop.status === "removed") throw new AdminError(404, "shop_not_found");
     recovery = { id: shop.business_id, name: shop.name };
@@ -43,8 +51,9 @@ export async function issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publ
   const token = randomBytes(16).toString("hex"), codeId = randomUUIDv7(), expiresAt = new Date(input.now.getTime() + input.days * 86_400_000);
   await db.transaction().execute(async tx => {
     await tx.insertInto("connection_codes").values({ code_id: codeId, token_hash: sha256(token), label, created_by: actor.username, created_at: input.now, expires_at: expiresAt, used_at: null, used_by: null, cancelled_at: null,
-      included_months: includedMonths, recovery_business_id: recovery?.id ?? null }).execute();
-    await audit(tx, actor, recovery === undefined ? "code.issue" : "code.issue_recovery", codeId, actor.address, { label, days: input.days, included_months: includedMonths, ...(recovery === undefined ? {} : { shop_id: recovery.id }) });
+      included_months: includedMonths, included_days: includedDays, max_tills: maxTills, recovery_business_id: recovery?.id ?? null }).execute();
+    await audit(tx, actor, recovery === undefined ? "code.issue" : "code.issue_recovery", codeId, actor.address, { label, days: input.days, included_months: includedMonths,
+      ...(recovery === undefined ? { included_days: includedDays, max_tills: maxTills } : { shop_id: recovery.id }) });
   });
   return { codeId, label, expiresAt: expiresAt.toISOString(), code: formatConnectionCode({ url: publicUrl, fingerprint: key.fingerprint, token }) };
 }
@@ -52,10 +61,11 @@ export async function issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publ
 /** Recent codes, newest first, with what became of each. */
 export async function listCodes(db: Kysely<ServerDatabase>, now: Date, limit = 200): Promise<readonly CodeView[]> {
   const rows = await db.selectFrom("connection_codes as c").leftJoin("shops as s", "s.business_id", "c.used_by")
-    .select(["c.code_id", "c.label", "c.created_by", "c.created_at", "c.expires_at", "c.used_at", "c.used_by", "c.cancelled_at", "c.included_months", "c.recovery_business_id", "s.name"]).orderBy("c.created_at", "desc").limit(limit).execute();
+    .select(["c.code_id", "c.label", "c.created_by", "c.created_at", "c.expires_at", "c.used_at", "c.used_by", "c.cancelled_at", "c.included_months", "c.included_days", "c.max_tills", "c.recovery_business_id", "s.name"]).orderBy("c.created_at", "desc").limit(limit).execute();
   return rows.map(row => ({ codeId: row.code_id, label: row.label, createdBy: row.created_by, createdAt: row.created_at.toISOString(), expiresAt: row.expires_at.toISOString(),
     state: row.cancelled_at !== null ? "cancelled" : row.used_at !== null ? "used" : row.expires_at <= now ? "expired" : "unused",
-    usedAt: row.used_at?.toISOString() ?? null, shopId: row.used_by, shopName: row.name ?? null, includedMonths: row.included_months, recoveryShopId: row.recovery_business_id }));
+    usedAt: row.used_at?.toISOString() ?? null, shopId: row.used_by, shopName: row.name ?? null, includedMonths: row.included_months,
+    includedDays: row.included_days, maxTills: row.max_tills, recoveryShopId: row.recovery_business_id }));
 }
 
 /** Cancels an unused code. A used code has done its job and cannot be cancelled. */
@@ -71,12 +81,15 @@ export async function cancelCode(db: Kysely<ServerDatabase>, actor: Actor, codeI
 export interface ShopView { readonly shopId: string; readonly name: string; readonly status: "active" | "suspended" | "removed"; readonly enrolledAt: string;
   readonly removeAfter: string | null; readonly devices: number; readonly lastSeenAt: string | null; readonly facts: number; readonly bytes: number;
   /** Hosted service: `unlimited` on self-hosted servers. */
-  readonly service: "unlimited" | "active" | "grace" | "inactive"; readonly paidUntil: string | null }
+  readonly service: "unlimited" | "active" | "grace" | "inactive"; readonly paidUntil: string | null;
+  /** Till limit (null unlimited) and tills waiting for a place (ADR-039); `devices` counts the tills holding one. */
+  readonly maxTills: number | null; readonly heldTills: number }
 
 /** Shops matching `search` (name or ID prefix), most recently active first. */
 export async function listShops(db: Kysely<ServerDatabase>, search = "", limit = 200, edition: Edition = { edition: "selfhost", graceDays: 0 }, now = new Date()): Promise<readonly ShopView[]> {
-  let query = db.selectFrom("shops as s").select(["s.business_id", "s.name", "s.status", "s.enrolled_at", "s.remove_after", "s.paid_until",
-    eb => eb.selectFrom("shop_devices as d").select(eb.fn.countAll().as("n")).whereRef("d.business_id", "=", "s.business_id").where("d.active", "=", true).where("d.platform", "<>", "SERVER").as("devices"),
+  let query = db.selectFrom("shops as s").select(["s.business_id", "s.name", "s.status", "s.enrolled_at", "s.remove_after", "s.paid_until", "s.max_tills",
+    eb => eb.selectFrom("shop_devices as d").select(eb.fn.countAll().as("n")).whereRef("d.business_id", "=", "s.business_id").where("d.active", "=", true).where("d.held", "=", false).where("d.platform", "<>", "SERVER").as("devices"),
+    eb => eb.selectFrom("shop_devices as d").select(eb.fn.countAll().as("n")).whereRef("d.business_id", "=", "s.business_id").where("d.held", "=", true).as("held"),
     eb => eb.selectFrom("shop_devices as d").select(sql<Date | null>`max(d.last_seen_at)`.as("m")).whereRef("d.business_id", "=", "s.business_id").as("last_seen"),
     eb => eb.selectFrom("journal as j").select(eb.fn.countAll().as("n")).whereRef("j.business_id", "=", "s.business_id").as("facts"),
     eb => eb.selectFrom("journal as j").select(sql<string>`coalesce(sum(octet_length(coalesce(j.canonical,'')) + octet_length(coalesce(j.sealed::text,''))),0)`.as("b")).whereRef("j.business_id", "=", "s.business_id").as("bytes")]);
@@ -85,14 +98,15 @@ export async function listShops(db: Kysely<ServerDatabase>, search = "", limit =
   const rows = await query.orderBy(sql`(SELECT max(d.last_seen_at) FROM shop_devices d WHERE d.business_id = s.business_id)`, sql`desc nulls last`).limit(limit).execute();
   return rows.map(row => ({ shopId: row.business_id, name: row.name, status: row.status, enrolledAt: row.enrolled_at.toISOString(), removeAfter: row.remove_after?.toISOString() ?? null,
     devices: Number(row.devices ?? 0), lastSeenAt: row.last_seen === null || row.last_seen === undefined ? null : new Date(row.last_seen as unknown as string).toISOString(),
-    facts: Number(row.facts ?? 0), bytes: Number(row.bytes ?? 0), service: entitlementOf(edition, row.paid_until, now).status, paidUntil: row.paid_until?.toISOString() ?? null }));
+    facts: Number(row.facts ?? 0), bytes: Number(row.bytes ?? 0), service: entitlementOf(edition, row.paid_until, now).status, paidUntil: row.paid_until?.toISOString() ?? null,
+    maxTills: row.max_tills, heldTills: Number(row.held ?? 0) }));
 }
 
 /** One shop's devices and delivery health; the key epoch is read from sealed headers, never from content. */
 export interface ShopDetail extends ShopView {
   readonly ownerId: string; readonly conflicts: number; readonly keyEpoch: number | null; readonly connectionCode: string | null; readonly graceUntil: string | null;
   readonly payments: Awaited<ReturnType<typeof listPayments>>;
-  readonly deviceList: readonly { readonly deviceId: string; readonly label: string; readonly platform: string; readonly active: boolean; readonly authority: boolean; readonly lastSeenAt: string | null; readonly backlog: number }[];
+  readonly deviceList: readonly { readonly deviceId: string; readonly label: string; readonly platform: string; readonly active: boolean; readonly held: boolean; readonly authority: boolean; readonly lastSeenAt: string | null; readonly backlog: number }[];
 }
 
 export async function shopDetail(db: Kysely<ServerDatabase>, shopId: string, edition: Edition = { edition: "selfhost", graceDays: 0 }, now = new Date()): Promise<ShopDetail> {
@@ -100,7 +114,7 @@ export async function shopDetail(db: Kysely<ServerDatabase>, shopId: string, edi
   const [view] = (await listShops(db, shopId, 1, edition, now)).filter(item => item.shopId === shopId);
   if (view === undefined) throw new AdminError(404, "not_found");
   const shop = await db.selectFrom("shops as s").leftJoin("connection_codes as c", "c.code_id", "s.connection_code_id").select(["s.owner_id", "c.label"]).where("s.business_id", "=", shopId).executeTakeFirstOrThrow();
-  const devices = await db.selectFrom("shop_devices as d").select(["d.device_id", "d.label", "d.platform", "d.active", "d.authority_allowed", "d.last_seen_at",
+  const devices = await db.selectFrom("shop_devices as d").select(["d.device_id", "d.label", "d.platform", "d.active", "d.held", "d.authority_allowed", "d.last_seen_at",
     eb => eb.selectFrom("journal as j").select(eb.fn.countAll().as("n")).whereRef("j.business_id", "=", "d.business_id").whereRef("j.origin_device_id", "<>", "d.device_id")
       .where(where => where.not(where.exists(where.selectFrom("deliveries as x").select(sql`1`.as("one")).whereRef("x.business_id", "=", "j.business_id").whereRef("x.event_id", "=", "j.event_id").whereRef("x.device_id", "=", "d.device_id")))).as("backlog")])
     .where("d.business_id", "=", shopId).where("d.platform", "<>", "SERVER").orderBy("d.label").execute();
@@ -108,7 +122,7 @@ export async function shopDetail(db: Kysely<ServerDatabase>, shopId: string, edi
   const epoch = await db.selectFrom("journal").select(sql<string | null>`max((sealed->>'epoch')::bigint)`.as("e")).where("business_id", "=", shopId).executeTakeFirstOrThrow();
   return { ...view, ownerId: shop.owner_id, conflicts: Number(conflicts.n), keyEpoch: epoch.e === null ? null : Number(epoch.e), connectionCode: shop.label ?? null,
     graceUntil: entitlementOf(edition, view.paidUntil === null ? null : new Date(view.paidUntil), now).grace_until, payments: await listPayments(db, shopId),
-    deviceList: devices.map(row => ({ deviceId: row.device_id, label: row.label, platform: row.platform, active: row.active, authority: row.authority_allowed,
+    deviceList: devices.map(row => ({ deviceId: row.device_id, label: row.label, platform: row.platform, active: row.active, held: row.held, authority: row.authority_allowed,
       lastSeenAt: row.last_seen_at?.toISOString() ?? null, backlog: Number(row.backlog ?? 0) })) };
 }
 
@@ -126,6 +140,24 @@ export async function setShopStatus(db: Kysely<ServerDatabase>, actor: Actor, sh
     if (changed.numUpdatedRows !== 1n) throw new AdminError(409, "invalid_status_change");
     if (to !== "active") await tx.deleteFrom("sessions").where("business_id", "=", shopId).execute();
     await audit(tx, actor, `shop.${action}`, shopId, actor.address, null);
+  });
+}
+
+/**
+ * Sets a shop's till limit (null for unlimited), audited as `shop.till_limit`. Raising or clearing it releases held
+ * tills, oldest first, into the new places; lowering it below current use holds nobody (ADR-039). Returns the
+ * released device IDs.
+ */
+export async function setTillLimit(db: Kysely<ServerDatabase>, actor: Actor, shopId: string, maxTills: number | null): Promise<readonly string[]> {
+  if (maxTills !== null && (!Number.isInteger(maxTills) || maxTills < 1 || maxTills > 1000)) throw new AdminError(400, "invalid_till_limit");
+  if (!/^[0-9a-f-]{36}$/.test(shopId)) throw new AdminError(404, "not_found");
+  return db.transaction().execute(async tx => {
+    const shop = await tx.selectFrom("shops").select(["max_tills", "status"]).where("business_id", "=", shopId).forUpdate().executeTakeFirst();
+    if (shop === undefined || shop.status === "removed") throw new AdminError(404, "not_found");
+    await tx.updateTable("shops").set({ max_tills: maxTills }).where("business_id", "=", shopId).execute();
+    const released = await releaseHeld(tx, shopId);
+    await audit(tx, actor, "shop.till_limit", shopId, actor.address, { from: shop.max_tills, to: maxTills, released: released.length });
+    return released;
   });
 }
 

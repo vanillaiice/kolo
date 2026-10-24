@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import type { BackupFileView, BackupKeyView, BundleView, InviteView, JoinCodeView, JoinStatusView, PairingRequestView, ServerPreview, ServerSyncSummary, ServerView, ShopService } from "../../shared/service.ts";
 import QRCode from "qrcode";
 import type { TextKey } from "../text.ts";
-import { ErrorText, Field, ReadState, useAction, useRead, useText } from "./ui.tsx";
+import { Check, ErrorText, Field, ReadState, useAction, useRead, useText } from "./ui.tsx";
 
 /** Shows what a save dialog did: a cancelled dialog is not an error. */
 function Saved({saved}:{saved:boolean|undefined}):React.JSX.Element|null{
@@ -12,8 +12,9 @@ function Saved({saved}:{saved:boolean|undefined}):React.JSX.Element|null{
 }
 function PasswordFields({id,value,confirm,onValue,onConfirm}:{id:string;value:string;confirm?:string;onValue:(value:string)=>void;onConfirm?:(value:string)=>void}):React.JSX.Element{
   const {t}=useText();
-  return <><div className="two-fields"><Field id={`${id}-password`} label={t("filePassword")} value={value} onChange={onValue} secret maxLength={256}/>
-    {onConfirm!==undefined&&<Field id={`${id}-confirm`} label={t("confirmFilePassword")} value={confirm??""} onChange={onConfirm} secret maxLength={256}/>}</div><p className="hint">{t("filePasswordHelp")}</p></>;
+  // Choosing a password (with its confirmation) and opening a file need different descriptions.
+  return <div className="two-fields"><Field id={`${id}-password`} label={t("filePassword")} hint={t(onConfirm===undefined?"hint.openFilePassword":"filePasswordHelp")} value={value} onChange={onValue} secret maxLength={256}/>
+    {onConfirm!==undefined&&<Field id={`${id}-confirm`} label={t("confirmFilePassword")} hint={t("hint.confirmPassword")} value={confirm??""} onChange={onConfirm} secret maxLength={256}/>}</div>;
 }
 
 /**
@@ -52,13 +53,13 @@ function Restore({service,sessionId,chosen=false,replacing,onDone,onBusy}:{servi
   };
   return <div className="transfer-step">{sessionId===undefined&&<h2>{t(preview===undefined?(chosen?"backupPasswordStep":"backupCheckStep"):(chosen?"backupConfirmChosenStep":"backupConfirmStep"))}</h2>}{sessionId!==undefined&&<p className="hint">{t("restoreReplaceHelp")}</p>}
     {preview===undefined?<form onSubmit={event=>{event.preventDefault();void check();}}><fieldset disabled={action.busy}>
-      {withKey?<Field id="restore-recovery-key" label={t("recoveryKeyField")} value={recoveryKey} onChange={setRecoveryKey} maxLength={200}/>:<PasswordFields id="restore" value={password} onValue={setPassword}/>}
-      <label className="check" htmlFor="restore-with-key"><input id="restore-with-key" type="checkbox" checked={withKey} onChange={event=>{setWithKey(event.target.checked);action.setError(undefined);}}/>{t("useRecoveryKey")}</label></fieldset>
+      {withKey?<Field id="restore-recovery-key" label={t("recoveryKeyField")} hint={t("hint.useRecoveryKey")} value={recoveryKey} onChange={setRecoveryKey} maxLength={200}/>:<PasswordFields id="restore" value={password} onValue={setPassword}/>}
+      <Check id="restore-with-key" label={t("useRecoveryKey")} hint={null} checked={withKey} onChange={checked=>{setWithKey(checked);action.setError(undefined);}}/></fieldset>
       <button className={chosen?"primary":"secondary"} type="submit" disabled={action.busy}>{t(chosen?"openBackupNow":"chooseBackup")}</button></form>
     :<form onSubmit={event=>{event.preventDefault();void restore();}}><div className="file-summary"><strong>{t("backupFrom")} {preview.businessName}</strong><span>{preview.ownerName} · {new Date(preview.createdAt).toLocaleString(language==="fr"?"fr-FR":"en-GB")} · {preview.appliedEvents} {t("savedOperations")}</span></div>
-      <fieldset disabled={action.busy}><Field id="restore-name" label={t("typeShopName")} value={name} onChange={setName}/><Field id="restore-device" label={t("deviceName")} value={device} onChange={setDevice}/>
+      <fieldset disabled={action.busy}><Field id="restore-name" label={t("typeShopName")} hint={t("hint.restoreTypedName")} value={name} onChange={setName}/><Field id="restore-device" label={t("deviceName")} hint={t("hint.tillName")} value={device} onChange={setDevice}/>
         {replacing!==undefined&&<p className="notice error" role="note">{t("replaceWarning")} <strong>{replacing}</strong>. {t("replaceKept")}</p>}
-        <div className="two-fields"><Field id="restore-secret" label={t("codeAfterRestore")} value={secret} onChange={setSecret} secret maxLength={256}/><Field id="restore-confirm" label={t("confirmSecret")} value={confirm} onChange={setConfirm} secret maxLength={256}/></div><p className="hint">{t("secretHelp")}</p></fieldset>
+        <div className="two-fields"><Field id="restore-secret" label={t("codeAfterRestore")} hint={t("secretHelp")} value={secret} onChange={setSecret} secret maxLength={256}/><Field id="restore-confirm" label={t("confirmSecret")} hint={t("hint.confirmCode")} value={confirm} onChange={setConfirm} secret maxLength={256}/></div></fieldset>
       <button className="primary" type="submit" disabled={action.busy||name!==preview.businessName}>{action.busy?t("recording"):t("restoreNow")}</button></form>}
     <ErrorText message={action.error} inputMessage="identityInput"/></div>;
 }
@@ -79,11 +80,11 @@ function Join({service,autoOpen=false,onDone,onBusy}:{service:ShopService;autoOp
   return <div className="transfer-step"><h2>{t(code!==undefined?"joinActivationStep":invite===undefined?"joinInviteStep":"joinRequestStep")}</h2>
     {code===undefined?invite===undefined?<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.openInvite()).then(value=>{if(value!==undefined)setInvite(value);});}}>{t("chooseInvite")}</button>
       :<form onSubmit={event=>{event.preventDefault();void accept();}}><div className="file-summary"><strong>{t("inviteFrom")} {invite.businessName}</strong><span>{invite.ownerName}</span></div>
-        <fieldset disabled={action.busy}><Field id="join-fingerprint" label={t("typeFingerprint")} value={fingerprint} onChange={setFingerprint} maxLength={64}/><Field id="join-device" label={t("deviceName")} value={device} onChange={setDevice}/>
-          <div className="two-fields"><Field id="join-secret" label={t("secret")} value={secret} onChange={setSecret} secret maxLength={256}/><Field id="join-confirm" label={t("confirmSecret")} value={confirm} onChange={setConfirm} secret maxLength={256}/></div><p className="hint">{t("secretHelp")}</p></fieldset>
+        <fieldset disabled={action.busy}><Field id="join-fingerprint" label={t("typeFingerprint")} hint={t("hint.typeFingerprint")} value={fingerprint} onChange={setFingerprint} maxLength={64}/><Field id="join-device" label={t("deviceName")} hint={t("hint.tillName")} value={device} onChange={setDevice}/>
+          <div className="two-fields"><Field id="join-secret" label={t("secret")} hint={t("secretHelp")} value={secret} onChange={setSecret} secret maxLength={256}/><Field id="join-confirm" label={t("confirmSecret")} hint={t("hint.confirmCode")} value={confirm} onChange={setConfirm} secret maxLength={256}/></div></fieldset>
         <button className="primary" type="submit" disabled={action.busy}>{t("acceptInvite")}</button></form>
     :<form onSubmit={event=>{event.preventDefault();void complete();}}><p className="notice success">{t("tellOwnerCode")} <code className="pair-code">{code}</code></p>
-      <fieldset disabled={action.busy}><Field id="join-code" label={t("pairingCode")} value={typedCode} onChange={setTypedCode} maxLength={64}/><PasswordFields id="join" value={password} onValue={setPassword}/></fieldset>
+      <fieldset disabled={action.busy}><Field id="join-code" label={t("pairingCode")} hint={t("hint.pairingCode")} value={typedCode} onChange={setTypedCode} maxLength={64}/><PasswordFields id="join" value={password} onValue={setPassword}/></fieldset>
       <button className="primary" type="submit" disabled={action.busy}>{t("chooseActivation")}</button></form>}
     <ErrorText message={action.error} inputMessage="identityInput"/>
     <button className="text-button" disabled={action.busy} onClick={()=>{void action.run(()=>service.cancelPairing()).then(()=>{setInvite(undefined);setCode(undefined);});}}>{t("cancelPairing")}</button></div>;
@@ -111,8 +112,7 @@ function SaveBackup({service,sessionId,revision}:{service:ShopService;sessionId:
     const value=await action.run(()=>service.saveBackup({sessionId,password,includePhotos}));setPassword("");setConfirm("");if(value!==undefined)setSaved(value.saved);
   };
   return <form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={action.busy}><PasswordFields id="backup" value={password} confirm={confirm} onValue={setPassword} onConfirm={setConfirm}/>
-    <label className="check" htmlFor="backup-photos"><input id="backup-photos" type="checkbox" checked={includePhotos} onChange={event=>setIncludePhotos(event.target.checked)}/>{t("includePhotos")}</label>
-    <p className="hint">{t("includePhotosHelp")}</p>{(keys.data?.length??0)>0&&<p className="hint">{t("backupAlsoKey")}</p>}</fieldset>
+    <Check id="backup-photos" label={t("includePhotos")} hint={t("hint.includePhotos")} checked={includePhotos} onChange={setIncludePhotos}/>{(keys.data?.length??0)>0&&<p className="hint">{t("backupAlsoKey")}</p>}</fieldset>
     <ErrorText message={action.error}/><Saved saved={saved}/><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):t("saveBackup")}</button></form>;
 }
 /**
@@ -134,7 +134,7 @@ function RecoveryKey({service,sessionId}:{service:ShopService;sessionId:string})
     <div className="row"><button type="button" className="secondary" onClick={()=>window.print()}>{t("recoveryKeyPrint")}</button><button type="button" className="primary" onClick={()=>setStep("confirm")}>{t("recoveryKeyWritten")}</button></div></div>;
   if(pending!==undefined&&step==="confirm")return <form className="transfer-step" onSubmit={event=>{event.preventDefault();void confirm();}}>
     <p className="hint">{t("recoveryKeyConfirm")}</p>
-    <fieldset disabled={action.busy}><div className="three-fields">{pending.confirm.map((index,i)=><Field key={index} id={`recovery-group-${index}`} label={`${t("recoveryKeyGroup")} ${index+1}`} value={groups[i]!} maxLength={8}
+    <fieldset disabled={action.busy}><div className="three-fields">{pending.confirm.map((index,i)=><Field key={index} id={`recovery-group-${index}`} label={`${t("recoveryKeyGroup")} ${index+1}`} hint={t("hint.backupKeyGroup")} value={groups[i]!} maxLength={8}
       onChange={value=>setGroups(list=>list.map((item,j)=>j===i?value:item))}/>)}</div></fieldset>
     <ErrorText message={action.error}/>
     <div className="row"><button type="button" className="text-button" onClick={()=>setStep("show")}>{t("back")}</button><button className="primary" type="submit" disabled={action.busy||groups.some(group=>group.trim()==="")}>{t("recoveryKeyWritten")}</button></div></form>;
@@ -143,7 +143,7 @@ function RecoveryKey({service,sessionId}:{service:ShopService;sessionId:string})
     {keys.data!==undefined&&(current===undefined?<p>{t("recoveryKeyNone")}</p>:<div className="file-summary"><strong>{t("recoveryKeyCurrent")} · {t("recoveryKeyId")} {current.keyId.slice(0,8)}</strong>
       <span>{t("recoveryKeyCreated")} {day(current.createdAt)}{older>0?` · ${older} ${t("recoveryKeyOlder")}`:""}</span></div>)}
     {done&&<p role="status" className="notice success">{t("recoveryKeyDone")}</p>}
-    {step==="pin"?<form onSubmit={event=>{event.preventDefault();void prepare();}}><fieldset disabled={action.busy}><Field id="recovery-pin" label={t("recoveryKeyPin")} value={pin} onChange={setPin} secret maxLength={256}/></fieldset>
+    {step==="pin"?<form onSubmit={event=>{event.preventDefault();void prepare();}}><fieldset disabled={action.busy}><Field id="recovery-pin" label={t("recoveryKeyPin")} hint={t("hint.ownerCodeConfirm")} value={pin} onChange={setPin} secret maxLength={256}/></fieldset>
       <ErrorText message={action.error}/><button className="primary" type="submit" disabled={action.busy||pin===""}>{t(current===undefined?"recoveryKeyCreate":"recoveryKeyRotate")}</button></form>
       :<button className="secondary" onClick={()=>{setStep("pin");setDone(false);action.setError(undefined);}}>{t(current===undefined?"recoveryKeyCreate":"recoveryKeyRotate")}</button>}
   </div>;
@@ -169,9 +169,9 @@ export function JoinLocalComputer({service,onDone,onBack}:{service:ShopService;o
   useEffect(()=>{if(!waiting)return;let live=true,running=false;const timer=setInterval(()=>{if(running)return;running=true;void service.finishLocalJoin(target).then(result=>{if(!live)return;if(!result.ok){action.setError(result.error);return;}if(result.value?.activated){live=false;onDone();}}).catch(()=>{if(live)action.setError({code:"local_network_unavailable"});}).finally(()=>{running=false;});},2000);return()=>{live=false;clearInterval(timer);};},[service,link,address,waiting,onDone]);
   return <AuthPage title={t("joinLocalShop")} description={t("joinLocalEntryHelp")} context="KOLO" onBack={onBack} busy={action.busy} aside={<p>{t("joinEntryAside")}</p>}>
     {waiting?<><p className="notice">{t("joinWaiting")}</p><button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.cancelPairing()).then(()=>{setWaiting(false);setShop(undefined);});}}>{t("cancelPairing")}</button></>:<form onSubmit={event=>{event.preventDefault();void (async()=>{if(shop===undefined){const result=await action.run(()=>service.lookupLocalJoin(target));if(result!==undefined)setShop(result.businessName);return;}if(secret!==confirm){action.setError({code:"codesMismatch"});return;}const result=await action.run(()=>service.requestLocalJoin({...target,deviceLabel:label,secret}));if(result!==undefined){setSecret("");setConfirm("");setWaiting(true);}})();}}><fieldset disabled={action.busy}>
-      <Field id="local-pairing-link" label={t("pairingLink")} value={link} onChange={value=>{setLink(value);setShop(undefined);}} maxLength={4096}/>
-      {typedCode&&<Field id="join-server-address" label={t("joinServerAddress")} value={address} onChange={value=>{setAddress(value);setShop(undefined);}} maxLength={2048}/>}
-      {shop!==undefined&&<><h2>{shop}</h2><Field id="local-join-label" label={t("deviceName")} value={label} onChange={setLabel}/><Field id="local-join-secret" label={t("newSecret")} value={secret} onChange={setSecret} secret/><Field id="local-join-confirm" label={t("confirmSecret")} value={confirm} onChange={setConfirm} secret/></>}
+      <Field id="local-pairing-link" label={t("pairingLink")} hint={t("hint.joinLink")} value={link} onChange={value=>{setLink(value);setShop(undefined);}} maxLength={4096}/>
+      {typedCode&&<Field id="join-server-address" label={t("joinServerAddress")} hint={t("hint.joinServerAddress")} value={address} onChange={value=>{setAddress(value);setShop(undefined);}} maxLength={2048}/>}
+      {shop!==undefined&&<><h2>{shop}</h2><Field id="local-join-label" label={t("deviceName")} hint={t("hint.tillName")} value={label} onChange={setLabel}/><Field id="local-join-secret" label={t("newSecret")} hint={t("secretHelp")} value={secret} onChange={setSecret} secret/><Field id="local-join-confirm" label={t("confirmSecret")} hint={t("hint.confirmCode")} value={confirm} onChange={setConfirm} secret/></>}
       <button className="primary" type="submit" disabled={link.trim()===""}>{t(shop===undefined?"continueSetup":"askLocalJoin")}</button>
     </fieldset></form>}<ErrorText message={action.error}/>
   </AuthPage>;
@@ -205,7 +205,7 @@ function JoinByCode({service,sessionId,local=false}:{service:ShopService;session
   const allow=():void=>{if(join===undefined||status?.state!=="requested")return;const label=status.label;void action.run(()=>local?service.approveLocalJoin({sessionId,joinId:join.joinId}):service.approveJoinCode({sessionId,joinId:join.joinId})).then(value=>{if(value!==undefined){setJoin(undefined);setStatus(undefined);setDone(label);}});};
   if(join===undefined)return <div className="transfer-step">
     <p className="hint">{t(local?"localJoinHelp":"joinCodeHelp")}</p>
-    <label className="check"><input type="checkbox" checked={authority} onChange={event=>setAuthority(event.target.checked)}/>{t("allowStaff")}</label>
+    <Check id="join-allow-staff" label={t("allowStaff")} hint={t("hint.allowStaffManagement")} checked={authority} onChange={setAuthority}/>
     <button className="primary" id={local?"show-local-join":undefined} disabled={action.busy} onClick={start}>{t(action.busy?"preparing":"showJoinCode")}</button>
     {done!==undefined&&<p role="status" className="notice success">{t("tillJoined")} {done}</p>}
     <ErrorText message={action.error}/></div>;
@@ -232,12 +232,12 @@ function Pair({service,sessionId}:{service:ShopService;sessionId:string}):React.
   const [authority,setAuthority]=useState(false),[fingerprint,setFingerprint]=useState<string>(),[request,setRequest]=useState<PairingRequestView>(),[code,setCode]=useState(""),[password,setPassword]=useState(""),[approved,setApproved]=useState<boolean>();
   const approve=async():Promise<void>=>{const value=await action.run(()=>service.approvePairingRequest({sessionId,confirmedCode:code.trim(),password}));setPassword("");if(value!==undefined){setApproved(value.saved);setRequest(undefined);setCode("");}};
   return <div className="transfer-step">
-    <label className="check"><input type="checkbox" checked={authority} disabled={action.busy} onChange={event=>setAuthority(event.target.checked)}/>{t("allowStaff")}</label>
+    <Check id="pair-allow-staff" label={t("allowStaff")} hint={t("hint.allowStaffManagement")} checked={authority} disabled={action.busy} onChange={setAuthority}/>
     <button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.saveInvite({sessionId,authorityAllowed:authority})).then(value=>{if(value!==undefined)setFingerprint(value.fingerprint);});}}>{t("saveInvite")}</button>
     {fingerprint!==undefined&&<p className="notice">{t("fingerprintToCompare")} <code className="pair-code">{fingerprint}</code></p>}
     <button className="secondary" disabled={action.busy} onClick={()=>{setApproved(undefined);void action.run(()=>service.openPairingRequest({sessionId})).then(value=>{if(value!==undefined)setRequest(value);});}}>{t("checkRequest")}</button>
     {request!==undefined&&<form onSubmit={event=>{event.preventDefault();void approve();}}><div className="file-summary"><strong>{t("requestFrom")} {request.deviceLabel}</strong><span>{t("codeToCompare")} <code className="pair-code">{request.verificationCode}</code></span></div>
-      <fieldset disabled={action.busy}><Field id="pair-code" label={t("typeCode")} value={code} onChange={setCode} maxLength={64}/><PasswordFields id="pair" value={password} onValue={setPassword}/></fieldset>
+      <fieldset disabled={action.busy}><Field id="pair-code" label={t("typeCode")} hint={t("hint.pairCode")} value={code} onChange={setCode} maxLength={64}/><PasswordFields id="pair" value={password} onValue={setPassword}/></fieldset>
       <button className="primary" type="submit" disabled={action.busy}>{t("approve")}</button></form>}
     {approved===true&&<p role="status" className="notice success">{t("approved")}</p>}<Saved saved={approved===false?false:undefined}/>
     <ErrorText message={action.error}/></div>;
@@ -289,8 +289,9 @@ function SyncServer({service,sessionId,revision}:{service:ShopService;sessionId:
           {server.service==="active"&&server.paidUntil!==null&&<small>{t("servicePaidUntil")} {when(server.paidUntil)}</small>}
           {server.service==="grace"&&<small className="error">{t("serviceGrace")} {when(server.graceUntil)}</small>}
           {server.service==="inactive"&&<small className="error">{t("serviceInactive")}</small>}
+          {server.tills!==null&&<small>{(server.maxTills===null?t("planUnlimitedTills"):t("planTills").replace("{max}",String(server.maxTills))).replace("{count}",String(server.tills))}</small>}
           <small>{t("lastSync")} {when(server.lastSuccessAt)} · {server.pending} {t("waitingOperations")}</small>
-          {server.lastError!==null&&<small className="error">{t("lastSyncError")} {when(server.lastAttemptAt)}</small>}</td>
+          {server.lastError!==null&&<small className="error">{t("lastSyncError")} {when(server.lastAttemptAt)}{server.lastError==="till_limit_reached"?` · ${t("till_limit_reached")}`:""}</small>}</td>
         <td className="row-actions" aria-busy={action.busy}><button className="text-button" disabled={action.busy} onClick={()=>{setNotice(undefined);void action.run(()=>service.syncServer({sessionId,destinationId:server.destinationId})).then(value=>{setRefresh(item=>item+1);if(value!==undefined)setNotice(summary(value));});}}>{t(action.busy?"syncingServer":"syncNow")}</button>
           <button className="text-button" disabled={action.busy} onClick={()=>{setNotice(undefined);void action.run(()=>service.disconnectServer({sessionId,destinationId:server.destinationId})).then(()=>setRefresh(item=>item+1));}}>{t("disconnectServer")}</button></td></tr>)}</tbody></table></div>
         {state.data!.servers.slice(0,1).map(server=><details key={`support-${server.destinationId}`} className="support"><summary>{t("supportDetails")}</summary>
@@ -298,8 +299,8 @@ function SyncServer({service,sessionId,revision}:{service:ShopService;sessionId:
         {state.data!.servers.filter(server=>server.shareCode!==null).slice(0,1).map(server=><div key={server.destinationId} className="file-summary"><strong>{t("shareServerTitle")}</strong><span>{t("shareServerHelp")}</span>
           <code className="share-code">{server.shareCode}</code><button className="secondary" onClick={()=>{void share(server.shareCode!);}}>{t(copied?"copied":"copyCode")}</button></div>)}</>
       :<form onSubmit={event=>{event.preventDefault();void (preview===undefined?check():connect());}}><fieldset disabled={action.busy}>
-        <label className="field" htmlFor="sync-code">{t("connectionCode")}<textarea id="sync-code" rows={3} value={code} maxLength={8192} spellCheck={false} autoComplete="off" onChange={event=>{setCode(event.target.value);setPreview(undefined);}}/></label>
-        <p className="hint">{t(state.data?.canEnroll===true?"connectionCodeOwnerHelp":"connectionCodeTillHelp")}</p>
+        <div className="field"><label htmlFor="sync-code">{t("connectionCode")}</label><textarea id="sync-code" rows={3} value={code} maxLength={8192} spellCheck={false} autoComplete="off" aria-describedby="sync-code-hint" onChange={event=>{setCode(event.target.value);setPreview(undefined);}}/>
+          <small className="field-hint" id="sync-code-hint">{t(state.data?.canEnroll===true?"connectionCodeOwnerHelp":"connectionCodeTillHelp")}</small></div>
         {preview!==undefined&&<div className="file-summary"><strong>{t("serverChecked")}</strong><span>{preview.url}</span><span>{t("serverFingerprintShown")} <code>{grouped(preview.fingerprint)}</code></span>
           {preview.canEnroll&&!preview.hasToken&&!preview.attached&&<span className="error">{t("codeNeedsToken")}</span>}
           {!preview.canEnroll&&<span>{t("secondaryServerHelp")}</span>}</div>}

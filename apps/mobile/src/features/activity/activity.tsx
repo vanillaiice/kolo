@@ -148,14 +148,15 @@ export function PurchaseNewScreen(): React.JSX.Element {
     <Segmented value={String(draft.step) as "1" | "2" | "3"} options={steps} onChange={value => set({ step: Number(value) as 1 | 2 | 3 })} />
     {draft.step === 1 && <Section title={t("stepSupplier")}>
       <Picker<Supplier> label={t("supplier")} optional placeholder={t("noSupplier")} value={draft.supplier as Supplier | undefined} onChange={value => set({ supplier: value === undefined ? undefined : { id: value.id, name: value.name } })}
-        load={page => suppliers(context, page)} revision={revision} />
+        load={page => suppliers(context, page)} revision={revision} hint={t("hint.purchaseSupplier")} />
       <Field label={t("reference")} value={draft.reference} onChange={value => set({ reference: value })} hint={t("referenceHelp")} />
       <Text style={s.muted}>{t("fullPayment")}</Text>
     </Section>}
     {draft.step === 2 && <>
       <Section title={t("addLine")}>
-        <Picker<Product> label={t("product")} value={product} onChange={value => { setProduct(value); setCost(value?.purchasePriceMinor === undefined ? "" : String(value.purchasePriceMinor)); }} load={page => products(context, page)} revision={revision} />
-        <Field label={t("quantity")} value={quantity} onChange={setQuantity} kind="quantity" /><Field label={t("unitCost")} value={cost} onChange={setCost} kind="money" />
+        <Picker<Product> label={t("product")} value={product} onChange={value => { setProduct(value); setCost(value?.purchasePriceMinor === undefined ? "" : String(value.purchasePriceMinor)); }} load={page => products(context, page)} revision={revision} hint={t("hint.purchaseProduct")} />
+        <Field label={t("quantity")} value={quantity} onChange={setQuantity} kind="quantity" hint={t("hint.purchaseQuantity")} />
+        <Field label={t("unitCost")} value={cost} onChange={setCost} kind="money" hint={t("hint.unitCost")} />
         <Button label={t("addLine")} variant="secondary" disabled={product === undefined} onPress={addLine} />
       </Section>
       <Section title={t("lines")}>
@@ -171,8 +172,8 @@ export function PurchaseNewScreen(): React.JSX.Element {
       {permissions.includes("purchases.pay") && <Section title={t("doorPayment")}>
         <Field label={t("purchasePaid")} value={draft.paid} onChange={value => set({ paid: value })} kind="money" hint={t("purchasePaidHelp")} />
         {paidMinor > 0 && <Picker<Account> label={t("account")} value={draft.account as Account | undefined} onChange={value => set({ account: value === undefined ? undefined : { id: value.id, name: value.name } })}
-          load={page => paymentAccounts(context, page)} revision={revision} />}
-        {paidMinor > 0 && <Field label={t("reason")} value={draft.reason} onChange={value => set({ reason: value })} />}
+          load={page => paymentAccounts(context, page)} revision={revision} hint={t("hint.paidFromAccount")} />}
+        {paidMinor > 0 && <Field label={t("reason")} value={draft.reason} onChange={value => set({ reason: value })} hint={t("hint.paymentNote")} />}
       </Section>}
       {owed > 0 && (draft.supplier === undefined ? <Notice tone="error" text={t("fullPayment")} /> : <Notice tone="warning" text={t("supplierWillBeOwed", { name: draft.supplier.name, amount: formatMoney(owed) })} />)}
     </>}
@@ -217,11 +218,11 @@ export function ExpenseNewScreen(): React.JSX.Element {
   }, id => { request.renew(); nav.replace("expense", { expenseId: id }); });
   return <Screen title={t("newExpense")} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={save} /></>}>
     <Section>
-      <Segmented label={t("category")} value={category} onChange={setCategory} options={EXPENSE_CATEGORIES.map(id => ({ id, label: t(id) }))} />
-      <Picker<Account> label={t("account")} value={account} onChange={setAccount} load={page => paymentAccounts(context, page)} revision={revision} />
-      <Field label={t("amount")} value={amount} onChange={setAmount} kind="money" />
-      <Field label={t("description")} value={description} onChange={setDescription} hint={category === "OTHER" ? t("descriptionRequired") : undefined} />
-      <Field label={t("reference")} value={reference} onChange={setReference} />
+      <Segmented label={t("category")} hint={t("hint.expenseCategory")} value={category} onChange={setCategory} options={EXPENSE_CATEGORIES.map(id => ({ id, label: t(id) }))} />
+      <Picker<Account> label={t("account")} value={account} onChange={setAccount} load={page => paymentAccounts(context, page)} revision={revision} hint={t("hint.paidFromAccount")} />
+      <Field label={t("amount")} value={amount} onChange={setAmount} kind="money" hint={t("hint.amountPaid")} />
+      <Field label={t("description")} value={description} onChange={setDescription} hint={category === "OTHER" ? t("descriptionRequired") : t("hint.expenseDescription")} />
+      <Field label={t("reference")} value={reference} onChange={setReference} hint={t("hint.documentReference")} />
     </Section>
   </Screen>;
 }
@@ -266,18 +267,21 @@ export function ReturnFormScreen(): React.JSX.Element {
       <Button label={t("fullReturn")} variant="secondary" onPress={() => setQuantities(Object.fromEntries(items.items.map(item => [item.id, quantityInput(item.originalQuantity - item.returnedQuantity)])))} />
       {items.items.map(item => <View key={item.id} style={{ gap: spacing.xs }}>
         <Text style={[s.body, { fontWeight: "600" }]}>{item.name}</Text>
-        <Text style={s.muted}>{t("remainingOf", { remaining: formatQuantity(item.originalQuantity - item.returnedQuantity), original: formatQuantity(item.originalQuantity) })}</Text>
-        {item.originalQuantity > item.returnedQuantity && <Field label={t("quantityToReturn")} value={quantities[item.id] ?? ""} kind="quantity" onChange={value => setQuantities(current => ({ ...current, [item.id]: value }))} />}
+        {/* The remaining quantity is the field's description; a fully returned line just says so. */}
+        {item.originalQuantity > item.returnedQuantity ? <Field label={t("quantityToReturn")} value={quantities[item.id] ?? ""} kind="quantity" onChange={value => setQuantities(current => ({ ...current, [item.id]: value }))}
+          hint={t("remainingOf", { remaining: formatQuantity(item.originalQuantity - item.returnedQuantity), original: formatQuantity(item.originalQuantity) })} />
+          : <Text style={s.muted}>{t("remainingOf", { remaining: formatQuantity(0), original: formatQuantity(item.originalQuantity) })}</Text>}
       </View>)}
     </Section>
     {preview !== undefined && <Section title={t("stepRefund")}>
       <Facts items={[[t("returnValue"), formatMoney(preview.totalMinor), "strong"], [t("refundableUpTo"), formatMoney(Math.min(preview.totalMinor, items.refundableMinor))]]} />
       <Field label={t("refundAmount")} value={refund} onChange={setRefund} kind="money" hint={items.counterpartyId === undefined ? t("refundAllHelp") : t("returnHint")} />
-      {refundMinor > 0 && <Picker<Account> label={t("account")} value={account} onChange={setAccount} revision={revision} load={page => paymentAccounts(context, page)} />}
+      {refundMinor > 0 && <Picker<Account> label={t("account")} value={account} onChange={setAccount} revision={revision} load={page => paymentAccounts(context, page)}
+        hint={t(kind === "SALE" ? "hint.refundFromAccount" : "hint.refundToAccount")} />}
       <Facts items={[[t("refund"), formatMoney(refundMinor)], [kind === "SALE" ? t("customerCredit") : t("supplierDebtReduction"), formatMoney(preview.totalMinor - refundMinor)]]} />
     </Section>}
     {computed.invalid && <Notice tone="error" text={t("returnInvalid")} />}
-    <Section><Field label={t("reason")} value={reason} onChange={setReason} /></Section>
+    <Section><Field label={t("reason")} value={reason} onChange={setReason} hint={t("hint.returnReason")} /></Section>
     <Confirm visible={confirming} title={t("confirmReturn")} text={t("confirmReturnText", { value: formatMoney(preview?.totalMinor ?? 0), refund: formatMoney(refundMinor) })} confirmLabel={t("recordReturn")}
       onCancel={() => setConfirming(false)} onConfirm={() => { setConfirming(false); record(); }} />
   </Screen>;

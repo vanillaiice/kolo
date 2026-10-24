@@ -148,8 +148,8 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
   const message = failure === undefined ? undefined : failure instanceof WorkspaceError && !["locked", "permission_denied"].includes(failure.code) ? workspaceErrorText(failure, language) : t(failureKey(failure));
   const status = <>{working !== undefined && <Working text={t(working)} />}{message !== undefined && <Notice tone="error" text={message} />}{notice !== undefined && <Notice tone="success" text={t(notice)} />}</>;
   const secrets = (fresh: boolean): ReactNode => <>
-    <Field label={fresh ? t("newLocalSecret") : t("localSecret")} value={secret} onChange={setSecret} kind="secret" hint={fresh ? t("codeRule") : undefined} />
-    {fresh && <Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" />}
+    <Field label={fresh ? t("newLocalSecret") : t("localSecret")} value={secret} onChange={setSecret} kind="secret" hint={fresh ? t("codeRule") : t("hint.unlockSecret")} />
+    {fresh && <Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" hint={t("hint.confirmCode")} />}
   </>;
   const frame = (title: string, body: ReactNode, options: { back?: () => void; intro?: string; preferences?: boolean } = {}): React.JSX.Element =>
     <Page><KeyboardAwareScrollView bottomOffset={spacing.xl} contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, flexGrow: 1 }} keyboardShouldPersistTaps="handled">
@@ -158,7 +158,6 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
         <Text accessibilityRole="header" style={s.title}>{title}</Text>{options.intro !== undefined && <Text style={s.muted}>{options.intro}</Text>}</View>
       {body}{status}
       {options.preferences === true && <Section><LanguageControl /><AppearanceControl /></Section>}
-      <Text style={[s.muted, { textAlign: "center" }]}>{t("offlineLine")}</Text>
       <Text style={[s.muted, { textAlign: "center", fontSize: 12 }]}>kolo {Constants.expoConfig?.version ?? "0.0.0"} · made by hblabs</Text>
     </KeyboardAwareScrollView></Page>;
 
@@ -170,9 +169,11 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
     </>, { intro: t("standaloneHelp"), preferences: true });
 
     case "create": return step.part === 1 ? frame(t("createShop"), <Section title={t("stepShop")}>
-      <Field label={t("shopName")} value={shop} onChange={setShop} autoFocus /><Field label={t("ownerName")} value={owner} onChange={setOwner} />
+      <Field label={t("shopName")} value={shop} onChange={setShop} autoFocus hint={t("hint.shopName")} />
+      <Field label={t("ownerName")} value={owner} onChange={setOwner} hint={t("hint.ownerName")} />
       <Toggle label={t("customizeNames")} value={customize} onChange={setCustomize} hint={t("customizeNamesHelp")} />
-      {customize && <><Field label={t("deviceName")} value={till} onChange={setTill} /><Field label={t("cashAccountName")} value={cash} onChange={setCash} /></>}
+      {customize && <><Field label={t("deviceName")} value={till} onChange={setTill} hint={t("hint.tillName")} />
+        <Field label={t("cashAccountName")} value={cash} onChange={setCash} hint={t("hint.cashAccountName")} /></>}
       <Button label={t("continue")} disabled={shop.trim() === "" || owner.trim() === "" || till.trim() === "" || cash.trim() === ""} onPress={() => go({ name: "create", part: 2 })} />
     </Section>, { back: () => go({ name: "welcome" }), intro: t("stepOneOfTwo") })
       : frame(t("createShop"), <Section title={t("stepAccess")}>
@@ -189,7 +190,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
       <Text style={s.body}>{t("recoveryKeyHelp")}</Text>
       <Text selectable accessibilityLabel={step.code.split("").join(" ")} style={[s.mono, { fontSize: 18, lineHeight: 30, padding: spacing.lg, backgroundColor: colors.surfaceSoft, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.controlBorder }]}>
         {step.code.match(/.{1,8}/g)?.join("-")}</Text>
-      <Toggle label={t("recoveryKeyWritten")} value={acknowledged} onChange={setAcknowledged} />
+      <Toggle label={t("recoveryKeyWritten")} value={acknowledged} onChange={setAcknowledged} hint={t("hint.recoveryKeyWritten")} />
       <Button label={t("recoveryKeySaved")} disabled={!acknowledged} onPress={() => onUnlocked(step.context)} />
     </Section>);
 
@@ -211,7 +212,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
 
     case "recover": return frame(t("recoverAccess"), <Section>
       <Text style={s.body}>{t("recoverHelp")}</Text>
-      <Field label={t("ownerRecoveryKey")} value={recovery} onChange={setRecovery} kind="code" />{secrets(true)}
+      <Field label={t("ownerRecoveryKey")} value={recovery} onChange={setRecovery} kind="code" hint={t("hint.ownerRecoveryKey")} />{secrets(true)}
       <Button label={t("restoreAccess")} busy={busy} onPress={() => { void run(async () => {
         checkNewSecret(); await recoverOwnerAccess({ recoveryCode: recovery, newSecret: secret }, ports); clearSecrets(); setStep({ name: "unlock" }); setNotice("recovered"); onChanged();
       }); }} />
@@ -224,7 +225,8 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
 
     case "legacy": return frame(t("migrateTill"), <>
       <Section><Text style={s.body}>{t("migrationHelp")}</Text>
-        <Field label={t("ownerPhone")} value={phone} onChange={setPhone} kind="phone" /><Field label={t("oldServerCode")} value={serverPin} onChange={setServerPin} kind="secret" />{secrets(true)}
+        <Field label={t("ownerPhone")} value={phone} onChange={setPhone} kind="phone" hint={t("hint.ownerPhone")} />
+        <Field label={t("oldServerCode")} value={serverPin} onChange={setServerPin} kind="secret" hint={t("hint.oldServerCode")} />{secrets(true)}
         <Button label={t("migrateTill")} busy={busy} onPress={() => { void run(async () => {
           checkNewSecret(); const installation = await adoptLegacyWorkspace({ phone, serverPin, localSecret: secret }, ports, authority); await openWithKey(installation.ownerId);
         }); }} /></Section>
@@ -244,8 +246,8 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
     </Section>, { back: () => go(firstStep(state, ports.database)) });
 
     case "backup": return frame(t("importBackup"), <Section>
-      <Text style={s.body}>{t("backupPasswordHelp")}</Text><Field label={withKey ? t("recoveryKeyField") : t("filePassword")} value={password} onChange={setPassword} kind={withKey ? "text" : "secret"} />
-      <Toggle label={t("useRecoveryKey")} value={withKey} onChange={value => { setWithKey(value); setPassword(""); }} />
+      <Field label={withKey ? t("recoveryKeyField") : t("filePassword")} value={password} onChange={setPassword} kind={withKey ? "text" : "secret"} hint={t(withKey ? "hint.useRecoveryKey" : "backupPasswordHelp")} />
+      <Toggle label={t("useRecoveryKey")} value={withKey} onChange={value => { setWithKey(value); setPassword(""); }} hint={null} />
       <Button label={t("checkBackup")} disabled={busy || password === ""} onPress={() => { void run(async () => {
         await showing("workingCheckBackup"); await discardPreview(); const preview = await previewBackupFile(step.file, withKey ? { recoveryKey: password } : password, files, crypto); setPassword("");
         if (!mounted.current) { await cancelBackupPreview(preview); return; }
@@ -270,7 +272,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
         <Section title={preview.businessName}>
           <Text style={s.body}>{t("backupSummary", { owner: preview.ownerName, date: new Date(preview.createdAt).toLocaleString(language === "fr" ? "fr-FR" : "en-GB"), count: preview.appliedEvents })}</Text>
           <Field label={t("confirmShopName")} value={typedName} onChange={setTypedName} hint={t("typeShopNameHelp", { name: preview.businessName })} />
-          <Field label={t("deviceName")} value={till} onChange={setTill} />{secrets(true)}
+          <Field label={t("deviceName")} value={till} onChange={setTill} hint={t("hint.tillName")} />{secrets(true)}
           {configured || state.state === "legacy" ? <Notice tone="warning" text={t("replaceWarning", { current: shopName ?? "KOLO" })} /> : null}
           <Button label={configured || state.state === "legacy" ? t("replaceShop") : t("confirmRestore")} variant={configured || state.state === "legacy" ? "danger" : "primary"}
             disabled={busy || typedName.trim() !== preview.businessName || secret === ""}
@@ -286,7 +288,7 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
       <Text style={s.body}>{t("inviteSummary", { owner: step.invite.ownerName })}</Text>
       <Text selectable style={[s.mono, { fontSize: 16 }]}>{t("fingerprintValue", { fingerprint: step.invite.fingerprint })}</Text>
       <Field label={t("ownerFingerprint")} value={fingerprint} onChange={setFingerprint} kind="code" hint={t("fingerprintHelp")} />
-      <Field label={t("deviceName")} value={till} onChange={setTill} />{secrets(true)}
+      <Field label={t("deviceName")} value={till} onChange={setTill} hint={t("hint.tillName")} />{secrets(true)}
       <Button label={t("acceptInvite")} busy={busy} disabled={fingerprint.trim() === "" || secret === ""} onPress={() => { void run(async () => {
         checkNewSecret();
         const result = await acceptPairingInvite(step.file, { confirmedFingerprint: fingerprint.trim(), label: till.trim() || t("defaultSecondTill"), platform, secret }, ports, crypto);
@@ -306,8 +308,8 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
 
     case "joining": return frame(t("finishJoining"), <>
       <Section><Text style={s.body}>{t("finishJoiningHelp")}</Text>
-        <Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
-        <Field label={t("savedPairingCode")} value={pairingCode} onChange={setPairingCode} kind="code" />
+        <Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" hint={t("hint.enrollmentOpenPassword")} />
+        <Field label={t("savedPairingCode")} value={pairingCode} onChange={setPairingCode} kind="code" hint={t("hint.savedPairingCode")} />
         <Button label={t("pickOwnerFile")} busy={busy} disabled={password === "" || pairingCode.trim() === ""} onPress={() => { void run(async () => {
           const file = await pick(); if (file === undefined) return;
           if (transferFileKind(file, crypto) !== "enrollment") throw new FormProblem("unrecognizedFile");

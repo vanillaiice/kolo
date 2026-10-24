@@ -93,7 +93,7 @@ function Shops({ t, language, canChange, guard }: { t: T; language: Language; ca
       <div className="table-wrap"><table><thead><tr><th>{t("name")}</th><th>{t("status")}</th><th className="numeric">{t("devices")}</th><th>{t("lastSeen")}</th>{list.data.edition === "hosted" && <th>{t("subscription")}</th>}<th className="numeric">{t("facts")}</th><th className="numeric">{t("storage")}</th></tr></thead>
         <tbody>{list.data.shops.map((shop: Shop) => <tr key={shop.shopId}>
           <td><button className="row-link" onClick={() => setSelected(shop.shopId)}>{shop.name}</button><small><code>{shop.shopId}</code></small></td>
-          <td><span className={`pill ${shop.status}`}>{t(shop.status)}</span></td><td className="numeric">{shop.devices}</td><td>{date(language, shop.lastSeenAt, t)}</td>
+          <td><span className={`pill ${shop.status}`}>{t(shop.status)}</span></td><td className="numeric">{tills(t, shop)}</td><td>{date(language, shop.lastSeenAt, t)}</td>
           {list.data!.edition === "hosted" && <td><span className={`pill service-${shop.service}`}>{t(shop.service)}</span><small>{shop.paidUntil === null ? t("notPaid") : date(language, shop.paidUntil, t)}</small></td>}
           <td className="numeric">{shop.facts.toLocaleString(language)}</td><td className="numeric">{bytes(shop.bytes)}</td></tr>)}</tbody></table></div>}
   </section>;
@@ -119,11 +119,12 @@ function ShopPage({ t, language, canChange, guard, shopId, onBack }: { t: T; lan
         <dt>{t("facts")}</dt><dd>{data.facts.toLocaleString(language)} · {bytes(data.bytes)}</dd>
         {data.removeAfter !== null && <><dt>{t("removeAfter")}</dt><dd>{date(language, data.removeAfter, t)}</dd></>}
       </dl>
+      <TillLimit t={t} shop={data} canChange={canChange} guard={guard} onSaved={shop.reload} />
       {data.edition === "hosted" && <Subscription t={t} language={language} shop={data} canChange={canChange} guard={guard} onPaid={shop.reload} />}
       <h2>{t("devices")}</h2>
       <div className="table-wrap"><table><thead><tr><th>{t("device")}</th><th>{t("platform")}</th><th>{t("status")}</th><th>{t("lastSeen")}</th><th className="numeric">{t("backlog")}</th></tr></thead>
         <tbody>{data.deviceList.map(device => <tr key={device.deviceId}><td>{device.label}{device.authority && <span className="tag">{t("authority")}</span>}<small><code>{device.deviceId}</code></small></td>
-          <td>{device.platform}</td><td>{t(device.active ? "trusted" : "revoked")}</td><td>{date(language, device.lastSeenAt, t)}</td><td className="numeric">{device.backlog}</td></tr>)}</tbody></table></div>
+          <td>{device.platform}</td><td>{device.held ? <span className="pill service-grace">{t("heldTill")}</span> : t(device.active ? "trusted" : "revoked")}</td><td>{date(language, device.lastSeenAt, t)}</td><td className="numeric">{device.backlog}</td></tr>)}</tbody></table></div>
       {canChange && data.status === "active" && <Recovery t={t} language={language} shopId={data.shopId} guard={guard} />}
       {canChange && <div className="actions-panel">
         {error !== undefined && error !== "" && <p role="alert" className="notice error">{t(error)}</p>}
@@ -180,7 +181,7 @@ function Subscription({ t, language, shop, canChange, guard, onPaid }: { t: T; l
     </form>}
     <h2>{t("payments")}</h2>
     {shop.payments.length === 0 ? <p className="empty">{t("noPayments")}</p> : <div className="table-wrap"><table><thead><tr><th>{t("when")}</th><th className="numeric">{t("months")}</th><th className="numeric">{t("amount")}</th><th>{t("method")}</th><th>{t("paidUntil")}</th><th>{t("who")}</th></tr></thead>
-      <tbody>{shop.payments.map(payment => <tr key={payment.paymentId}><td>{date(language, payment.recordedAt, t)}</td><td className="numeric">{payment.months}</td>
+      <tbody>{shop.payments.map(payment => <tr key={payment.paymentId}><td>{date(language, payment.recordedAt, t)}</td><td className="numeric">{payment.months}{payment.days > 0 ? ` + ${payment.days} ${t("daysShort")}` : ""}</td>
         <td className="numeric">{payment.amountMinor.toLocaleString(language)}</td><td>{t(payment.method)}{payment.reference !== null && <small>{payment.reference}</small>}</td>
         <td>{date(language, payment.paidUntilAfter, t)}</td><td>{payment.recordedBy}<small>{t(payment.source === "code" ? "viaCodeSource" : payment.source)}</small></td></tr>)}</tbody></table></div>}
   </section>;
@@ -190,10 +191,14 @@ function Codes({ t, language, canChange, guard }: { t: T; language: Language; ca
   const list = useLoad(() => api.codes(), guard, []);
   const [label, setLabel] = useState(""), [days, setDays] = useState(7), [months, setMonths] = useState(0), [busy, setBusy] = useState(false), [error, setError] = useState<string>();
   const hosted = useLoad(() => api.health(), guard, []).data?.edition === "hosted";
+  // A hosted code names its till limit or says unlimited; nothing is preselected there (ADR-039).
+  const [trial, setTrial] = useState(0), [limit, setLimit] = useState(""), [unlimited, setUnlimited] = useState<boolean>();
+  const isUnlimited = unlimited ?? !hosted, maxTills = isUnlimited ? null : Number(limit), limitReady = isUnlimited || Number.isInteger(maxTills) && maxTills! >= 1;
   const [issued, setIssued] = useState<Issued>(), [copied, setCopied] = useState(false);
   const issue = (event: FormEvent): void => {
     event.preventDefault(); setBusy(true); setError(undefined); setCopied(false);
-    api.issue(label.trim(), days, hosted ? months : 0).then(value => { setIssued(value); setLabel(""); list.reload(); }, (failure: unknown) => setError(guard(failure))).finally(() => setBusy(false));
+    if (!limitReady) { setBusy(false); setError("tillLimitChoose"); return; }
+    api.issue(label.trim(), days, hosted ? months : 0, hosted ? trial : 0, maxTills).then(value => { setIssued(value); setLabel(""); setLimit(""); setUnlimited(undefined); list.reload(); }, (failure: unknown) => setError(guard(failure))).finally(() => setBusy(false));
   };
   const cancel = (code: Code): void => { api.cancel(code.codeId).then(list.reload, (failure: unknown) => { setError(guard(failure)); list.reload(); }); };
   return <section>
@@ -210,16 +215,18 @@ function Codes({ t, language, canChange, guard }: { t: T; language: Language; ca
         <div className="row">
           <label className="field grow">{t("label")}<input value={label} onChange={event => setLabel(event.target.value)} required maxLength={120} /></label>
           {hosted && <label className="field">{t("includedMonths")}<select value={months} onChange={event => setMonths(Number(event.target.value))}>{[0, 1, 3, 6, 12].map(value => <option key={value} value={value}>{value === 0 ? t("none") : value}</option>)}</select></label>}
+          {hosted && <label className="field">{t("trialDays")}<select value={trial} onChange={event => setTrial(Number(event.target.value))}>{[0, 7, 14, 30].map(value => <option key={value} value={value}>{value === 0 ? t("none") : value}</option>)}</select></label>}
           <label className="field">{t("validity")}<select value={days} onChange={event => setDays(Number(event.target.value))}>{[1, 7, 30].map(value => <option key={value} value={value}>{value} {t(value === 1 ? "day" : "days")}</option>)}</select></label>
-          <button className="primary" type="submit" disabled={busy || label.trim() === ""}>{t(busy ? "issuing" : "issue")}</button>
         </div>
+        <LimitInput t={t} limit={limit} unlimited={isUnlimited} onLimit={setLimit} onUnlimited={setUnlimited} idPrefix="code" />
+        <button className="primary" type="submit" disabled={busy || label.trim() === "" || !limitReady}>{t(busy ? "issuing" : "issue")}</button>
       </form>}
       {error !== undefined && error !== "" && <p role="alert" className="notice error">{t(error)}</p>}
     </div>}
     <Failure t={t} code={list.error} retry={list.reload} />
     {list.data === undefined ? <p className="muted">{t("loading")}</p> : list.data.codes.length === 0 ? <p className="empty">{t("noCodes")}</p> :
       <div className="table-wrap"><table><thead><tr><th>{t("label")}</th><th>{t("status")}</th><th>{t("created")}</th><th>{t("expires")}</th><th>{t("usedBy")}</th><th /></tr></thead>
-        <tbody>{list.data.codes.map(code => <tr key={code.codeId}><td>{code.label}<small>{t("by")} {code.createdBy}{code.includedMonths > 0 ? ` · ${code.includedMonths} ${t("months").toLowerCase()}` : ""}{code.recoveryShopId !== null ? ` · ${t("recovery")}` : ""}</small></td><td><span className={`pill code-${code.state}`}>{t(code.state)}</span></td>
+        <tbody>{list.data.codes.map(code => <tr key={code.codeId}><td>{code.label}<small>{t("by")} {code.createdBy}{code.includedMonths > 0 ? ` · ${code.includedMonths} ${t("months").toLowerCase()}` : ""}{code.includedDays > 0 ? ` · ${code.includedDays} ${t("trialDaysShort")}` : ""}{code.recoveryShopId === null ? ` · ${code.maxTills === null ? t("unlimitedTills").toLowerCase() : `${code.maxTills} ${t("tillsShort")}`}` : ""}{code.recoveryShopId !== null ? ` · ${t("recovery")}` : ""}</small></td><td><span className={`pill code-${code.state}`}>{t(code.state)}</span></td>
           <td>{date(language, code.createdAt, t)}</td><td>{date(language, code.expiresAt, t)}</td><td>{code.shopName ?? "—"}{code.usedAt !== null && <small>{date(language, code.usedAt, t)}</small>}</td>
           <td className="row-actions">{canChange && code.state === "unused" && <button className="text-button" onClick={() => cancel(code)}>{t("cancel")}</button>}</td></tr>)}</tbody></table></div>}
   </section>;
@@ -261,5 +268,42 @@ function Audit({ t, language, guard }: { t: T; language: Language; guard: (error
       <tbody>{entries.map(entry => <tr key={entry.id}><td>{date(language, entry.at, t)}</td><td>{entry.username}</td><td><code>{entry.action}</code>{entry.detail !== null && <small>{JSON.stringify(entry.detail)}</small>}</td>
         <td><code>{entry.target ?? ""}</code></td><td>{entry.address ?? ""}</td></tr>)}</tbody></table></div>
     {more && entries.length > 0 && <button className="secondary" onClick={() => load(entries[entries.length - 1]!.id)}>{t("more")}</button>}
+  </section>;
+}
+
+/** Tills holding a place, against the limit, with any waiting: "2 / 3 · 1 waiting". */
+function tills(t: T, shop: Shop): string {
+  return `${shop.devices}${shop.maxTills === null ? "" : ` / ${shop.maxTills}`}${shop.heldTills > 0 ? ` · ${shop.heldTills} ${t("waiting")}` : ""}`;
+}
+
+/** A till count with an explicit "Unlimited" choice. */
+function LimitInput({ t, limit, unlimited, onLimit, onUnlimited, idPrefix }: { t: T; limit: string; unlimited: boolean; onLimit: (value: string) => void; onUnlimited: (value: boolean) => void; idPrefix: string }): ReactNode {
+  return <div className="row limit-row">
+    <label className="field" htmlFor={`${idPrefix}-tills`}>{t("tillLimit")}<input id={`${idPrefix}-tills`} type="number" min={1} max={1000} step={1} inputMode="numeric" value={unlimited ? "" : limit} disabled={unlimited}
+      onChange={event => onLimit(event.target.value)} /></label>
+    <label className="check" htmlFor={`${idPrefix}-unlimited`}><input id={`${idPrefix}-unlimited`} type="checkbox" checked={unlimited} onChange={event => onUnlimited(event.target.checked)} />{t("unlimitedTills")}</label>
+    <p className="hint">{t("tillLimitHelp")}</p>
+  </div>;
+}
+
+/** The shop's till limit, tills in use and waiting, and (for admins) the form that changes it (ADR-039). */
+function TillLimit({ t, shop, canChange, guard, onSaved }: { t: T; shop: ShopDetail; canChange: boolean; guard: (error: unknown) => string; onSaved: () => void }): ReactNode {
+  const [limit, setLimit] = useState(shop.maxTills === null ? "" : String(shop.maxTills)), [unlimited, setUnlimited] = useState(shop.maxTills === null);
+  const [busy, setBusy] = useState(false), [error, setError] = useState<string>(), [saved, setSaved] = useState<number>();
+  const value = unlimited ? null : Number(limit), ready = unlimited || Number.isInteger(value) && value! >= 1;
+  const save = (event: FormEvent): void => {
+    event.preventDefault(); if (!ready) { setError("tillLimitChoose"); return; }
+    setBusy(true); setError(undefined); setSaved(undefined);
+    api.setTillLimit(shop.shopId, value).then(result => { setSaved(result.released); onSaved(); }, (failure: unknown) => setError(guard(failure))).finally(() => setBusy(false));
+  };
+  return <section>
+    <h2>{t("tillLimit")}</h2>
+    <dl className="facts"><dt>{t("devices")}</dt><dd>{shop.maxTills === null ? `${shop.devices} · ${t("unlimitedTills").toLowerCase()}` : `${shop.devices} ${t("tillsOf")} ${shop.maxTills}`}{shop.heldTills > 0 ? ` · ${shop.heldTills} ${t("waiting")}` : ""}</dd></dl>
+    {canChange && <form className="panel" onSubmit={save}>
+      <LimitInput t={t} limit={limit} unlimited={unlimited} onLimit={setLimit} onUnlimited={setUnlimited} idPrefix="shop" />
+      <button className="secondary" type="submit" disabled={busy || !ready}>{t(busy ? "recording" : "saveLimit")}</button>
+      {saved !== undefined && <p role="status" className="notice">{t("limitSaved")}{saved > 0 ? ` ${saved} ${t("released")}` : ""}</p>}
+      {error !== undefined && error !== "" && <p role="alert" className="notice error">{t(error)}</p>}
+    </form>}
   </section>;
 }

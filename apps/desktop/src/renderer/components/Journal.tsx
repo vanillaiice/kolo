@@ -3,7 +3,7 @@ import type { Cursor } from "@kolo/core/application/queries";
 import { AUDIT_CSV_COLUMNS, auditCsv, type AuditCsvText } from "@kolo/core/domain/audit-csv";
 import { localDayPeriod } from "@kolo/core/domain/entry";
 import { formatMoney, formatQuantity, formatRate } from "@kolo/core/domain/money";
-import type { AuditEntry, AuditGroup, AuditSubject, ShopService } from "../../shared/service.ts";
+import type { AuditEntry, AuditGroup, AuditSubject, HeldBackFact, ShopService } from "../../shared/service.ts";
 import { hasText, type Language, type TextKey } from "../text.ts";
 import { ErrorText, Pager, ReadState, Select, useAction, useRead, useText } from "./ui.tsx";
 
@@ -74,10 +74,34 @@ function csvText(t: (key: TextKey) => string, language: Language): AuditCsvText 
 }
 
 /**
+ * Owner only: other tills' facts held back for a reason the owner may approve. Each approval names the exact fact
+ * and its reason; the fact is then applied under every other check and can still be refused.
+ */
+function HeldBack({ service, sessionId, revision }: { readonly service: ShopService; readonly sessionId: string; readonly revision: number }): React.JSX.Element | null {
+  const { t, language } = useText(), [done, setDone] = useState(0), [confirming, setConfirming] = useState<string>();
+  const list = useRead(() => service.heldBack({ sessionId }), [service, sessionId, revision, done]), action = useAction();
+  const approve = (fact: HeldBackFact): void => { void action.run(() => service.reviewHeldBack({ sessionId, eventId: fact.eventId, digest: fact.digest })).then(() => { setConfirming(undefined); setDone(value => value + 1); }); };
+  if (list.data === undefined || list.data.length === 0) return null;
+  return <div className="panel held-back" role="region" aria-labelledby="held-back-title">
+    <h2 id="held-back-title">{t("heldBackTitle")}</h2><p className="muted">{t("heldBackHelp")}</p>
+    <ul className="held-back-list">{list.data.map(fact => <li key={fact.eventId}>
+      <div><strong>{hasText(`j.${fact.type}`) ? t(`j.${fact.type}` as TextKey) : fact.type}</strong>
+        <span className="muted"> · {fact.actorName ?? t("journalUnknown")} · {fact.deviceLabel ?? t("journalUnknown")} · {new Date(fact.occurredAt).toLocaleString(language === "fr" ? "fr-FR" : "en-GB")}</span>
+        <p className="field-hint">{t(`heldBack.${fact.reason}` as TextKey)}</p></div>
+      {confirming === fact.eventId
+        ? <div className="actions"><button className="primary" disabled={action.busy} onClick={() => approve(fact)}>{t("heldBackConfirm")}</button>
+          <button className="secondary" disabled={action.busy} onClick={() => setConfirming(undefined)}>{t("cancel")}</button></div>
+        : <div className="actions"><button className="secondary" disabled={action.busy} onClick={() => setConfirming(fact.eventId)}>{t("heldBackApprove")}</button></div>}
+    </li>)}</ul>
+    <ErrorText message={action.error}/>
+  </div>;
+}
+
+/**
  * The operation journal under audit.view: newest first, narrowed by days, member, device, family or one record.
  * Choosing a record shows every operation that involved it (a product's price changes, sales and counts).
  */
-export function Journal({ service, sessionId, revision, canExport }: { readonly service: ShopService; readonly sessionId: string; readonly revision: number; readonly canExport: boolean }): React.JSX.Element {
+export function Journal({ service, sessionId, revision, canExport, canReview = false }: { readonly service: ShopService; readonly sessionId: string; readonly revision: number; readonly canExport: boolean; readonly canReview?: boolean }): React.JSX.Element {
   const { t, language } = useText(), today = day(new Date());
   const [from, setFrom] = useState(() => { const start = new Date(); start.setDate(start.getDate() - 6); return day(start); }), [to, setTo] = useState(today);
   const [actorId, setActorId] = useState(""), [deviceId, setDeviceId] = useState(""), [group, setGroup] = useState<AuditGroup | "">(""), [subject, setSubject] = useState<AuditSubject>();
@@ -106,14 +130,15 @@ export function Journal({ service, sessionId, revision, canExport }: { readonly 
   }); };
   return <section className="workspace-content">
     <div className="section-heading"><div><p className="eyebrow">{t("journal")}</p><h1>{t("journalTitle")}</h1><p className="muted">{t("journalHelp")}</p></div></div>
+    {canReview && <HeldBack service={service} sessionId={sessionId} revision={revision}/>}
     <div className="report-controls panel">
-      <label className="field" htmlFor="journal-from"><span>{t("from")}</span><input id="journal-from" type="date" value={from} max={to === "" ? undefined : to} onChange={event => setFrom(event.target.value)}/></label>
-      <label className="field" htmlFor="journal-to"><span>{t("to")}</span><input id="journal-to" type="date" value={to} min={from === "" ? undefined : from} onChange={event => setTo(event.target.value)}/></label>
-      <Select id="journal-actor" label={t("journalWho")} value={actorId} onChange={setActorId}
+      <div className="field"><label htmlFor="journal-from">{t("from")}</label><input id="journal-from" type="date" value={from} max={to === "" ? undefined : to} aria-describedby="journal-from-hint" onChange={event => setFrom(event.target.value)}/><small className="field-hint" id="journal-from-hint">{t("hint.periodFrom")}</small></div>
+      <div className="field"><label htmlFor="journal-to">{t("to")}</label><input id="journal-to" type="date" value={to} min={from === "" ? undefined : from} aria-describedby="journal-to-hint" onChange={event => setTo(event.target.value)}/><small className="field-hint" id="journal-to-hint">{t("hint.periodTo")}</small></div>
+      <Select id="journal-actor" label={t("journalWho")} hint={t("hint.journalWho")} value={actorId} onChange={setActorId}
         options={[{ value: "", label: t("journalAnyone") }, ...(page.data?.members ?? []).map(member => ({ value: member.id, label: member.name }))]}/>
-      <Select id="journal-device" label={t("journalDevice")} value={deviceId} onChange={setDeviceId}
+      <Select id="journal-device" label={t("journalDevice")} hint={t("hint.journalDevice")} value={deviceId} onChange={setDeviceId}
         options={[{ value: "", label: t("journalAnyDevice") }, ...(page.data?.devices ?? []).map(device => ({ value: device.id, label: device.label }))]}/>
-      <Select id="journal-group" label={t("journalFamily")} value={group} onChange={value => setGroup(value as AuditGroup | "")}
+      <Select id="journal-group" label={t("journalFamily")} hint={t("hint.journalFamily")} value={group} onChange={value => setGroup(value as AuditGroup | "")}
         options={[{ value: "", label: t("journalAnyGroup") }, ...GROUPS.map(id => ({ value: id, label: t(`jg.${id}` as TextKey) }))]}/>
       <div className="actions presets"><button className="secondary" onClick={() => preset(0)}>{t("today")}</button>
         <button className="secondary" onClick={() => preset(6)}>{t("last7")}</button>

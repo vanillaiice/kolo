@@ -33,7 +33,7 @@ export function ProductsScreen(): React.JSX.Element {
         const stock = showStock ? stockLevels(context, ids) : undefined, photos = productPhotoDigests(context, ids);
         return { ...result, items: result.items.map(item => ({ ...item, ...(stock?.has(item.id) ? { stock: stock.get(item.id)! } : {}), ...(photos.has(item.id) ? { photo: photos.get(item.id)! } : {}) })) };
       }}
-      header={<><Toggle label={t("showArchived")} value={archived} onChange={setArchived} />
+      header={<><Toggle label={t("showArchived")} value={archived} onChange={setArchived} hint={t("hint.showArchived")} />
         <Button label={t("categories")} variant="secondary" onPress={() => nav.push("categories")} /></>}
       empty={{ title: t("noProducts"), text: t("noProductsHelp") }}
       render={item => <ListRow title={item.name} tag={item.active ? undefined : t("archived")} leading={<Thumbnail productId={item.id} name={item.name} digest={item.photo ?? null} />}
@@ -99,7 +99,7 @@ export function ProductFormScreen(): React.JSX.Element {
   const canPrice = loaded === undefined || permissions.includes("products.price");
   const categoryAction = useAction();
   /** Records a new category from the picker so the product form keeps its draft. */
-  const newCategory = permissions.includes("products.create") ? { label: t("newCategory"), notice: categoryAction.notice, add: (title: string, select: (item: Category) => void): void => categoryAction.run(() => {
+  const newCategory = permissions.includes("products.create") ? { label: t("newCategory"), hint: t("hint.newCategory"), notice: categoryAction.notice, add: (title: string, select: (item: Category) => void): void => categoryAction.run(() => {
     if (title.trim() === "") throw new FormProblem("nameRequired");
     const now = new Date().toISOString(), id = newIdOnDevice();
     saveCategory(context, { id, name: title.trim(), active: true, createdAt: now, updatedAt: now });
@@ -135,22 +135,27 @@ export function ProductFormScreen(): React.JSX.Element {
     return loaded.id;
   }, id => { request.renew(); openingRequest.renew(); openingSaved.current = false; if (loaded === undefined) nav.replace("product", { productId: id }); else nav.leave(); });
   return <Screen title={loaded === undefined ? t("newProduct") : t("editProduct")} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={save} /></>}>
-    <Section>
-      <Field label={t("name")} value={name} onChange={setName} autoFocus={loaded === undefined} />
-      <Field label={t("price")} value={price} onChange={setPrice} kind="money" editable={canPrice} hint={canPrice ? undefined : t("priceNeedsPermission")} />
-      <Field label={t("cost")} value={cost} onChange={setCost} kind="money" editable={canPrice} hint={t("costHelp")} />
-      <Field label={t("barcode")} value={barcode} onChange={setBarcode} kind="code" />
-      <Field label={t("unit")} value={unit} onChange={setUnit} />
-      {loaded === undefined ? <Toggle label={t("divisible")} value={divisible} onChange={setDivisible} hint={t("divisibleHelp")} /> : <Text style={s.muted}>{t("divisibleFixed")}</Text>}
-      <Field label={t("minimum")} value={minimum} onChange={setMinimum} kind="quantity" />
+    {/* What the product is and where it is found come first; price, then stock settings, follow. */}
+    <Section title={t("section.product")}>
+      <Field label={t("name")} value={name} onChange={setName} autoFocus={loaded === undefined} hint={t("hint.productName")} />
       <Picker<Category> label={t("mainCategory")} value={group} onChange={value => { setGroup(value); if (value !== undefined) setExtras(current => current.filter(item => item.id !== value.id)); }} optional
-        load={page => categories(context, page)} revision={revision} create={newCategory} />
-      <Text style={[s.muted, { fontWeight: "600" }]}>{t("otherCategories")}</Text>
-      <RowGroup>{extras.map(item => <ListRow key={item.id} title={item.name} trailing={t("remove")} trailingTone="muted" accessibilityLabel={t("removeLineLabel", { name: item.name })}
-        onPress={() => setExtras(current => current.filter(other => other.id !== item.id))} />)}</RowGroup>
+        load={page => categories(context, page)} revision={revision} create={newCategory} hint={t("hint.mainCategory")} />
+      {extras.length > 0 && <View style={{ gap: spacing.xs }}><Text style={[s.muted, { fontWeight: "600" }]}>{t("otherCategories")}</Text>
+        <RowGroup>{extras.map(item => <ListRow key={item.id} title={item.name} trailing={t("remove")} trailingTone="muted" accessibilityLabel={t("removeLineLabel", { name: item.name })}
+          onPress={() => setExtras(current => current.filter(other => other.id !== item.id))} />)}</RowGroup></View>}
       {extras.length < 20 && <Picker<Category> label={t("addCategory")} value={undefined} placeholder={t("choose")} load={page => categories(context, page)} revision={revision} create={newCategory}
+        hint={t("otherCategoriesHelp")}
         onChange={value => { if (value !== undefined && value.id !== group?.id) setExtras(current => current.some(item => item.id === value.id) ? current : [...current, { id: value.id, name: value.name }]); }} />}
-      <Text style={s.muted}>{t("otherCategoriesHelp")}</Text>
+      <Field label={t("barcode")} value={barcode} onChange={setBarcode} kind="code" hint={t("hint.barcode")} />
+    </Section>
+    <Section title={t("section.price")}>
+      <Field label={t("price")} value={price} onChange={setPrice} kind="money" editable={canPrice} hint={canPrice ? t("hint.sellingPrice") : t("priceNeedsPermission")} />
+      <Field label={t("cost")} value={cost} onChange={setCost} kind="money" editable={canPrice} hint={t("costHelp")} />
+    </Section>
+    <Section title={t("section.stock")}>
+      <Field label={t("unit")} value={unit} onChange={setUnit} hint={t("hint.unit")} />
+      {loaded === undefined ? <Toggle label={t("divisible")} value={divisible} onChange={setDivisible} hint={t("divisibleHelp")} /> : <Text style={s.muted}>{t("divisibleFixed")}</Text>}
+      <Field label={t("minimum")} value={minimum} onChange={setMinimum} kind="quantity" hint={t("hint.minimum")} />
       {loaded === undefined && permissions.includes("inventory.adjust") && <Field label={t("openingQuantity")} value={opening} onChange={setOpening} kind="quantity" hint={t("openingHelp")} />}
     </Section>
   </Screen>;
@@ -177,8 +182,8 @@ export function StockMoveScreen(): React.JSX.Element {
   return <Screen title={t(title)} eyebrow={item?.name} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={save} /></>}>
     {stock !== undefined && <Section><Facts items={[[t("stockNow"), `${formatQuantity(stock.onHandThousandths)} ${item?.unit ?? ""}`, stock.onHandThousandths < 0 ? "danger" : "strong"]]} /></Section>}
     <Section>
-      <Field label={kind === "COUNT" ? t("observed") : t("quantity")} value={quantity} onChange={setQuantity} kind="quantity" autoFocus hint={kind === "COUNT" ? t("countHelp") : undefined} />
-      <Field label={t("reason")} value={reason} onChange={setReason} />
+      <Field label={kind === "COUNT" ? t("observed") : t("quantity")} value={quantity} onChange={setQuantity} kind="quantity" autoFocus hint={kind === "COUNT" ? t("countHelp") : t("hint.stockQuantity")} />
+      <Field label={t("reason")} value={reason} onChange={setReason} hint={t("hint.stockReason")} />
     </Section>
   </Screen>;
 }
@@ -200,7 +205,7 @@ export function CategoriesScreen(): React.JSX.Element {
   const { t } = useText(), nav = useNav(), { context } = useSession(), permissions = usePermissions(), revision = useRevision(["products"]), [archived, setArchived] = useState(false);
   return <Screen title={t("categories")} onBack={nav.back} scroll={false} actions={permissions.includes("products.create") ? <Button label={t("new")} variant="ghost" onPress={() => nav.push("categoryForm", {})} /> : undefined}>
     <PagedList<Category> revision={revision} identify={item => item.id} deps={[archived]} load={page => categories(context, { ...page, includeInactive: archived })}
-      header={<Toggle label={t("showArchived")} value={archived} onChange={setArchived} />} empty={{ title: t("noCategories") }}
+      header={<Toggle label={t("showArchived")} value={archived} onChange={setArchived} hint={t("hint.showArchived")} />} empty={{ title: t("noCategories") }}
       render={item => <ListRow title={item.name} tag={item.active ? undefined : t("archived")} onPress={permissions.includes("products.edit") ? () => nav.push("categoryForm", { categoryId: item.id }) : undefined} />} />
   </Screen>;
 }
@@ -219,7 +224,7 @@ export function CategoryFormScreen(): React.JSX.Element {
     if (!saveCategory(context, { ...stored!, name: name.trim(), active, updatedAt: nextVersion(stored!.updatedAt) })) throw new FormProblem("newerEdit");
   }, () => { request.renew(); nav.leave(); });
   return <Screen title={loaded === undefined ? t("newCategory") : t("editCategory")} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={() => write(loaded?.active ?? true)} /></>}>
-    <Section><Field label={t("name")} value={name} onChange={setName} autoFocus /></Section>
+    <Section><Field label={t("name")} value={name} onChange={setName} autoFocus hint={t("hint.categoryName")} /></Section>
     {loaded !== undefined && permissions.includes("products.archive") && <View style={{ gap: spacing.sm }}>
       <Button label={t(loaded.active ? "archive" : "restore")} variant={loaded.active ? "danger" : "secondary"} onPress={() => write(!loaded.active)} /></View>}
   </Screen>;

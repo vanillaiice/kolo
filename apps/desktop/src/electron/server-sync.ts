@@ -37,7 +37,7 @@ function view(connection: ServerConnection, owner: boolean): ServerView {
   return { destinationId: connection.destinationId, url: connection.url, fingerprint: connection.fingerprint, connectedAt: connection.connectedAt,
     lastAttemptAt: connection.lastAttemptAt, lastSuccessAt: connection.lastSuccessAt, lastError: connection.lastError, pending: connection.pending + connection.unsigned,
     automatic: connection.source === "shop", shareCode: owner ? formatConnectionCode({ url: connection.url, fingerprint: connection.fingerprint }) : null,
-    service: connection.service, paidUntil: connection.paidUntil, graceUntil: connection.graceUntil };
+    service: connection.service, paidUntil: connection.paidUntil, graceUntil: connection.graceUntil, maxTills: connection.maxTills, tills: connection.tills };
 }
 /** A pasted connection code, with its address checked against the till's own address policy. */
 function code(value: unknown): { readonly url: string; readonly fingerprint: string; readonly token?: string } {

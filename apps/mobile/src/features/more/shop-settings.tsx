@@ -38,10 +38,10 @@ export function ShopTaxScreen(): React.JSX.Element {
   }, () => nav.leave(), "saved");
   return <Screen title={t("taxTitle")} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={save} /></>}>
     <Notice text={t("taxHelp")} />
-    <Section><Toggle label={t("taxEnabled")} value={enabled} onChange={setEnabled} />
-      <Field label={t("taxLabel")} value={label} onChange={setLabel} />
-      <Field label={t("taxRate")} value={standard} onChange={setStandard} kind="quantity" />
-      <Field label={t("taxRegistration")} value={registration} onChange={setRegistration} kind="code" /></Section>
+    <Section><Toggle label={t("taxEnabled")} value={enabled} onChange={setEnabled} hint={t("hint.taxEnabled")} />
+      <Field label={t("taxLabel")} value={label} onChange={setLabel} hint={t("hint.taxLabel")} />
+      <Field label={t("taxRate")} value={standard} onChange={setStandard} kind="quantity" hint={t("hint.taxRate")} />
+      <Field label={t("taxRegistration")} value={registration} onChange={setRegistration} kind="code" hint={t("hint.taxRegistration")} /></Section>
   </Screen>;
 }
 
@@ -61,7 +61,8 @@ export function ShopTermsScreen(): React.JSX.Element {
   }, () => nav.leave(), "saved");
   return <Screen title={t("termsTitle")} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={save} /></>}>
     <Notice text={t("termsHelp")} />
-    <Section><Field label={t("termsCustomers")} value={customer} onChange={setCustomer} kind="code" /><Field label={t("termsSuppliers")} value={supplier} onChange={setSupplier} kind="code" />
+    <Section><Field label={t("termsCustomers")} value={customer} onChange={setCustomer} kind="code" hint={t("hint.termsDays")} />
+      <Field label={t("termsSuppliers")} value={supplier} onChange={setSupplier} kind="code" hint={t("hint.termsDays")} />
       {loaded !== undefined && (!loaded.customer.stored || !loaded.supplier.stored) && <Notice text={t("termsDefaultNote")} />}</Section>
   </Screen>;
 }
@@ -92,7 +93,7 @@ export function PartyTermsScreen(): React.JSX.Element {
   return <Screen title={t("termsTitle")} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={() => { try { write(daysEntry(days)); } catch (error) { if (error instanceof FormProblem) action.show({ tone: "error", key: error.key }); } }} />
     {loaded?.source === "party" && <Button label={t("useShopTerms")} variant="secondary" onPress={() => write(null)} />}</>}>
     <Notice text={t("termsHelp")} />
-    <Section><Field label={t("ownTerms")} value={days} onChange={setDays} kind="code" /></Section>
+    <Section><Field label={t("ownTerms")} value={days} onChange={setDays} kind="code" hint={t("hint.termsDays")} /></Section>
   </Screen>;
 }
 
@@ -113,9 +114,9 @@ export function ProductTaxScreen(): React.JSX.Element {
   }, () => nav.leave(), "saved");
   return <Screen title={t("productTax")} eyebrow={item?.name} onBack={nav.back} footer={canEdit ? <>{action.notice}<Button label={t("save")} onPress={save} /></> : undefined}>
     {settings?.enabled === false ? <Notice text={t("productTaxOff")} /> : loaded !== undefined && <Text style={s.body}>{t("productTaxNow", { rate: formatRate(loaded.effectiveRateBasisPoints, language) })}</Text>}
-    {canEdit ? <Section><Segmented label={t("productTax")} value={rule} onChange={setRule}
+    {canEdit ? <Section><Segmented label={t("productTax")} hint={t("hint.productTaxRule")} value={rule} onChange={setRule}
         options={(["STANDARD", "EXEMPT", "RATE"] as const).map(value => ({ id: value, label: `${t(`taxRule.${value}`)}${value === "STANDARD" && settings !== undefined ? ` (${formatRate(settings.standardRateBasisPoints, language)})` : ""}` }))} />
-      {rule === "RATE" && <Field label={t("productOwnRate")} value={own} onChange={setOwn} kind="quantity" />}</Section>
+      {rule === "RATE" && <Field label={t("productOwnRate")} value={own} onChange={setOwn} kind="quantity" hint={t("hint.productOwnRate")} />}</Section>
       : loaded !== undefined && <Section><Text style={s.body}>{t(`taxRule.${loaded.rule}`)}{loaded.rule === "RATE" ? ` · ${formatRate(loaded.rateBasisPoints, language)}` : ""}</Text></Section>}
   </Screen>;
 }

@@ -1117,8 +1117,8 @@ describe("a sale from the other till", () => {
             },
           ],
         },
-        payments: [],
-        movements: [],
+        payments: [{ id: "remote-payment", account_id: "88888888-8888-7888-8888-888888888888", amount_minor: 500 }],
+        movements: [{ id: "remote-movement", product_id: "99999999-9999-7999-8999-999999999999", type: "SALE", quantity: -1_000, reference_kind: "SALE", reference_id: "remote-sale" }],
       },
     };
     transport.pullHandler = (from) =>

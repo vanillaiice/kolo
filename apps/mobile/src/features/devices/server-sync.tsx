@@ -77,7 +77,9 @@ export function ServerSyncScreen(): React.JSX.Element {
       {server.service === "active" && server.paidUntil !== null && <Text style={s.muted}>{t("servicePaidUntil", { when: when(server.paidUntil) })}</Text>}
       {server.service === "grace" && <Notice tone="warning" text={t("serviceGrace", { when: when(server.graceUntil) })} />}
       {server.service === "inactive" && <Notice tone="error" text={t("serviceInactive")} />}
-      {server.lastError !== null && server.service !== "inactive" && <Notice tone="warning" text={t("lastSyncFailed", { when: when(server.lastAttemptAt) })} />}
+      {server.tills !== null && <Text style={s.muted}>{server.maxTills === null ? t("planUnlimitedTills", { count: server.tills }) : t("planTills", { max: server.maxTills, count: server.tills })}</Text>}
+      {server.lastError === "till_limit_reached" ? <Notice tone="warning" text={t("tillLimitReached")} />
+        : server.lastError !== null && server.service !== "inactive" && <Notice tone="warning" text={t("lastSyncFailed", { when: when(server.lastAttemptAt) })} />}
       {action.notice}
       <Button label={t("syncNow")} busy={action.busy} onPress={() => syncNow(server)} />
       <Button label={t("stopSyncing")} variant="secondary" disabled={action.busy} onPress={() => setStopping(server.destinationId)} />
@@ -119,7 +121,7 @@ function LocalHost({peer}:{peer:LocalPeerConnection}):React.JSX.Element {
   const {context}=useSession(),{t,language}=useText(),action=useAction(),s=useStyles();
   const [address,setAddress]=useState(peer.url??"");
   return <Section title={peer.label}>
-    <Field label={t("localAddressLabel")} value={address} onChange={setAddress} kind="code" />
+    <Field label={t("localAddressLabel")} value={address} onChange={setAddress} kind="code" hint={t("hint.localPeerAddress")} />
     <Button label={t("save")} variant="secondary" disabled={action.busy} onPress={()=>action.run(()=>connectLocalPeer(context,peer.deviceId,address),undefined,"localAddressSaved")} />
     {peer.lastSuccessAt!==null&&<Text style={s.muted}>{formatDate(peer.lastSuccessAt,language)}</Text>}
     {peer.lastError!==null&&<Notice tone="error" text={t("localSyncFailed")} />}

@@ -1,7 +1,7 @@
 import { KEY_FINGERPRINT_PREFIX, enrollmentSigningMessage, sessionSigningMessage, type BootstrapResponse, type Challenge, type ChallengeRequest,
   type EnrollmentRequest, type PullResponse, type PushResponse, type ServerIdentity, type Session, type SessionRequest, type SyncStatus } from "@kolo/contracts/sync";
 import type { SignedPeerReceipt } from "@kolo/contracts/delivery";
-import type { Entitlement, JoinEnrollment, JoinOffer, JoinRequestBody, SignedSyncBatch } from "@kolo/contracts/sync";
+import type { Entitlement, Plan, JoinEnrollment, JoinOffer, JoinRequestBody, SignedSyncBatch } from "@kolo/contracts/sync";
 import type { OperationContext } from "../identity/types.ts";
 import { authorizedOperation, appendLocalAudit, nextId, timestamp } from "../identity/internal-authority.ts";
 import { ExchangeError, type ExchangeCrypto } from "../exchange/types.ts";
@@ -27,6 +27,8 @@ export interface SyncTransport {
   status(token: string): Promise<SyncStatus>;
   /** Hosted service status for this shop; servers without billing answer `unlimited`. */
   entitlements(token: string): Promise<Entitlement>;
+  /** The shop's till limit and use (ADR-039); servers before it answer 404, which the pass ignores. */
+  plan?(token: string): Promise<Plan>;
   /** Join-by-code mailbox (ADR-032): the owner's calls carry a session token, the new till's do not. */
   joinCreate(token: string, offer: JoinOffer): Promise<{ expires_at: string }>;
   joinRead(joinId: string): Promise<JoinOffer>;
@@ -52,6 +54,8 @@ export interface ServerConnection {
   readonly source: "code" | "shop";
   /** What the server last said about hosted service (ADR-031); null before the first pass. Local trading never depends on it. */
   readonly service: Entitlement["status"] | null; readonly paidUntil: string | null; readonly graceUntil: string | null;
+  /** The shop's till limit as last reported (ADR-039): `tills` null when unknown; `maxTills` null with a count is unlimited. */
+  readonly maxTills: number | null; readonly tills: number | null;
 }
 
 /**
@@ -244,6 +248,7 @@ export async function synchronizeServer(context: OperationContext, destinationId
     try {
       // Read before transfer, so a paused hosted shop still learns why and until when.
       recordEntitlement(context, destinationId, await transport.entitlements(token));
+      if (transport.plan !== undefined) recordPlan(context, destinationId, await transport.plan(token).catch(() => undefined));
       // Keys are managed after pulling, so a till sees the shop's existing keys before it could create one.
       let known = -1, granted = 0;
       for (let round = 0; round < 2; round++) {
@@ -293,6 +298,15 @@ function recordEntitlement(context: OperationContext, destinationId: string, val
   } catch { /* Display only; the pass continues. */ }
 }
 
+function recordPlan(context: OperationContext, destinationId: string, value: Plan | undefined): void {
+  if (value === undefined) return; // An older server, or a read that failed: the last known plan stays.
+  try {
+    authorizedOperation(context, ["business.settings"], (_database, tx) => {
+      tx.run(`UPDATE server_endpoints SET plan_max_tills=?,plan_tills=? WHERE destination_id=?`, [value.max_tills, value.tills, destinationId]);
+    });
+  } catch { /* Display only; the pass continues. */ }
+}
+
 function recordOutcome(context: OperationContext, destinationId: string, error: string | null): void {
   try {
     authorizedOperation(context, ["business.settings"], (_database, tx, ports) => {
@@ -315,7 +329,8 @@ export async function serverConnections(context: OperationContext, crypto: Excha
       fingerprint: await keyFingerprint(String(row["public_key"]), crypto), connectedAt: String(row["connected_at"]),
       lastAttemptAt: row["last_attempt_at"] as string | null, lastSuccessAt: row["last_success_at"] as string | null, lastError: row["last_error"] as string | null,
       pending: counts["pending"] ?? 0, unsigned: counts["unsigned"] ?? 0, source: row["source"] === "shop" ? "shop" : "code",
-      service: (row["service_status"] ?? null) as ServerConnection["service"], paidUntil: (row["paid_until"] ?? null) as string | null, graceUntil: (row["grace_until"] ?? null) as string | null }));
+      service: (row["service_status"] ?? null) as ServerConnection["service"], paidUntil: (row["paid_until"] ?? null) as string | null, graceUntil: (row["grace_until"] ?? null) as string | null,
+      maxTills: (row["plan_max_tills"] ?? null) as number | null, tills: (row["plan_tills"] ?? null) as number | null }));
   }
   return result;
 }

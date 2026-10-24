@@ -71,10 +71,10 @@ export function Analytics({ service, sessionId, revision, permissions }: Props):
       <div className="segmented" role="group" aria-label={t("period")}>
         {(["today", "last7", "last30", "thisMonth", "thisYear"] as const).map(id => <button key={id} type="button" aria-pressed={preset === id} onClick={() => choose(id)}>{t(id)}</button>)}
       </div>
-      <label className="field" htmlFor="analytics-from"><span>{t("from")}</span><input id="analytics-from" type="date" value={from} max={to} onChange={event => { setPreset(undefined); setFrom(event.target.value); }}/></label>
-      <label className="field" htmlFor="analytics-to"><span>{t("to")}</span><input id="analytics-to" type="date" value={to} min={from} onChange={event => { setPreset(undefined); setTo(event.target.value); }}/></label>
-      <label className="field" htmlFor="analytics-bucket"><span>{t("groupBy")}</span><select id="analytics-bucket" value={bucket} onChange={event => setBucket(event.target.value as AnalyticsBucket | "auto")}>
-        {(["auto", "hour", "day", "week", "month"] as const).map(id => <option key={id} value={id}>{t(`bucket_${id}`)}</option>)}</select></label>
+      <div className="field"><label htmlFor="analytics-from">{t("from")}</label><input id="analytics-from" type="date" value={from} max={to} aria-describedby="analytics-from-hint" onChange={event => { setPreset(undefined); setFrom(event.target.value); }}/><small className="field-hint" id="analytics-from-hint">{t("hint.periodFrom")}</small></div>
+      <div className="field"><label htmlFor="analytics-to">{t("to")}</label><input id="analytics-to" type="date" value={to} min={from} aria-describedby="analytics-to-hint" onChange={event => { setPreset(undefined); setTo(event.target.value); }}/><small className="field-hint" id="analytics-to-hint">{t("hint.periodTo")}</small></div>
+      <div className="field"><label htmlFor="analytics-bucket">{t("groupBy")}</label><select id="analytics-bucket" value={bucket} aria-describedby="analytics-bucket-hint" onChange={event => setBucket(event.target.value as AnalyticsBucket | "auto")}>
+        {(["auto", "hour", "day", "week", "month"] as const).map(id => <option key={id} value={id}>{t(`bucket_${id}`)}</option>)}</select><small className="field-hint" id="analytics-bucket-hint">{t("hint.groupBy")}</small></div>
     </div>
     {period === undefined ? <p className="notice error" role="alert">{t("invalidPeriod")}</p>
       : <AnalyticsView key={`${period.from}:${period.until}:${bucket}`} service={service} sessionId={sessionId} revision={revision} period={period} bucket={bucket}/>}

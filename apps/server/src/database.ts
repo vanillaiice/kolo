@@ -6,15 +6,19 @@ import { Pool } from "pg";
 /** Typed PostgreSQL schema. Every business table is keyed by `business_id`; repositories always bind it. */
 export interface ServerDatabase {
   shops: { business_id: string; name: string; owner_id: string; enrolled_by: string; enrolled_at: Generated<Date>;
-    status: Generated<"active" | "suspended" | "removed">; status_changed_at: Date | null; remove_after: Date | null; connection_code_id: string | null; paid_until: Date | null };
+    status: Generated<"active" | "suspended" | "removed">; status_changed_at: Date | null; remove_after: Date | null; connection_code_id: string | null; paid_until: Date | null;
+    /** Most active tills the shop may sync (ADR-039); null is unlimited. */
+    max_tills: number | null };
   shop_devices: { business_id: string; device_id: string; public_key: string; label: string; platform: string;
-    authority_allowed: boolean; active: boolean; roster_revision: Generated<string>; updated_at: Generated<Date>; last_seen_at: Date | null };
+    authority_allowed: boolean; active: boolean; roster_revision: Generated<string>; updated_at: Generated<Date>; last_seen_at: Date | null;
+    /** Trusted while the shop was at its till limit: stored, but refused a sync session until a place frees (ADR-039). */
+    held: Generated<boolean> };
   challenges: { challenge_id: string; purpose: "enrollment" | "session"; business_id: string; device_id: string; nonce: string; expires_at: Date; used_at: Date | null };
   sessions: { token_hash: string; business_id: string; device_id: string; created_at: Generated<Date>; expires_at: Date };
   /** Clear rows (`canonical`, `signature`, `event_type`) hold only trust, key and address facts; every other fact is `sealed` ciphertext. */
   journal: { seq: Generated<string>; business_id: string; event_id: string; origin_device_id: string; origin_sequence: string; event_type: string | null;
     event_version: number | null; canonical: string | null; digest: string; signature: string | null; sealed: string | null; subject_device_id: string | null; roster_revision: string | null;
-    received_from: string; received_at: Generated<Date> };
+    received_from: string; received_at: Generated<Date>; vouched: Generated<boolean> };
   journal_conflicts: { id: Generated<string>; business_id: string; event_id: string; digest: string; canonical: string | null; signature: string | null; sealed: string | null; received_from: string; detected_at: Generated<Date> };
   push_batches: { business_id: string; batch_id: string; sender_device_id: string; digest: string; received_at: Generated<Date> };
   offered_batches: { business_id: string; batch_id: string; device_id: string; created_at: Date };
@@ -24,12 +28,14 @@ export interface ServerDatabase {
   connection_codes: { code_id: string; token_hash: string; label: string; created_by: string; created_at: Generated<Date>; expires_at: Date;
     used_at: Date | null; used_by: string | null; cancelled_at: Date | null; included_months: Generated<number>;
     /** Set for an owner-recovery code: it may only attach a restored owner device to this existing shop (ADR-036). */
-    recovery_business_id: string | null };
+    recovery_business_id: string | null;
+    /** The till limit the shop created by this code starts with; null is unlimited (ADR-039). */
+    max_tills: number | null; included_days: Generated<number> };
   /** Short-lived pairing mailboxes (ADR-032); the server holds only signed or encrypted blobs, keyed by a hash of the code. */
   join_sessions: { join_id: string; business_id: string; owner_device_id: string; offer: unknown; request: unknown | null; enrollment: string | null; sealed_password: unknown | null;
     created_at: Generated<Date>; expires_at: Date };
   /** Append-only record of hosted payments; each one moves the shop's paid-until date forward. */
-  payments: { payment_id: string; business_id: string; months: number; amount_minor: string; currency: "XAF"; method: "cash" | "mtn_momo" | "orange_money" | "bank" | "card" | "other";
+  payments: { payment_id: string; business_id: string; months: number; days: Generated<number>; amount_minor: string; currency: "XAF"; method: "cash" | "mtn_momo" | "orange_money" | "bank" | "card" | "other";
     reference: string | null; source: "manual" | "webhook" | "code"; external_id: string | null; recorded_by: string; recorded_at: Generated<Date>; paid_until_before: Date | null; paid_until_after: Date };
   admins: { admin_id: string; username: string; role: "admin" | "viewer"; password_hash: string; totp_secret: string; totp_last_step: string | null;
     active: Generated<boolean>; failed_attempts: Generated<number>; locked_until: Date | null; created_at: Generated<Date>; last_login_at: Date | null };
@@ -233,6 +239,35 @@ export const SERVER_MIGRATIONS: Readonly<Record<string, Migration>> = {
   /** Pull offers a shop's clear trust and key facts before its sealed backlog, so a new till reaches its key grant first. */
   "0007_clear_first": { async up(db) {
     await sql`CREATE INDEX journal_clear_by_shop ON journal (business_id, seq) WHERE sealed IS NULL`.execute(db);
+  } },
+  /**
+   * Till limits and trial days (ADR-039). Existing shops and codes stay unlimited; a held till is stored but may not
+   * sync until a place frees. A code payment may carry days alone; manual and webhook payments stay in months.
+   */
+  "0008_till_limits": { async up(db) {
+    for (const statement of [
+      sql`ALTER TABLE shops ADD COLUMN max_tills integer CHECK (max_tills BETWEEN 1 AND 1000)`,
+      sql`ALTER TABLE shop_devices ADD COLUMN held boolean NOT NULL DEFAULT false, ADD CONSTRAINT shop_devices_held_active CHECK (NOT held OR active)`,
+      sql`ALTER TABLE connection_codes ADD COLUMN max_tills integer CHECK (max_tills BETWEEN 1 AND 1000),
+        ADD COLUMN included_days integer NOT NULL DEFAULT 0 CHECK (included_days BETWEEN 0 AND 90)`,
+      sql`ALTER TABLE payments ADD COLUMN days integer NOT NULL DEFAULT 0 CHECK (days BETWEEN 0 AND 90)`,
+      sql`ALTER TABLE payments DROP CONSTRAINT payments_months_check`,
+      sql`ALTER TABLE payments ADD CONSTRAINT payments_months_check CHECK (months BETWEEN 0 AND 36 AND (months > 0 OR days > 0) AND (days = 0 OR source = 'code'))`,
+    ]) await statement.execute(db);
+  } },
+  /**
+   * Only a fact the server can vouch for holds its origin position (ADR-043): a clear fact (its signature is checked
+   * here) or a sealed fact pushed by its own origin. A sealed fact forwarded by another till can no longer occupy the
+   * origin's next sequence numbers and block the real facts; it is stored beside them and stops being offered once a
+   * vouched fact holds that position.
+   */
+  "0009_vouched_positions": { async up(db) {
+    for (const statement of [
+      sql`ALTER TABLE journal ADD COLUMN vouched boolean GENERATED ALWAYS AS (sealed IS NULL OR received_from = origin_device_id) STORED`,
+      sql`ALTER TABLE journal DROP CONSTRAINT journal_business_id_origin_device_id_origin_sequence_key`,
+      sql`CREATE UNIQUE INDEX journal_vouched_position ON journal (business_id, origin_device_id, origin_sequence) WHERE vouched`,
+      sql`CREATE INDEX journal_position ON journal (business_id, origin_device_id, origin_sequence)`,
+    ]) await statement.execute(db);
   } },
 };
 

@@ -42,8 +42,16 @@ A viewer account (`admin create <name> --role viewer`) can read but not change a
 
 ## Attaching a shop
 
-Issue a code per shop (dashboard, or `… main.js invite --label "Shop" [--months 3]`) and send it to the owner. They
-paste it on their main till; their other tills follow on their own. A code works once and expires (7 days by default).
+Issue a code per shop (dashboard, or `… main.js invite --label "Shop" [--months 3] [--trial-days 7] [--tills 3]`) and
+send it to the owner. They paste it on their main till; their other tills follow on their own. A code works once and
+expires (7 days by default).
+
+**Till limits (ADR-039).** A shop may sync at most `max_tills` tills (unlimited by default, and for every shop that
+existed before the upgrade). A hosted code must name its limit or `unlimited`. A till trusted beyond the limit is held:
+it keeps trading, but its sync is refused with `till_limit_reached` until the owner revokes a till or you raise the
+limit (shop page, or `… main.js till-limit <shop id> <n>|unlimited`), which releases waiting tills oldest first.
+Lowering a limit never stops enrolled tills. Staff are not counted. **Trial days** on a code (0–90) are recorded as a
+`code` payment when the shop attaches, with any paid months; manual payments stay in whole months.
 
 If an owner loses every till, they restore their latest backup on a new device with the printed backup recovery key
 (or the file password), then connect it with an owner-recovery code: the dashboard's Recovery panel on the shop page,

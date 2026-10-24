@@ -1,44 +1,33 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pathToFileURL } from "node:url";
-import { isRendererUrl } from "./renderer-origin.ts";
+import { join } from "node:path";
+import { isRendererUrl, rendererFile, RENDERER_URL } from "./renderer-origin.ts";
 
-const windowsRenderer = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\kolo-install\\resources\\app.asar\\dist\\renderer\\index.html";
-const posixRenderer = "/opt/KOLO/resources/app.asar/dist/renderer/index.html";
+const root = join("/opt", "KOLO", "resources", "app.asar", "dist", "renderer");
 
-test("a short-name Windows path matches however the tilde and drive are encoded", () => {
+test("only the renderer page itself is trusted to call the bridge", () => {
+  assert.equal(isRendererUrl(RENDERER_URL), true);
   for (const url of [
-    "file:///C:/Users/RUNNER~1/AppData/Local/Temp/kolo-install/resources/app.asar/dist/renderer/index.html",
-    "file:///C:/Users/RUNNER%7E1/AppData/Local/Temp/kolo-install/resources/app.asar/dist/renderer/index.html",
-    "file:///c:/users/runner~1/appdata/local/temp/kolo-install/resources/app.asar/dist/renderer/index.html",
-    pathToFileURL(windowsRenderer, { windows: true }).href,
-  ]) assert.equal(isRendererUrl(url, windowsRenderer, true), true, url);
+    undefined, "", "not a url", "about:blank", "https://example.com/index.html", "file:///opt/KOLO/resources/app.asar/dist/renderer/index.html",
+    "kolo-app://renderer/other.html", "kolo-app://renderer/index.html.evil", "kolo-app://renderer/index.html?x=1", "kolo-app://renderer/index.html#/sell",
+    "kolo-app://other/index.html", "kolo-app://user@renderer/index.html", "kolo-app://renderer:8080/index.html", "kolo-app://renderer/assets/../index.html.x",
+  ]) assert.equal(isRendererUrl(url), false, String(url));
 });
 
-test("spaces and non-ASCII names match on both platforms", () => {
-  const windows = "C:\\Users\\Amina Ngo Bé\\AppData\\Local\\Programs\\KOLO\\resources\\app.asar\\dist\\renderer\\index.html";
-  assert.equal(isRendererUrl("file:///C:/Users/Amina%20Ngo%20B%C3%A9/AppData/Local/Programs/KOLO/resources/app.asar/dist/renderer/index.html", windows, true), true);
-  const posix = "/home/amina bé/KOLO/index.html";
-  assert.equal(isRendererUrl(pathToFileURL(posix, { windows: false }).href, posix, false), true);
+test("the protocol serves files inside the renderer directory with their known type", () => {
+  assert.deepEqual(rendererFile(RENDERER_URL, root), { path: join(root, "index.html"), type: "text/html; charset=utf-8" });
+  assert.deepEqual(rendererFile("kolo-app://renderer/assets/index-Ab12.js", root), { path: join(root, "assets", "index-Ab12.js"), type: "text/javascript; charset=utf-8" });
+  assert.deepEqual(rendererFile("kolo-app://renderer/assets/inter%20latin.woff2", root), { path: join(root, "assets", "inter latin.woff2"), type: "font/woff2" });
+  assert.deepEqual(rendererFile("kolo-app://renderer/assets/x/../app.css", root), { path: join(root, "assets", "app.css"), type: "text/css; charset=utf-8" });
+  // URL parsing resolves dot segments before the request arrives: they can never climb above the renderer directory.
+  for (const url of ["kolo-app://renderer/../../outside.js", "kolo-app://renderer/%2e%2e/%2e%2e/outside.js"]) assert.equal(rendererFile(url, root)?.path, join(root, "outside.js"), url);
 });
 
-test("posix paths stay case-sensitive", () => {
-  assert.equal(isRendererUrl(pathToFileURL(posixRenderer, { windows: false }).href, posixRenderer, false), true);
-  assert.equal(isRendererUrl(pathToFileURL(posixRenderer.toUpperCase(), { windows: false }).href, posixRenderer, false), false);
-});
-
-test("other files, schemes, queries, fragments and malformed input are refused", () => {
-  const good = pathToFileURL(posixRenderer, { windows: false }).href;
+test("nothing outside the renderer directory, of an unknown type, or oddly addressed is served", () => {
   for (const url of [
-    undefined, "", "not a url", "about:blank", "https://example.com/index.html",
-    "file:///opt/KOLO/resources/app.asar/dist/renderer/other.html",
-    "file:///opt/KOLO/resources/app.asar/dist/renderer/index.html.evil",
-    `${good}?x=1`, `${good}#/sell`, "file:///opt/KOLO/%2F..%2Findex.html",
-  ]) assert.equal(isRendererUrl(url, posixRenderer, false), false, String(url));
-  assert.equal(isRendererUrl("file:///D:/Users/RUNNER~1/AppData/Local/Temp/kolo-install/resources/app.asar/dist/renderer/index.html", windowsRenderer, true), false);
-});
-
-test("dot segments resolve to the same file only when they really do", () => {
-  assert.equal(isRendererUrl("file:///opt/KOLO/resources/app.asar/dist/x/../renderer/index.html", posixRenderer, false), true);
-  assert.equal(isRendererUrl("file:///opt/KOLO/resources/app.asar/dist/renderer/../index.html", posixRenderer, false), false);
+    "kolo-app://renderer/..%2f..%2fetc%2fpasswd", "kolo-app://renderer/../../app.asar/package.json",
+    "kolo-app://renderer/assets%5c..%5c..%5cx.js", "kolo-app://renderer/a%00.js", "kolo-app://renderer/", "kolo-app://renderer",
+    "kolo-app://renderer/database.sqlite", "kolo-app://renderer/assets/app.js.map", "kolo-app://renderer/index.html?x=1", "kolo-app://other/index.html",
+    "file:///opt/KOLO/resources/app.asar/dist/renderer/index.html", "kolo-app://renderer/%E0%A4%A.js", "not a url",
+  ]) assert.equal(rendererFile(url, root), undefined, url);
 });

@@ -174,6 +174,7 @@ test("join-by-code resumes across commands, pins the server and uses the shared 
     joinEnroll: async (_token, _id, body) => { answer = body; },
     joinPollEnrollment: async () => answer,
     entitlements: async () => ({ status: "unlimited", paid_until: null, grace_until: null }),
+    plan: async () => ({ max_tills: null, tills: 1 }),
     push: async (_token, batch) => {
       pushes++;
       assert.ok(batch.batch.events.every(event => "sealed" in event || ["DEVICE_ENCRYPTION_KEY", "DEVICE_TRUSTED", "SHOP_KEY_GRANTED", "SERVER_ENDPOINT_SET"].includes(event.clear.envelope.event_type)));

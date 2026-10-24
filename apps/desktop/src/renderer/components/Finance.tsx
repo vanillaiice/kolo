@@ -52,8 +52,8 @@ function AccountForm({service,sessionId,account,onReload,onDone}:{service:ShopSe
     if(value!==undefined)onDone(value);
   };
   return <div className="panel form-panel"><h2>{t(account===undefined?"newAccount":"editAccount")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}>
-    <fieldset disabled={action.busy||uncertain}><div className="two-fields"><Field id="account-name" label={t("accountName")} value={name} onChange={setName}/>
-      <Select id="account-kind" label={t("kind")} value={kind} onChange={value=>setKind(value as AccountKind)} options={kinds.map(item=>({value:item,label:t(item)}))}/></div></fieldset>
+    <fieldset disabled={action.busy||uncertain}><div className="two-fields"><Field id="account-name" label={t("accountName")} hint={t("hint.accountName")} value={name} onChange={setName}/>
+      <Select id="account-kind" label={t("kind")} hint={t("hint.accountKind")} value={kind} onChange={value=>setKind(value as AccountKind)} options={kinds.map(item=>({value:item,label:t(item)}))}/></div></fieldset>
     <ErrorText message={action.error} {...(account===undefined?{}:{conflictMessage:"staleVersion" as const})}/><div className="actions"><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):uncertain?t("retry"):t("save")}</button>
       {action.error?.code==="request_conflict"&&onReload!==undefined&&<button type="button" className="secondary" onClick={onReload}>{t("reload")}</button>}
       <button type="button" className="secondary" disabled={action.busy||uncertain} onClick={()=>onDone()}>{t("cancel")}</button></div>
@@ -96,9 +96,9 @@ function MoveMoney({service,sessionId,account,others,onSaved}:{service:ShopServi
   return <div className="panel form-panel"><h2>{t("moveMoney")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={action.busy||uncertain}>
     <div className="segmented" role="radiogroup" aria-label={t("moveMoney")}>{(["in","out","transfer"] as const).filter(item=>item!=="transfer"||others.length>0).map(item=><label key={item} className={direction===item?"selected":""}>
       <input type="radio" name="money-direction" value={item} checked={direction===item} onChange={()=>{setDirection(item);setRequestId(crypto.randomUUID());}}/>{t(item==="in"?"moneyIn":item==="out"?"moneyOut":"transfer")}</label>)}</div>
-    <div className="two-fields"><Field id="money-amount" label={t("amount")} value={amount} onChange={setAmount} numeric/>
-      {direction==="transfer"?<Select id="money-destination" label={t("destination")} value={destination} onChange={setToId} options={others.map(item=>({value:item.id,label:item.name}))}/>:<Field id="money-reason" label={t("reason")} value={reason} onChange={setReason} maxLength={200}/>}</div>
-    {direction==="transfer"&&<Field id="money-reason" label={t("reason")} value={reason} onChange={setReason} maxLength={200}/>}</fieldset>
+    <div className="two-fields"><Field id="money-amount" label={t("amount")} hint={t("hint.movementAmount")} value={amount} onChange={setAmount} numeric/>
+      {direction==="transfer"?<Select id="money-destination" label={t("destination")} hint={t("hint.transferDestination")} value={destination} onChange={setToId} options={others.map(item=>({value:item.id,label:item.name}))}/>:<Field id="money-reason" label={t("reason")} hint={t("hint.movementReason")} value={reason} onChange={setReason} maxLength={200}/>}</div>
+    {direction==="transfer"&&<Field id="money-reason" label={t("reason")} hint={t("hint.movementReason")} value={reason} onChange={setReason} maxLength={200}/>}</fieldset>
     <ErrorText message={action.error}/>{saved&&<p role="status" className="notice success">{t("movementRecorded")}</p>}
     <div className="actions"><button className="primary" type="submit" disabled={action.busy||direction==="transfer"&&destination===""}>{action.busy?t("recording"):uncertain?t("retry"):t("recordMovement")}</button></div>
   </form></div>;
@@ -122,11 +122,11 @@ function CountCash({service,sessionId,revision,account,canCorrect}:{service:Shop
     if(value!==undefined){setComparison(undefined);setCounted("");setReason("");setSaved(true);}
   };
   return <div className="panel form-panel"><h2>{t("countCashTitle")}</h2>
-    <form className="inline-form" onSubmit={event=>{event.preventDefault();void compare();}}><fieldset disabled={action.busy||uncertain}><Field id="cash-counted" label={t("counted")} value={counted} onChange={value=>{setCounted(value);setComparison(undefined);}} numeric/></fieldset>
+    <form className="inline-form" onSubmit={event=>{event.preventDefault();void compare();}}><fieldset disabled={action.busy||uncertain}><Field id="cash-counted" label={t("counted")} hint={t("hint.countedCash")} value={counted} onChange={value=>{setCounted(value);setComparison(undefined);}} numeric/></fieldset>
       <button className="secondary" type="submit" disabled={action.busy||uncertain}>{t("compare")}</button></form>
     {current!==undefined&&<><dl className="facts compare"><dt>{t("expected")}</dt><dd className="money">{formatMoney(current.expectedMinor,language)}</dd><dt>{t("counted")}</dt><dd className="money">{formatMoney(current.countedMinor,language)}</dd>
       <dt>{t("difference")}</dt><dd className={`money ${current.differenceMinor<0?"negative":""}`}>{current.differenceMinor>0?"+":""}{formatMoney(current.differenceMinor,language)}</dd></dl>
-      {current.differenceMinor===0?<p className="notice success">{t("countMatches")}</p>:canCorrect&&<form onSubmit={event=>{event.preventDefault();void correct();}}><fieldset disabled={action.busy||uncertain}><Field id="cash-correction-reason" label={t("reason")} value={reason} onChange={setReason} maxLength={200}/></fieldset>
+      {current.differenceMinor===0?<p className="notice success">{t("countMatches")}</p>:canCorrect&&<form onSubmit={event=>{event.preventDefault();void correct();}}><fieldset disabled={action.busy||uncertain}><Field id="cash-correction-reason" label={t("reason")} hint={t("hint.correctionReason")} value={reason} onChange={setReason} maxLength={200}/></fieldset>
         <div className="actions"><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):uncertain?t("retry"):t("correctBooks")}</button></div></form>}</>}
     <ErrorText message={action.error}/>{saved&&<p role="status" className="notice success">{t("correctionSaved")}</p>}
   </div>;
@@ -163,10 +163,10 @@ function RecordExpense({service,sessionId}:{service:ShopService;sessionId:string
   };
   return <div className="panel form-panel"><h2>{t("newExpense")}</h2><ReadState loading={accounts.loading} error={accounts.error} empty={accounts.data?.items.length===0} emptyText={t("noAccounts")} retry={accounts.retry}>
     <form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={action.busy||uncertain}>
-      <div className="two-fields"><Select id="expense-category" label={t("expenseCategory")} value={category} onChange={value=>setCategory(value as ExpenseCategory)} options={categories.map(item=>({value:item,label:t(item)}))}/>
-        <Select id="expense-account" label={t("account")} value={account} onChange={setAccountId} options={(accounts.data?.items??[]).map(item=>({value:item.id,label:item.name}))}/></div>
-      <div className="two-fields"><Field id="expense-amount" label={t("amount")} value={amount} onChange={setAmount} numeric/><Field id="expense-reference" label={t("expenseReference")} value={reference} onChange={setReference} required={false}/></div>
-      <Field id="expense-description" label={t(category==="OTHER"?"descriptionRequired":"description")} value={description} onChange={setDescription} required={category==="OTHER"} maxLength={200}/></fieldset>
+      <div className="two-fields"><Select id="expense-category" label={t("expenseCategory")} hint={t("hint.expenseCategory")} value={category} onChange={value=>setCategory(value as ExpenseCategory)} options={categories.map(item=>({value:item,label:t(item)}))}/>
+        <Select id="expense-account" label={t("account")} hint={t("hint.paidFromAccount")} value={account} onChange={setAccountId} options={(accounts.data?.items??[]).map(item=>({value:item.id,label:item.name}))}/></div>
+      <div className="two-fields"><Field id="expense-amount" label={t("amount")} hint={t("hint.amountPaid")} value={amount} onChange={setAmount} numeric/><Field id="expense-reference" label={t("expenseReference")} hint={t("hint.documentReference")} value={reference} onChange={setReference} required={false}/></div>
+      <Field id="expense-description" label={t(category==="OTHER"?"descriptionRequired":"description")} hint={t(category==="OTHER"?"hint.expenseDescriptionRequired":"hint.expenseDescription")} value={description} onChange={setDescription} required={category==="OTHER"} maxLength={200}/></fieldset>
     <ErrorText message={action.error}/>{saved&&<p role="status" className="notice success">{t("movementRecorded")}</p>}
     <div className="actions"><button className="primary" type="submit" disabled={action.busy||account===""}>{action.busy?t("recording"):uncertain?t("retry"):t("newExpense")}</button></div></form>
   </ReadState></div>;

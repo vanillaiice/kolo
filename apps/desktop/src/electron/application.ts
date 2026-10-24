@@ -686,6 +686,10 @@ export class DesktopApplication implements ShopService {
   journal(input: unknown): ReturnType<ShopService["journal"]> { return this.#run(() => reports.journal(this.#host, input)); }
   /** Every journal entry matching the filters, for an export (audit.view and data.export); see reports.ts. */
   journalExport(input: unknown): ReturnType<ShopService["journalExport"]> { return this.#run(() => reports.journalExport(this.#host, input)); }
+  /** Owner only: facts held back for review; see reports.ts. */
+  heldBack(input: unknown): ReturnType<ShopService["heldBack"]> { return this.#run(() => reports.heldBack(this.#host, input)); }
+  /** Owner approves one held-back fact; see reports.ts. */
+  reviewHeldBack(input: unknown): ReturnType<ShopService["reviewHeldBack"]> { return this.#run(() => reports.reviewHeldBack(this.#host, input)); }
   /** A spreadsheet export through the save dialog (data.export); see exports.ts. */
   saveCsv(input: unknown): ReturnType<ShopService["saveCsv"]> { return this.#file(host => exports.saveCsv(host, input)); }
   /** A report saved as PDF through the save dialog, under the report's permission; see exports.ts. */

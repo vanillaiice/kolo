@@ -6,9 +6,15 @@ export function AuthPage({ title, description, context, children, aside, onBack,
   readonly title: string; readonly description: string; readonly context: string; readonly children: ReactNode;
   readonly aside: ReactNode; readonly onBack?: () => void; readonly busy?: boolean;
 }): React.JSX.Element {
-  const { t } = useText(), heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => { heading.current?.focus(); }, [title]);
-  return <section className="entry-page" aria-labelledby="entry-title">
+  const { t } = useText(), heading = useRef<HTMLHeadingElement>(null), page = useRef<HTMLElement>(null), shown = useRef(false);
+  useEffect(() => {
+    heading.current?.focus();
+    // A new step settles in like a new screen, without remounting the form below it (its state stays).
+    if (shown.current && !matchMedia("(prefers-reduced-motion: reduce)").matches)
+      page.current?.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 200, easing: "cubic-bezier(.2,.8,.2,1)" });
+    shown.current = true;
+  }, [title]);
+  return <section ref={page} className="entry-page" aria-labelledby="entry-title">
     <div className="entry-heading">{onBack && <button type="button" className="text-button entry-back" disabled={busy} onClick={onBack}><span aria-hidden="true">←</span>{t("back")}</button>}
       <p className="eyebrow">{context}</p><h1 id="entry-title" ref={heading} tabIndex={-1}>{title}</h1><p className="entry-lead">{description}</p>
     </div>

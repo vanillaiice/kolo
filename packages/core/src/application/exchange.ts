@@ -5,6 +5,7 @@ import type { OperationContext, WorkspacePorts } from "../identity/types.ts";
 import { verifiedEvents } from "../exchange/internal-verification.ts";
 import { ExchangeError, type ExchangeCrypto, type VerifiedEvent } from "../exchange/types.ts";
 import type { Queryable, Row } from "../data/database/driver.ts";
+import { releaseRevokedHistory } from "../data/exchange/apply.ts";
 
 /** The immutable domain-prefixed UTF-8 bytes hashed and signed for an event. */
 export function eventSigningMessage(event: SignedJournalEvent["envelope"]): string { return `kolo.event.v2\u0000${canonicalJson(parseJournalEnvelope(event))}`; }
@@ -13,6 +14,18 @@ export function eventSigningMessage(event: SignedJournalEvent["envelope"]): stri
 export function pinnedDevice(tx: Queryable, businessId: string, deviceId: string): Row {
   const row = tx.get(`SELECT t.* FROM trusted_exchange_devices t JOIN devices d ON d.id=t.device_id AND d.business_id=t.business_id
     WHERE t.business_id=? AND t.device_id=? AND t.active=1 AND d.active=1`, [businessId,deviceId]);
+  if (row === undefined) throw new ExchangeError("untrusted_device");
+  return row;
+}
+
+/**
+ * @internal The pinned key of a fact's origin, revoked or not: a revoked key still proves what it signed, and the
+ * acceptance policy (`accepted_through`, owner review) decides what that history may do. Unknown keys are untrusted.
+ * `trusted` is 0 once the owner revoked the key or retired the device.
+ */
+export function originDevice(tx: Queryable, businessId: string, deviceId: string): Row {
+  const row = tx.get(`SELECT t.*,(t.active=1 AND d.active=1) AS trusted FROM trusted_exchange_devices t JOIN devices d ON d.id=t.device_id AND d.business_id=t.business_id
+    WHERE t.business_id=? AND t.device_id=?`, [businessId,deviceId]);
   if (row === undefined) throw new ExchangeError("untrusted_device");
   return row;
 }
@@ -58,14 +71,14 @@ export async function verifyEvent(context: OperationContext, input: unknown, cry
   const event: SignedJournalEvent = { ...parsed.data, envelope: JSON.parse(canonicalJson(envelope)) as typeof envelope };
   const pin = authorizedOperation(context, ["business.settings"], (_database, tx) => {
     if (envelope.business_id !== context.businessId) throw new ExchangeError("scope_mismatch");
-    return pinnedDevice(tx,context.businessId,envelope.origin_device_id);
+    return originDevice(tx,context.businessId,envelope.origin_device_id);
   });
   const key = String(pin["public_key"]), message = eventSigningMessage(event.envelope);
   try {
     if (await crypto.sha256(message) !== event.digest || !await crypto.verify(key,message,event.signature)) throw new Error("invalid proof");
   } catch { throw new ExchangeError("invalid_signature"); }
   authorizedOperation(context, ["business.settings"], (_database, tx) => {
-    const current = pinnedDevice(tx,context.businessId,envelope.origin_device_id);
+    const current = originDevice(tx,context.businessId,envelope.origin_device_id);
     if (current["public_key"] !== key || current["revision"] !== pin["revision"]) throw new ExchangeError("untrusted_device");
   });
   const token: VerifiedEvent = Object.freeze({ eventId: envelope.event_id, digest: event.digest });
@@ -107,10 +120,16 @@ export function setExchangeDeviceActive(context: OperationContext, deviceId: str
   authorizedOperation(context,["business.settings"],(_database,tx,ports,revision) => {
     requireOwner(tx,context);
     if (deviceId === context.deviceId || typeof active !== "boolean") throw new ExchangeError("permission_denied");
+    const was = tx.get(`SELECT active FROM trusted_exchange_devices WHERE business_id=? AND device_id=?`, [context.businessId,deviceId])?.["active"];
     const result = tx.run(`UPDATE trusted_exchange_devices SET active=?,revision=revision+1 WHERE business_id=? AND device_id=?`, [active ? 1 : 0,context.businessId,deviceId]);
     if (result.changes !== 1) throw new ExchangeError("untrusted_device");
     appendLocalAudit(tx,context,ports,revision,active ? "EXCHANGE_DEVICE_REINSTATED" : "EXCHANGE_DEVICE_REVOKED",deviceId);
-    if (pinnedDevice(tx,context.businessId,context.deviceId)["authority_allowed"] === 1) publishDeviceTrust(tx,context,ports,revision,deviceId);
+    const authority = pinnedDevice(tx,context.businessId,context.deviceId)["authority_allowed"] === 1;
+    // Everything this till already holds from the device stays accepted everywhere (ADR-040); later facts need review.
+    // Revoking again never widens the cutoff over facts that arrived while revoked; reinstating releases them.
+    if (!active) acceptHistory(tx,context,ports,revision,deviceId,authority,was === 1);
+    else if (was !== 1) releaseRevokedHistory(tx,context.businessId,deviceId);
+    if (authority) publishDeviceTrust(tx,context,ports,revision,deviceId);
   });
 }
 
@@ -129,7 +148,7 @@ export function publishDeviceRoster(context: OperationContext): number {
     for (const pin of pins) {
       const id = String(pin["device_id"]);
       // An inactive key must first be known before its revocation can be applied elsewhere.
-      if (pin["active"] === 0) { publishDeviceTrust(tx,context,ports,revision,id,true); published++; }
+      if (pin["active"] === 0) { publishDeviceTrust(tx,context,ports,revision,id,true); published++; acceptHistory(tx,context,ports,revision,id,true,false); published++; }
       publishDeviceTrust(tx,context,ports,revision,id); published++;
     }
     return published;
@@ -149,6 +168,20 @@ function publishDeviceTrust(tx: Queryable, context: OperationContext, ports: Wor
     ? { device: { id: deviceId, label: String(pin["label"]), platform, public_key: String(pin["public_key"]) }, authority_allowed: pin["authority_allowed"] === 1, revision: next }
     : { device_id: deviceId, revision: next };
   appendLocalAudit(tx,context,ports,revision,pin["active"] === 1 || forceTrusted ? "DEVICE_TRUSTED" : "DEVICE_REVOKED",deviceId,payload);
+}
+
+/**
+ * @internal Records how far a revoked device's history is accepted: the highest origin sequence this till holds from
+ * it. On an authority device it is also published (`DEVICE_HISTORY_ACCEPTED`) at the roster revision the revocation
+ * that follows will carry, so every till applies the same cutoff. `fresh` false keeps the recorded cutoff.
+ */
+function acceptHistory(tx: Queryable, context: OperationContext, ports: WorkspacePorts, revision: number, deviceId: string, publish: boolean, fresh = true): void {
+  const pin = tx.get(`SELECT roster_revision,accepted_through FROM trusted_exchange_devices WHERE business_id=? AND device_id=?`, [context.businessId,deviceId])!;
+  const held = Number(tx.get(`SELECT coalesce(max(origin_sequence),0) AS through FROM event_journal WHERE business_id=? AND origin_device_id=?`, [context.businessId,deviceId])!["through"]);
+  // A device revoked before cutoffs existed has none recorded: what this till holds from it is what it accepted.
+  const through = fresh || Number(pin["accepted_revision"]) === 0 ? Math.max(held,Number(pin["accepted_through"])) : Number(pin["accepted_through"]), next = Number(pin["roster_revision"]) + 1;
+  tx.run(`UPDATE trusted_exchange_devices SET accepted_through=?,accepted_revision=? WHERE business_id=? AND device_id=?`, [through,publish ? next : Number(pin["roster_revision"]),context.businessId,deviceId]);
+  if (publish) appendLocalAudit(tx,context,ports,revision,"DEVICE_HISTORY_ACCEPTED",deviceId,{ device_id: deviceId, through_sequence: through, revision: next });
 }
 
 /** @internal Owner identity is checked separately from a granted management capability. */

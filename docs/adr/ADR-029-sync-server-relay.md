@@ -4,6 +4,7 @@ Date: 2026-10-11. Status: accepted and implemented (F6a). Extends ADR-018, ADR-0
 replaces ADR-012's server-verified PIN login for the v2 server. Amended by
 [ADR-030](ADR-030-end-to-end-encryption-and-connection-codes.md): connection codes replace the
 enrollment code, sync becomes end-to-end encrypted and F6b server-side application is dropped.
+Amended by [ADR-040](ADR-040-revoked-device-history.md): pull no longer drops facts from revoked origins.
 
 ## Context
 

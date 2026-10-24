@@ -44,7 +44,7 @@ export function requireVersion(stored: { readonly updatedAt: string } | undefine
 
 const SYNC_REFUSALS: Readonly<Record<string, TextKey>> = {
   invalid_connection_code: "invalidConnectionCode", connection_code_used: "connectionCodeUsed", connection_code_expired: "connectionCodeExpired",
-  enrollment_conflict: "enrollmentConflict", shop_suspended: "shopSuspended", shop_removed: "shopRemoved", hosted_service_inactive: "hostedServiceInactive", join_not_found: "joinNotFound", join_conflict: "joinConflict",
+  enrollment_conflict: "enrollmentConflict", shop_suspended: "shopSuspended", shop_removed: "shopRemoved", hosted_service_inactive: "hostedServiceInactive", till_limit_reached: "tillLimitReached", join_not_found: "joinNotFound", join_conflict: "joinConflict",
 };
 /**
  * Localized description of a failed sync-server command. Server refusals keep their meaning; anything retryable is

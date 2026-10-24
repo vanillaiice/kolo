@@ -104,6 +104,11 @@ export const EVENT_PAYLOAD_SCHEMAS = {
     authority_allowed: z.boolean(), revision: positive }),
   /** Owner revocation of a device key; history it originated stays immutable. Higher roster revision wins. */
   DEVICE_REVOKED: z.strictObject({ device_id: uuid, revision: positive }),
+  /**
+   * Sent with a revocation (same roster revision, sealed like business facts): the revoked device's facts up to
+   * `through_sequence` stay accepted everywhere; later ones wait for owner review. Higher revision wins.
+   */
+  DEVICE_HISTORY_ACCEPTED: z.strictObject({ device_id: uuid, through_sequence: whole.nonnegative(), revision: positive }),
   /** A device announces its own X25519 key so the owner can seal shop keys to it. Signed by that device; a key never changes. */
   DEVICE_ENCRYPTION_KEY: z.strictObject({ device_id: uuid, public_key: pem }),
   /** Owner grant of one shop key to one device (ADR-030). The highest epoch seals new facts; older keys still open history. */

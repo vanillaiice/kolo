@@ -176,6 +176,8 @@ export interface CashCountView { readonly expectedMinor: number; readonly counte
 export type { ReportKind, ReportLine, ReportResult, AnalyticsBucket, AnalyticsPoint, AnalyticsCell, AnalyticsProduct, AnalyticsCustomer, AnalyticsResult } from "@kolo/core/application/report-views";
 import type { ReportKind, AnalyticsBucket, ReportResult, AnalyticsResult } from "@kolo/core/application/report-views";
 export type { AuditEntry, AuditFacts, AuditGroup, AuditPage, AuditSubject } from "@kolo/core/application/audit";
+export type { HeldBackFact } from "@kolo/core/application/event-application";
+import type { HeldBackFact } from "@kolo/core/application/event-application";
 import type { AuditEntry, AuditGroup, AuditPage } from "@kolo/core/application/audit";
 import type { ReportDocumentText } from "@kolo/core/domain/report-document";
 /** What remains returnable from a sale or purchase, at the original net prices or costs. */
@@ -240,6 +242,8 @@ export interface ServerView {
   readonly automatic: boolean; readonly shareCode: string | null;
   /** Hosted service as the server last reported it; null on a server not yet reached. Trading never depends on it. */
   readonly service: "unlimited" | "active" | "grace" | "inactive" | null; readonly paidUntil: string | null; readonly graceUntil: string | null;
+  /** The shop's till limit as last reported (ADR-039): `tills` null when unknown; `maxTills` null with a count is unlimited. */
+  readonly maxTills: number | null; readonly tills: number | null;
 }
 /** The server a pasted connection code points to, checked against the fingerprint the code carries. */
 export interface ServerPreview { readonly url: string; readonly fingerprint: string; readonly canEnroll: boolean; readonly hasToken: boolean;
@@ -325,8 +329,8 @@ export interface ShopService {
    * fresh empty local database. Existing files/credentials stay on disk; no old access is granted.
    */
   startNewShop(input: { readonly confirmedName: string }): Promise<Result<{ readonly activated: true }>>;
-  /** Lists other local shops by display name; credentials remain protected. */
-  savedShops(): Promise<Result<readonly { readonly id: string; readonly name: string }[]>>;
+  /** Lists other local shops by display name, most recently used first; credentials remain protected. */
+  savedShops(): Promise<Result<readonly { readonly id: string; readonly name: string; readonly lastUsedAt: string }[]>>;
   /** Selects a saved local database while locked; unlocking still requires its credentials. */
   openSavedShop(input: { readonly id: string }): Promise<Result<{ readonly activated: true }>>;
   /** Offline setup commits a locked shop; a separate credential proof unlocks it. */
@@ -455,6 +459,10 @@ export interface ShopService {
   journal(input: SessionRequest & { readonly from?: string; readonly until?: string; readonly actorId?: string; readonly deviceId?: string; readonly group?: AuditGroup; readonly subjectId?: string; readonly after?: PageQuery["after"]; readonly limit?: number }): Promise<Result<AuditPage>>;
   /** Every journal entry matching the filters (at most 20,000, newest first) for an export; needs audit.view and data.export. */
   journalExport(input: SessionRequest & { readonly from?: string; readonly until?: string; readonly actorId?: string; readonly deviceId?: string; readonly group?: AuditGroup; readonly subjectId?: string }): Promise<Result<{ readonly items: readonly AuditEntry[]; readonly truncated: boolean }>>;
+  /** Owner only: other tills' facts held back for a reason the owner may approve: older staff rights, a revoked till, a raced return (ADR-040–042). */
+  heldBack(input: SessionRequest): Promise<Result<readonly HeldBackFact[]>>;
+  /** Owner approves one exact held-back fact (by its digest); it is then applied under every other check, and may still be refused. */
+  reviewHeldBack(input: SessionRequest & { readonly eventId: string; readonly digest: string }): Promise<Result<{ readonly outcome: string }>>;
   /** Saves a `.csv` export (UTF-8 text) where the member chooses, under data.export; false when the save dialog was cancelled. */
   saveCsv(input: SessionRequest & { readonly filename: string; readonly content: string }): Promise<Result<boolean>>;
   /**

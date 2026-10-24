@@ -97,16 +97,17 @@ export function StaffMemberScreen(): React.JSX.Element {
     {action.notice}
     {editable && <Section><Segmented<RoleChoice> label={t("role")} value={member.customRoleId === undefined ? member.role as StaffRole : `${CUSTOM}${member.customRoleId}`}
       onChange={choice => action.run(() => changeMemberRole(context, userId, choice.startsWith(CUSTOM) ? { customRoleId: choice.slice(CUSTOM.length) } : choice as StaffRole))}
-      options={roleChoices(custom, t, member.customRoleId)} /><Text style={s.muted}>{t("memberPermissionsHelp")}</Text></Section>}
+      options={roleChoices(custom, t, member.customRoleId)} hint={t("memberPermissionsHelp")} /></Section>}
     {GROUPS.map(([label, matches]) => <Section key={label} title={t(label)}>{PERMISSIONS.filter(matches).map(permission => {
       const exception = effective.includes(permission) !== base.includes(permission) ? t("memberException") : undefined;
       return editable
-        ? <Toggle key={permission} label={t(permissionKeys[permission])} value={effective.includes(permission)} onChange={allowed => toggle(permission, allowed)} {...(exception === undefined ? {} : { hint: exception })} />
+        ? <Toggle key={permission} label={t(permissionKeys[permission])} value={effective.includes(permission)} onChange={allowed => toggle(permission, allowed)} hint={exception ?? null} />
         : <Text key={permission} style={[s.body, !effective.includes(permission) && s.muted]}>{effective.includes(permission) ? "✓ " : "– "}{t(permissionKeys[permission])}{exception === undefined ? "" : ` · ${exception}`}</Text>;
     })}</Section>)}
     {editable && <Section title={t("replaceMemberSecret")}>
       <Text style={s.muted}>{t("selectedMemberSecret")}</Text>
-      <Field label={t("newMemberSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("codeRule")} /><Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" />
+      <Field label={t("newMemberSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("codeRule")} />
+      <Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" hint={t("hint.confirmCode")} />
       <Button label={t("replaceMemberSecret")} variant="secondary" busy={action.busy} disabled={secret === ""} onPress={replace} />
     </Section>}
     {editable && <Button label={t(member.active ? "suspend" : "restore")} variant={member.active ? "danger" : "secondary"} onPress={() => member.active ? setSuspending(true) : action.run(() => setMemberActive(context, userId, true))} />}
@@ -136,23 +137,23 @@ export function StaffRolesScreen(): React.JSX.Element {
     <Notice text={canManageStaff ? t("staffRolesHelp") : t("staffReadOnly")} />
     {action.notice}
     <Section><Segmented<RoleChoice> label={t("role")} value={own === undefined && view === undefined ? undefined : choice} onChange={next => { setChoice(next); setRenaming(undefined); }}
-      options={roleChoices(custom, t, own?.id)} />
+      options={roleChoices(custom, t, own?.id)} hint={t("hint.roleChoose")} />
       {view?.customized === true && <Text style={s.muted}>{t("roleCustomized")}</Text>}
       {own !== undefined && <Text style={s.muted}>{`${t("copiedFrom")} ${t(roleKeys[own.baseRole])}`}</Text>}
       {canManageStaff && !drafting && <Button label={t("newRole")} variant="secondary" onPress={() => setDrafting(true)} />}</Section>
     {drafting && <Section title={t("newRole")}>
       <Text style={s.muted}>{t("newRoleHelp")}</Text>
-      <Field label={t("roleName")} value={name} onChange={setName} autoFocus />
-      <Segmented<StaffRole> label={t("copiedFrom")} value={base} onChange={setBase} options={ROLES.map(id => ({ id, label: t(roleKeys[id]) }))} />
+      <Field label={t("roleName")} value={name} onChange={setName} autoFocus hint={t("hint.roleName")} />
+      <Segmented<StaffRole> label={t("copiedFrom")} hint={t("hint.roleBase")} value={base} onChange={setBase} options={ROLES.map(id => ({ id, label: t(roleKeys[id]) }))} />
       <Button label={t("createRole")} onPress={create} /><Button label={t("cancel")} variant="ghost" onPress={() => { setDrafting(false); setName(""); }} />
     </Section>}
     {own !== undefined && editable && <Section>
       {renaming === undefined ? <Button label={t("renameRole")} variant="secondary" onPress={() => setRenaming(own.name)} />
-        : <><Field label={t("roleName")} value={renaming} onChange={setRenaming} />
+        : <><Field label={t("roleName")} value={renaming} onChange={setRenaming} hint={t("hint.roleName")} />
           <Button label={t("save")} onPress={() => action.run(() => updateCustomRole(context, own.id, { name: renaming }), () => setRenaming(undefined))} /></>}
     </Section>}
     {GROUPS.map(([label, matches]) => <Section key={label} title={t(label)}>{PERMISSIONS.filter(matches).map(permission => editable
-      ? <Toggle key={permission} label={t(permissionKeys[permission])} value={held.includes(permission)} onChange={allowed => toggle(permission, allowed)} />
+      ? <Toggle key={permission} label={t(permissionKeys[permission])} value={held.includes(permission)} onChange={allowed => toggle(permission, allowed)} hint={null} />
       : <Text key={permission} style={[s.body, !held.includes(permission) && s.muted]}>{held.includes(permission) ? "✓ " : "– "}{t(permissionKeys[permission])}</Text>)}</Section>)}
     {canManageStaff && view?.customized === true && <Button label={t("resetRole")} variant="secondary" onPress={() => setResetting(true)} />}
     {editable && own !== undefined && <Button label={t("deleteRole")} variant="danger" onPress={() => own.holders > 0 ? action.run(() => { throw new FormProblem("roleInUse"); }) : setDeleting(true)} />}
@@ -180,9 +181,10 @@ export function StaffNewScreen(): React.JSX.Element {
   }, id => { setSecret(""); setConfirmation(""); nav.replace("staffMember", { userId: id }); }); };
   return <Screen title={t("addMember")} onBack={nav.back} footer={<>{action.notice}<Button label={t("addMember")} busy={action.busy} onPress={save} /></>}>
     <Section>
-      <Field label={t("newMemberName")} value={name} onChange={setName} autoFocus />
-      <Segmented<RoleChoice> label={t("role")} value={role} onChange={setRole} options={roleChoices(custom, t)} />
-      <Field label={t("memberSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("codeRule")} /><Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" />
+      <Field label={t("newMemberName")} value={name} onChange={setName} autoFocus hint={t("hint.memberName")} />
+      <Segmented<RoleChoice> label={t("role")} hint={t("hint.memberRole")} value={role} onChange={setRole} options={roleChoices(custom, t)} />
+      <Field label={t("memberSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("codeRule")} />
+      <Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" hint={t("hint.confirmCode")} />
     </Section>
   </Screen>;
 }

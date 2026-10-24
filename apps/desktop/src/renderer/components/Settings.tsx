@@ -1,7 +1,7 @@
 import type { ShopService, UpdateService, UpdateView } from "../../shared/service.ts";
 import type { Language } from "../text.ts";
 import { useState } from "react";
-import { ErrorText, Field, useAction, useRead, useText } from "./ui.tsx";
+import { Check, ErrorText, Field, useAction, useRead, useText } from "./ui.tsx";
 import { LegalLinks } from "./Legal.tsx";
 import { UpdatesPanel } from "./Updates.tsx";
 import { SystemNotificationsPanel, TaxPanel, TermsPanel } from "./ShopSettings.tsx";
@@ -51,9 +51,8 @@ export function Settings({ service, sessionId, canChangeFiles, canShopSettings, 
       {canShopSettings && <TermsPanel service={service} sessionId={sessionId}/>}
       <SystemNotificationsPanel/>
       <div className="panel"><h2>{t("signIn")}</h2>
-        <label className="check" htmlFor="remember-session"><input id="remember-session" type="checkbox" checked={preferences.data?.rememberSession ?? false}
-          disabled={action.busy || preferences.data === undefined} onChange={event => remember(event.target.checked)}/>{t("rememberSession")}</label>
-        <p className="hint">{t("rememberSessionHelp")}</p><ErrorText message={action.error ?? preferences.error}/>
+        <Check id="remember-session" label={t("rememberSession")} hint={t("rememberSessionHelp")} checked={preferences.data?.rememberSession ?? false}
+          disabled={action.busy || preferences.data === undefined} onChange={remember}/><ErrorText message={action.error ?? preferences.error}/>
       </div>
       {usage.data !== undefined && <div className="panel"><h2>{t("photoStorage")}</h2>
         <p className="hint photo-usage">{usage.data.photos} {t(usage.data.photos === 1 ? "photoStored" : "photosStored")} · {size(usage.data.bytes)} / {size(usage.data.limitBytes)}</p>
@@ -89,8 +88,8 @@ function ResetPanel({ service, sessionId }: { readonly service: ShopService; rea
   return <div className="panel"><h2>{t("resetComputer")}</h2>
     <p className="notice error">{t("resetComputerWarning").replace("{shop}", shop)}</p><p className="hint">{t("resetComputerBackupFirst")}</p>
     <form onSubmit={event => { event.preventDefault(); if (ready) setConfirming(true); }}><fieldset disabled={action.busy}>
-      <Field id="reset-name" label={t("resetTypeName").replace("{shop}", shop)} value={name} onChange={setName}/>
-      <Field id="reset-secret" label={t("resetOwnerCode")} value={secret} onChange={setSecret} secret/>
+      <Field id="reset-name" label={t("resetTypeName").replace("{shop}", shop)} hint={t("hint.resetTyped")} value={name} onChange={setName}/>
+      <Field id="reset-secret" label={t("resetOwnerCode")} hint={t("hint.resetSecret")} value={secret} onChange={setSecret} secret/>
     </fieldset>
     {!confirming ? <div className="actions"><button className="secondary" type="submit" disabled={!ready || action.busy}>{t("resetComputer")}</button></div>
       : <div className="actions"><button className="primary danger-action" type="button" disabled={action.busy}

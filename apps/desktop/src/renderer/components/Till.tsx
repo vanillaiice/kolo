@@ -10,7 +10,7 @@ import type { Permission } from "@kolo/core/identity/permissions";
 import type { CheckoutRequest, CustomerView, ProductView, ShopService } from "../../shared/service.ts";
 import { ProductThumb } from "./Photo.tsx";
 import { Balance } from "./Customers.tsx";
-import { call, ErrorText, Field, Pager, ReadState, Select, useAction, useRead, useText } from "./ui.tsx";
+import { call, Check, ErrorText, Field, Pager, ReadState, Select, useAction, useRead, useText } from "./ui.tsx";
 
 type DraftLine={readonly product:ProductView;readonly quantityText:string};
 /** A payment row; the first row without typed text takes whatever is left to pay. */
@@ -90,11 +90,11 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
     });
   };
   return <section className="workspace-content till-content">
-    <div className="section-heading"><div><p className="eyebrow">{t("till")}</p><h1>{t("tillHelp")}</h1></div><span className="pill"><span className="status-dot"/>{t("offline")}</span></div>
+    <div className="section-heading"><div><p className="eyebrow">{t("till")}</p><h1>{t("tillHelp")}</h1></div></div>
     <div className="till-layout"><div className="catalogue-column">
       <form className="scanner-form" onSubmit={event=>{event.preventDefault();if(!frozen)void scan();}}><label className="sr-only" htmlFor="barcode-scan">{t("scanner")}</label><input id="barcode-scan" ref={scanner} value={barcode} placeholder={t("scanner")} autoComplete="off" disabled={frozen} maxLength={256} onChange={event=>setBarcode(event.target.value)}/><button className="secondary" disabled={frozen||barcode.trim()===""} type="submit" aria-label={t("scan")}><span aria-hidden="true">↵</span></button></form>
-      <div className="two-fields"><Field id="till-search" label={t("search")} value={term} required={false} disabled={frozen} onChange={value=>{setTerm(value);setCursor(undefined);}}/>
-        <Select id="till-category" label={t("category")} value={categoryId} disabled={frozen} onChange={value=>{setCategoryId(value);setCursor(undefined);}}
+      <div className="two-fields"><Field id="till-search" label={t("search")} hint={t("hint.tillSearch")} value={term} required={false} disabled={frozen} onChange={value=>{setTerm(value);setCursor(undefined);}}/>
+        <Select id="till-category" label={t("category")} hint={t("hint.tillCategory")} value={categoryId} disabled={frozen} onChange={value=>{setCategoryId(value);setCursor(undefined);}}
           options={[{value:"",label:t("allCategories")},...(groups.data?.items??[]).map(item=>({value:item.id,label:item.name}))]}/></div>
       <ReadState loading={products.loading} error={products.error} empty={products.data?.items.length===0} emptyText={t(term===""&&categoryId===""?"noProducts":"noResults")} retry={products.retry}>
         <div className="product-grid">{products.data?.items.map(product=><button key={product.id} className="product-tile" disabled={frozen} onClick={()=>add(product)}>
@@ -107,16 +107,16 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
       {cart.length===0?<div className="empty cart-empty"><span aria-hidden="true">+</span><h3>{t("emptyCart")}</h3><p>{t("emptyCartHelp")}</p></div>:<div className="cart-lines">{cart.map(line=>{
         let amount:string="—";try{amount=formatMoney(lineTotal({quantity:quantityEntry(line.quantityText,line.product.divisible),unitPriceMinor:line.product.sellingPriceMinor}),language);}catch{/* The editable field keeps incomplete input until corrected. */}
         return <div className="cart-line" key={line.product.id}><div className="line-heading"><strong>{line.product.name}</strong><button className="icon-button" disabled={frozen} aria-label={`${t("remove")}: ${line.product.name}`} onClick={()=>edit(cart.filter(item=>item.product.id!==line.product.id))}>×</button></div>
-          <div className="line-details"><Field id={`quantity-${line.product.id}`} label={t("quantity")} value={line.quantityText} numeric disabled={frozen} onChange={value=>edit(cart.map(item=>item.product.id===line.product.id?{...item,quantityText:value}:item))}/><strong className="money">{amount}</strong></div>
+          <div className="line-details"><Field id={`quantity-${line.product.id}`} label={t("quantity")} hint={null} value={line.quantityText} numeric disabled={frozen} onChange={value=>edit(cart.map(item=>item.product.id===line.product.id?{...item,quantityText:value}:item))}/><strong className="money">{amount}</strong></div>
         </div>;
       })}</div>}
       <div className="cart-settlement">{canDiscount&&cart.length>0&&<><div className="settlement-line"><span>{t("subtotal")}</span><strong>{formatMoney(subtotal,language)}</strong></div>
-        <Field id="sale-discount" label={t("discount")} value={discount} numeric required={false} disabled={frozen} onChange={value=>{pending.current=undefined;setDiscount(value);action.setError(undefined);}}/></>}<div className="total-line"><span>{t("total")}</span><strong>{valid?formatMoney(total,language):"—"}</strong></div>
+        <Field id="sale-discount" label={t("discount")} hint={t("hint.discount")} value={discount} numeric required={false} disabled={frozen} onChange={value=>{pending.current=undefined;setDiscount(value);action.setError(undefined);}}/></>}<div className="total-line"><span>{t("total")}</span><strong>{valid?formatMoney(total,language):"—"}</strong></div>
         {canCustomers&&<CustomerChoice service={service} sessionId={sessionId} revision={revision} value={customer} disabled={frozen} onChange={value=>{pending.current=undefined;setCustomer(value);setApplyCredit(true);setKeepChange(false);action.setError(undefined);}}/>}
         {canCredit&&canCustomers&&<div className="actions"><button type="button" className={onDebt?"secondary":"primary"} aria-pressed={!onDebt} disabled={frozen} onClick={()=>changeSettlement(false)}>{t("payNow")}</button><button type="button" id="sale-on-debt" className={onDebt?"primary":"secondary"} aria-pressed={onDebt} disabled={frozen} onClick={()=>changeSettlement(true)}>{t("setAsDebt")}</button></div>}
-        {availableCredit>0&&!onDebt&&<label className="check"><input type="checkbox" checked={applyCredit} disabled={frozen} onChange={event=>{pending.current=undefined;setApplyCredit(event.target.checked);action.setError(undefined);}}/>{t("useCustomerCredit")} · {formatMoney(availableCredit,language)}</label>}
+        {availableCredit>0&&!onDebt&&<Check id="use-customer-credit" label={`${t("useCustomerCredit")} · ${formatMoney(availableCredit,language)}`} hint={t("hint.useCustomerCredit")} checked={applyCredit} disabled={frozen} onChange={checked=>{pending.current=undefined;setApplyCredit(checked);action.setError(undefined);}}/>}
         <ReadState loading={accounts.loading} error={accounts.error} empty={accounts.data?.items.length===0} emptyText={t("noAccounts")} retry={accounts.retry}>
-          {onDebt?<fieldset disabled={frozen}><Field id="debt-received" label={t("moneyReceived")} value={rows[0]?.amountText??"0"} numeric onChange={value=>editRows([{...rows[0]!,amountText:value}])}/><Select id="debt-account" label={t("account")} value={accountOf(rows[0]?.accountId??"")?.id??""} onChange={value=>editRows([{...rows[0]!,accountId:value}])} options={(accounts.data?.items??[]).map(account=>({value:account.id,label:account.name}))}/><p className="hint">{t("debtReceivedHelp")}</p></fieldset>:<fieldset className="payment-rows" disabled={frozen}><legend>{t("payments")}</legend>{rows.map((row,index)=><div className="payment-row" key={row.key}>
+          {onDebt?<fieldset disabled={frozen}><Field id="debt-received" label={t("moneyReceived")} hint={t("debtReceivedHelp")} value={rows[0]?.amountText??"0"} numeric onChange={value=>editRows([{...rows[0]!,amountText:value}])}/><Select id="debt-account" label={t("account")} hint={t("hint.collectAccount")} value={accountOf(rows[0]?.accountId??"")?.id??""} onChange={value=>editRows([{...rows[0]!,accountId:value}])} options={(accounts.data?.items??[]).map(account=>({value:account.id,label:account.name}))}/></fieldset>:<fieldset className="payment-rows" disabled={frozen}><legend>{t("payments")}</legend>{rows.map((row,index)=><div className="payment-row" key={row.key}>
             <label className="field"><span className="sr-only">{t("account")}</span><select aria-label={t("account")} value={accountOf(row.accountId)?.id??""} onChange={event=>editRows(rows.map(item=>item.key===row.key?{...item,accountId:event.target.value}:item))}>
               {accounts.data?.items.map(account=><option key={account.id} value={account.id} disabled={rows.some(item=>item.key!==row.key&&accountOf(item.accountId)?.id===account.id)}>{account.name}</option>)}</select></label>
             <label className="field"><span className="sr-only">{t("amount")}</span><input aria-label={`${t("amount")} · ${accountOf(row.accountId)?.name??""}`} inputMode="decimal" autoComplete="off" value={row.amountText??(valid?String(amounts[index]??0):"")} onChange={event=>editRows(rows.map(item=>item.key===row.key?{...item,amountText:event.target.value}:item))}/></label>
@@ -130,8 +130,8 @@ export function Till({service,sessionId,revision,permissions,onReceipt}:{readonl
           {accountImpact.debtAddedMinor>0&&<div className="settlement-line negative"><span>{t("newDebt")}</span><strong>{formatMoney(accountImpact.debtAddedMinor,language)}</strong></div>}
           <div className="settlement-line"><span>{t("balanceAfterSale")}</span><Balance value={accountImpact.balanceAfterMinor}/></div>
         </>:valid&&remaining!==0&&<div className="settlement-line"><span>{t("remaining")}</span><strong>{formatMoney(remaining,language)}</strong></div>}
-        {cashPaid>0&&<Field id="cash-received" label={t("received")} value={received} numeric required={false} disabled={frozen} onChange={value=>{pending.current=undefined;setReceived(value);}}/>}
-        {canKeepChange&&<label className="check"><input id="keep-change" type="checkbox" checked={keepChange} disabled={frozen} onChange={event=>{pending.current=undefined;setKeepChange(event.target.checked);action.setError(undefined);}}/>{t("keepChangeAsCredit")}</label>}
+        {cashPaid>0&&<Field id="cash-received" label={t("received")} hint={t("hint.cashReceived")} value={received} numeric required={false} disabled={frozen} onChange={value=>{pending.current=undefined;setReceived(value);}}/>}
+        {canKeepChange&&<Check id="keep-change" label={t("keepChangeAsCredit")} hint={t("hint.keepChange")} checked={keepChange} disabled={frozen} onChange={checked=>{pending.current=undefined;setKeepChange(checked);action.setError(undefined);}}/>}
         {keptChangeMinor>0?<div className="settlement-line kept-change-line"><span>{t("changeKept")}</span><strong>{formatMoney(keptChangeMinor,language)}</strong></div>
           :valid&&tendered!==undefined&&tendered>=cashPaid&&<div className="settlement-line change-line"><span>{t("change")}</span><strong>{formatMoney(tendered-cashPaid,language)}</strong></div>}
         {blocker!==undefined&&cart.length>0&&<p className="hint negative">{t(blocker)}</p>}<ErrorText message={action.error}/>
@@ -149,6 +149,6 @@ function CustomerChoice({service,sessionId,revision,value,disabled,onChange}:{se
   if(value!==undefined)return <div className="customer-choice"><div><span className="eyebrow">{t("customer")}</span><strong>{value.name}</strong>
     <small>{t("balance")}: <Balance value={value.outstandingMinor}/> · {t("creditLimitLabel")}: {value.creditLimitMinor===undefined?t("noLimit"):formatMoney(value.creditLimitMinor,language)}</small></div>
     <button className="icon-button" disabled={disabled} aria-label={t("clearCustomer")} onClick={()=>onChange(undefined)}>×</button></div>;
-  return <div className="customer-search"><Field id="customer-search" label={t("findCustomer")} value={term} required={false} disabled={disabled} onChange={setTerm}/>
+  return <div className="customer-search"><Field id="customer-search" label={t("findCustomer")} hint={t("hint.customerSearch")} value={term} required={false} disabled={disabled} onChange={setTerm}/>
     {(found.data?.items.length??0)>0&&<ul className="customer-results">{found.data!.items.map(item=><li key={item.id}><button type="button" disabled={disabled} onClick={()=>{onChange(item);setTerm("");}}><strong>{item.name}</strong><small>{item.phone??""} {formatMoney(item.outstandingMinor,language)}</small></button></li>)}</ul>}</div>;
 }

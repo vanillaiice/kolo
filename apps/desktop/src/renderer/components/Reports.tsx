@@ -31,10 +31,10 @@ export function Reports({ service, sessionId, revision, permissions }: Props): R
   return <section className="workspace-content">
     <div className="section-heading"><div><p className="eyebrow">{t("reports")}</p><h1>{t("reportsHelp")}</h1></div></div>
     <div className="report-controls panel">
-      <label className="field" htmlFor="report-kind"><span>{t("report")}</span><select id="report-kind" value={kind} onChange={event=>setKind(event.target.value as ReportKind)}>
-        {allowed.map(([id])=><option key={id} value={id}>{t(`rep_${id}` as TextKey)}</option>)}</select></label>
-      {dated&&<><label className="field" htmlFor="report-from"><span>{t("from")}</span><input id="report-from" type="date" value={from} max={to} onChange={event=>setFrom(event.target.value)}/></label>
-        <label className="field" htmlFor="report-to"><span>{t("to")}</span><input id="report-to" type="date" value={to} min={from} onChange={event=>setTo(event.target.value)}/></label>
+      <div className="field"><label htmlFor="report-kind">{t("report")}</label><select id="report-kind" value={kind} aria-describedby="report-kind-hint" onChange={event=>setKind(event.target.value as ReportKind)}>
+        {allowed.map(([id])=><option key={id} value={id}>{t(`rep_${id}` as TextKey)}</option>)}</select><small className="field-hint" id="report-kind-hint">{t("hint.reportKind")}</small></div>
+      {dated&&<><div className="field"><label htmlFor="report-from">{t("from")}</label><input id="report-from" type="date" value={from} max={to} aria-describedby="report-from-hint" onChange={event=>setFrom(event.target.value)}/><small className="field-hint" id="report-from-hint">{t("hint.periodFrom")}</small></div>
+        <div className="field"><label htmlFor="report-to">{t("to")}</label><input id="report-to" type="date" value={to} min={from} aria-describedby="report-to-hint" onChange={event=>setTo(event.target.value)}/><small className="field-hint" id="report-to-hint">{t("hint.periodTo")}</small></div>
         <div className="actions presets"><button className="secondary" onClick={()=>preset(new Date())}>{t("today")}</button>
           <button className="secondary" onClick={()=>{const start=new Date();start.setDate(start.getDate()-6);preset(start);}}>{t("last7")}</button>
           <button className="secondary" onClick={()=>{const start=new Date();start.setDate(1);preset(start);}}>{t("thisMonth")}</button></div></>}

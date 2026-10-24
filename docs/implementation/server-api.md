@@ -28,6 +28,7 @@ real PostgreSQL and real SQLite client replicas on an ephemeral listener.
 | `GET /api/v2/sync/bootstrap` | Token | Owner-signed `DEVICE_TRUSTED`/`DEVICE_REVOKED` facts |
 | `GET /api/v2/sync/status` | Token | This device's pending/delivered counts, shop conflicts and active devices |
 | `GET /api/v2/entitlements` | Token | `{edition, status: unlimited\|active\|grace\|inactive, paid_until, grace_until}` ([ADR-031](../adr/ADR-031-hosted-subscriptions-manual-billing.md)); available even while sync is paused |
+| `GET /api/v2/plan` | Token | `{max_tills, tills}` ([ADR-039](../adr/ADR-039-till-limits-and-trial-days.md)): the shop's till limit (null unlimited) and the tills holding a place; also while sync is paused. A till trusted beyond the limit is held and refused a session with 403 `till_limit_reached`; `POST /join` and its enrollment are refused the same way while the shop is full |
 | `POST /internal/billing/webhooks/generic` | `x-kolo-signature: t=<unix>,v1=<HMAC-SHA256("<t>.<raw body>")>`, hosted with `KOLO_BILLING_WEBHOOK_SECRET` only | `{event_id, shop_id, months, amount_minor, method, reference?}` → 201 recorded, 200 `duplicate` for a repeated event; 401 `invalid_signature`/`stale_signature`, 409 `payment_conflict` |
 
 On a hosted server, push, pull, receipts and bootstrap answer 403 `hosted_service_inactive` once a shop's paid period
@@ -50,8 +51,8 @@ defaults to `http://127.0.0.1:<PORT>` on loopback, required otherwise to issue c
 per request with method, path, status and time, never bodies or headers; `silent` disables). `KOLO_ENROLLMENT_CODE` is no
 longer read. The server prints its fingerprint at start.
 
-Commands (`node apps/server/dist/main.js <command>`): `migrate [--discard-plaintext]`, `invite --label <shop> [--days 7] [--months 0]`
-(prints the code and a terminal QR code), `invite --recovery-shop <shop id> [--days 7]` (an owner-recovery code, below), `admin create <username> [--role admin|viewer] [--password-stdin]` (prints a
+Commands (`node apps/server/dist/main.js <command>`): `migrate [--discard-plaintext]`, `invite --label <shop> [--days 7] [--months 0] [--trial-days 0] [--tills <n>|unlimited]`
+(prints the code and a terminal QR code; on a hosted server `--tills` is required, ADR-039), `till-limit <shop id> <n>|unlimited` (raising it releases waiting tills), `invite --recovery-shop <shop id> [--days 7]` (an owner-recovery code, below), `admin create <username> [--role admin|viewer] [--password-stdin]` (prints a
 generated password unless one is piped, and the authenticator link and QR code), `admin reset-totp <username>`, `purge`.
 
 ### Join by code (ADR-032)

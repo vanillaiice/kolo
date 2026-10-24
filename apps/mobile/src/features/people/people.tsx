@@ -28,7 +28,7 @@ function PeopleList({ kind }: { readonly kind: Kind }): React.JSX.Element {
     actions={canManage ? <Button label={t("new")} variant="ghost" onPress={() => nav.push("personForm", { kind })} /> : undefined}>
     <PagedList<{ id: string; name: string; phone?: string | undefined; active: boolean; outstandingMinor: number }> revision={revision} identify={item => item.id} deps={[archived, kind]}
       load={page => kind === "customer" ? customers(context, { ...page, includeInactive: archived }) : suppliers(context, { ...page, includeInactive: archived })}
-      header={<Toggle label={t("showArchived")} value={archived} onChange={setArchived} />} empty={{ title: t(kind === "customer" ? "noCustomers" : "noSuppliers") }}
+      header={<Toggle label={t("showArchived")} value={archived} onChange={setArchived} hint={t("hint.showArchived")} />} empty={{ title: t(kind === "customer" ? "noCustomers" : "noSuppliers") }}
       render={item => <ListRow title={item.name} subtitle={item.phone} tag={item.active ? undefined : t("archived")}
         trailing={item.outstandingMinor === 0 ? undefined : formatMoney(item.outstandingMinor)} trailingTone={item.outstandingMinor > 0 ? "danger" : "muted"}
         onPress={() => nav.push("person", { kind, id: item.id })} />} />
@@ -93,8 +93,9 @@ export function PersonFormScreen(): React.JSX.Element {
     return loaded.id;
   }, saved => { request.renew(); if (loaded === undefined) nav.replace("person", { kind, id: saved }); else nav.leave(); });
   return <Screen title={loaded === undefined ? t(kind === "customer" ? "newCustomer" : "newSupplier") : t("edit")} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={save} /></>}>
-    <Section><Field label={t("name")} value={name} onChange={setName} autoFocus /><Field label={t("phone")} value={phone} onChange={setPhone} kind="phone" />
-      {kind === "customer" && <Field label={t("limit")} value={limit} onChange={setLimit} kind="money" />}</Section>
+    <Section><Field label={t("name")} value={name} onChange={setName} autoFocus hint={t("hint.personName")} />
+      <Field label={t("phone")} value={phone} onChange={setPhone} kind="phone" hint={t("hint.personPhone")} />
+      {kind === "customer" && <Field label={t("limit")} value={limit} onChange={setLimit} kind="money" hint={t("hint.creditLimit")} />}</Section>
   </Screen>;
 }
 
@@ -114,7 +115,8 @@ export function SettleScreen(): React.JSX.Element {
   return <Screen title={t(kind === "customer" ? "receive" : "paySupplier")} eyebrow={item?.name} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={save} /></>}>
     {item !== undefined && <Section><Facts items={[[kind === "customer" ? t("customerOwes") : t("shopOwes"), formatMoney(item.outstandingMinor), "strong"]]} /></Section>}
     <Section>
-      <Picker<Account> label={t("account")} value={account} onChange={setAccount} load={page => paymentAccounts(context, page)} revision={revision} />
+      <Picker<Account> label={t("account")} value={account} onChange={setAccount} load={page => paymentAccounts(context, page)} revision={revision}
+        hint={t(kind === "customer" ? "hint.collectAccount" : "hint.paidFromAccount")} />
       <Field label={t("amount")} value={amount} onChange={setAmount} kind="money" hint={item !== undefined && item.outstandingMinor > 0 ? t("amountDefaultsRemaining", { amount: formatMoney(item.outstandingMinor) }) : t("overpaymentHelp")} />
     </Section>
   </Screen>;

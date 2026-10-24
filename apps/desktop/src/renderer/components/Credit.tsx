@@ -29,7 +29,7 @@ export function CreditTermsPanel({ service, sessionId, revision, party, partyId,
           {shown.oldestDueAt !== undefined && <><dt>{t("oldestDue")}</dt><dd>{date(shown.oldestDueAt)}</dd></>}
           {shown.nextDueAt !== undefined && <><dt>{t("nextDue")}</dt><dd>{date(shown.nextDueAt)}</dd></>}</>}</dl>
       {canManage && (editing ? <form onSubmit={event => { event.preventDefault(); const value = daysEntry(days); if (value === undefined) action.setError({ code: "termsInput" }); else save(value); }}>
-        <fieldset disabled={action.busy}><Field id={`${party.toLowerCase()}-terms`} label={t("ownTerms")} value={days} onChange={setDays} numeric maxLength={4}/></fieldset>
+        <fieldset disabled={action.busy}><Field id={`${party.toLowerCase()}-terms`} label={t("ownTerms")} hint={t("hint.termsDays")} value={days} onChange={setDays} numeric maxLength={4}/></fieldset>
         <ErrorText message={action.error} conflictMessage="staleVersion"/>
         <div className="actions"><button className="primary" type="submit" disabled={action.busy}>{t("save")}</button>
           {shown.source === "party" && <button type="button" className="secondary" disabled={action.busy} onClick={() => save(null)}>{t("useShopTerms")}</button>}

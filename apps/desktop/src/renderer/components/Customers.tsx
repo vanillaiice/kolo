@@ -34,7 +34,7 @@ function CustomerList({service,sessionId,revision,onOpen}:{service:ShopService;s
   const {t}=useText();
   const [term,setTerm]=useState(""),[archived,setArchived]=useState(false),[cursor,setCursor]=useState<{ after: Cursor; revision: number }>();
   const list=useRead(()=>service.listCustomers({sessionId,term,includeInactive:archived,...(cursor?.revision===revision?{after:cursor.after}:{})}),[service,sessionId,term,archived,cursor,revision]);
-  return <div className="panel"><Field id="customer-list-search" label={t("findCustomer")} value={term} required={false} onChange={value=>{setTerm(value);setCursor(undefined);}}/>
+  return <div className="panel"><Field id="customer-list-search" label={t("findCustomer")} hint={t("hint.customerSearch")} value={term} required={false} onChange={value=>{setTerm(value);setCursor(undefined);}}/>
     <label className="check"><input type="checkbox" checked={archived} onChange={event=>{setArchived(event.target.checked);setCursor(undefined);}}/>{t("showArchived")}</label>
     <ReadState loading={list.loading} error={list.error} empty={list.data?.items.length===0} emptyText={t("noCustomers")} retry={list.retry}>
       <div className="table-wrap"><table><thead><tr><th>{t("customerName")}</th><th>{t("phoneLabel")}</th><th>{t("balance")}</th></tr></thead><tbody>
@@ -88,10 +88,10 @@ function CustomerForm({service,sessionId,customer,onReload,onDone}:{service:Shop
     if(value!==undefined)onDone(value);
   };
   return <div className="panel form-panel"><h2>{t(customer===undefined?"newCustomer":"editCustomer")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}>
-    <fieldset disabled={action.busy||uncertain}><div className="two-fields"><Field id="customer-name" label={t("customerName")} value={name} onChange={setName}/><Field id="customer-phone" label={t("phone")} value={phone} onChange={setPhone} required={false} maxLength={40}/></div>
-      <Field id="customer-address" label={t("address")} value={address} onChange={setAddress} required={false} maxLength={200}/>
-      <Field id="customer-notes" label={t("notes")} value={notes} onChange={setNotes} required={false} maxLength={500}/>
-      <Field id="customer-limit" label={t("creditLimit")} value={limit} onChange={setLimit} numeric required={false}/><p className="hint">{t("creditLimitHelp")}</p>
+    <fieldset disabled={action.busy||uncertain}><div className="two-fields"><Field id="customer-name" label={t("customerName")} hint={t("hint.personName")} value={name} onChange={setName}/><Field id="customer-phone" label={t("phone")} hint={t("hint.personPhone")} value={phone} onChange={setPhone} required={false} maxLength={40}/></div>
+      <Field id="customer-address" label={t("address")} hint={t("hint.address")} value={address} onChange={setAddress} required={false} maxLength={200}/>
+      <Field id="customer-notes" label={t("notes")} hint={t("hint.notes")} value={notes} onChange={setNotes} required={false} maxLength={500}/>
+      <Field id="customer-limit" label={t("creditLimit")} hint={t("creditLimitHelp")} value={limit} onChange={setLimit} numeric required={false}/>
     </fieldset>
     <ErrorText message={action.error} {...(customer===undefined?{}:{conflictMessage:"staleVersion" as const})}/><div className="actions"><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):uncertain?t("retry"):t("save")}</button>
       {action.error?.code==="request_conflict"&&onReload!==undefined&&<button type="button" className="secondary" onClick={onReload}>{t("reload")}</button>}
@@ -117,9 +117,9 @@ function TakePayment({service,sessionId,customer,onSaved}:{service:ShopService;s
   };
   return <div className="panel form-panel"><h2>{t("takePayment")}</h2><ReadState loading={accounts.loading} error={accounts.error} empty={accounts.data?.items.length===0} emptyText={t("noAccounts")} retry={accounts.retry}>
     <form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={action.busy||uncertain}>
-      <div className="two-fields"><Field id="payment-amount" label={t("amount")} value={amount} onChange={setAmount} numeric/>
-        <Select id="payment-account" label={t("account")} value={account} onChange={setAccountId} options={(accounts.data?.items??[]).map(item=>({value:item.id,label:item.name}))}/></div>
-      <Field id="payment-note" label={t("note")} value={note} onChange={setNote} required={false} maxLength={200}/>
+      <div className="two-fields"><Field id="payment-amount" label={t("amount")} hint={t("hint.customerPayment")} value={amount} onChange={setAmount} numeric/>
+        <Select id="payment-account" label={t("account")} hint={t("hint.collectAccount")} value={account} onChange={setAccountId} options={(accounts.data?.items??[]).map(item=>({value:item.id,label:item.name}))}/></div>
+      <Field id="payment-note" label={t("note")} hint={t("hint.paymentNote")} value={note} onChange={setNote} required={false} maxLength={200}/>
     </fieldset>
     <ErrorText message={action.error}/>{saved&&<p role="status" className="notice success">{t("paymentSaved")}</p>}
     <div className="actions"><button className="primary" type="submit" disabled={action.busy||account===""}>{action.busy?t("recording"):uncertain?t("retry"):t("takePayment")}</button></div></form>

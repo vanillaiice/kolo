@@ -94,8 +94,8 @@ function RoleForm({initial,busy,onSave,onCancel}:{initial?:CustomRoleView|undefi
   return <div className="panel form-panel"><h2>{t(initial===undefined?"newRole":"renameRole")}</h2>
     {initial===undefined&&<p className="hint">{t("newRoleHelp")}</p>}
     <form onSubmit={event=>{event.preventDefault();void onSave(name,baseRole,requestId);}}><fieldset disabled={busy}><div className="two-fields">
-      <Field id="custom-role-name" label={t("roleName")} value={name} onChange={setName} maxLength={60}/>
-      {initial===undefined&&<Select id="custom-role-base" label={t("copiedFrom")} value={baseRole} onChange={value=>setBaseRole(value as MemberRole)} options={roles.map(item=>({value:item,label:t(`role.${item}` as TextKey)}))}/>}
+      <Field id="custom-role-name" label={t("roleName")} hint={t("hint.roleName")} value={name} onChange={setName} maxLength={60}/>
+      {initial===undefined&&<Select id="custom-role-base" label={t("copiedFrom")} hint={t("hint.roleBase")} value={baseRole} onChange={value=>setBaseRole(value as MemberRole)} options={roles.map(item=>({value:item,label:t(`role.${item}` as TextKey)}))}/>}
     </div></fieldset>
     <div className="actions"><button className="primary" type="submit" disabled={busy}>{busy?t("recording"):t("save")}</button><button type="button" className="secondary" disabled={busy} onClick={onCancel}>{t("cancel")}</button></div></form></div>;
 }
@@ -109,10 +109,9 @@ function CreateMember({service,sessionId,customRoles,onDone}:{service:ShopServic
     setSecret("");setConfirm("");if(value!==undefined)onDone(value.id);
   };
   return <div className="panel form-panel"><h2>{t("newMember")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}><fieldset disabled={action.busy}>
-    <div className="two-fields"><Field id="member-name" label={t("memberName")} value={name} onChange={setName}/>
-      <Select id="member-role" label={t("role")} value={role} onChange={setRole} options={roleOptions(customRoles,t)}/></div>
-    <div className="two-fields"><Field id="member-secret" label={t("secret")} value={secret} onChange={setSecret} secret maxLength={256}/><Field id="member-confirm" label={t("confirmSecret")} value={confirm} onChange={setConfirm} secret maxLength={256}/></div>
-    <p className="hint">{t("secretHelp")}</p></fieldset>
+    <div className="two-fields"><Field id="member-name" label={t("memberName")} hint={t("hint.memberName")} value={name} onChange={setName}/>
+      <Select id="member-role" label={t("role")} hint={t("hint.memberRole")} value={role} onChange={setRole} options={roleOptions(customRoles,t)}/></div>
+    <div className="two-fields"><Field id="member-secret" label={t("secret")} hint={t("secretHelp")} value={secret} onChange={setSecret} secret maxLength={256}/><Field id="member-confirm" label={t("confirmSecret")} hint={t("hint.confirmCode")} value={confirm} onChange={setConfirm} secret maxLength={256}/></div></fieldset>
     <ErrorText message={action.error} inputMessage="identityInput" conflictMessage="duplicateMember"/>
     <div className="actions"><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):t("save")}</button><button type="button" className="secondary" disabled={action.busy} onClick={()=>onDone()}>{t("cancel")}</button></div>
   </form></div>;
@@ -131,7 +130,7 @@ function MemberDetail({service,sessionId,member,customRoles,editable,onBack}:{se
     <div className="panel"><div className="detail-heading"><button className="secondary" onClick={onBack}>← {t("back")}</button>
       {editable&&<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.setStaffActive({sessionId,userId:member.id,active:!member.active}));}}>{t(member.active?"suspend":"reinstate")}</button>}</div>
       <h2>{member.name}{!member.active&&<span className="tag">{t("suspended")}</span>}</h2>
-      {editable?<Select id="member-role-change" label={t("role")} value={member.customRole===undefined?member.role:`${CUSTOM}${member.customRole.id}`} disabled={action.busy}
+      {editable?<Select id="member-role-change" label={t("role")} hint={t("hint.memberRoleChange")} value={member.customRole===undefined?member.role:`${CUSTOM}${member.customRole.id}`} disabled={action.busy}
         onChange={value=>{void action.run(()=>service.setStaffRole(value.startsWith(CUSTOM)?{sessionId,userId:member.id,customRoleId:value.slice(CUSTOM.length)}:{sessionId,userId:member.id,role:value as MemberRole}));}}
         options={roleOptions(customRoles,t,member.customRole)}/>
         :<dl className="facts"><dt>{t("role")}</dt><dd>{roleLabel(member,t)}</dd></dl>}<ErrorText message={action.error}/>
@@ -142,7 +141,7 @@ function MemberDetail({service,sessionId,member,customRoles,editable,onBack}:{se
           {member.exceptions.includes(permission)&&<span className="tag" title={t("exceptionHelp")}>{t("exception")}</span>}</label>)}
       </fieldset>)}</div></div>
     {editable&&<div className="panel form-panel"><h2>{t("resetSecret")}</h2><p className="hint">{t("resetSecretHelp")}</p><form onSubmit={event=>{event.preventDefault();void reset();}}><fieldset disabled={action.busy}>
-      <div className="two-fields"><Field id="reset-secret" label={t("newSecret")} value={secret} onChange={setSecret} secret maxLength={256}/><Field id="reset-confirm" label={t("confirmSecret")} value={confirm} onChange={setConfirm} secret maxLength={256}/></div></fieldset>
+      <div className="two-fields"><Field id="reset-secret" label={t("newSecret")} hint={t("secretHelp")} value={secret} onChange={setSecret} secret maxLength={256}/><Field id="reset-confirm" label={t("confirmSecret")} hint={t("hint.confirmCode")} value={confirm} onChange={setConfirm} secret maxLength={256}/></div></fieldset>
       {replaced&&<p role="status" className="notice success">{t("secretReplaced")}</p>}
       <div className="actions"><button className="primary" type="submit" disabled={action.busy}>{t("resetSecret")}</button></div></form></div>}
   </div>;

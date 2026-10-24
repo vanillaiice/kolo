@@ -2163,3 +2163,138 @@ Verification: Electron test `join-entry.test.ts` (share code named, malformed te
 any network call, typed address defaults to HTTPS, a link brings its own address, request and finish take the same
 route). Not verified: a real phone-to-desktop join against `sync.kolo.hblabs.xyz`, or the Android share sheet.
 Desktop QR scanning by webcam is still not implemented.
+
+## 2026-10-24: A locked computer can start over without its code
+
+Reported on Windows 0.9.0: with both the owner code and the recovery key forgotten, a locked till had no way out
+("Reset this computer" needs the owner code; "Forgot your code?" needs the key). The backend already allowed
+`startNewShop` from `locked`/`pending`; the renderer had offered it to `legacy` tills only since the entry redesign.
+
+- **Desktop entry.** "Start a new shop" now sits under Other options on the login and pending-setup screens and in
+  the recovery aside, next to import. The typed-name confirmation serves every state, and "Set aside and continue"
+  ends on the empty home (create / join / import) instead of straight in setup, so the till can also join or import
+  another shop. The old shop is set aside, never erased.
+- **Set-aside shops.** The empty home lists `savedShops` under "Reopen a set-aside shop", most recently used first,
+  each with when it was last used (`lastUsedAt`: the latest write to its file or WAL), since safety copies often share
+  a name; choosing one (`openSavedShop`) makes it the active shop again, locked, to be opened with its own code or
+  recovery key.
+
+Verification: new workflow-smoke phase `start-over` inside Electron (locked → recovery → start over with the typed
+name required → empty home offering create, join, import and the set-aside shops → reopen the right one → unlock with
+its own code), with axe audits in light and dark; the later phases (stay signed in, customer credit, CLI backup
+cross-check) run on the reopened shop. `import-replace` now expects import and start over on the login screen.
+Not verified: Windows (`verify:desktop:win`), where the report came from.
+
+## 2026-10-24: Consistent field descriptions, keyboard fixes and light motion
+
+Reported: some mobile fields had a description and others did not; the keyboard hid some inputs; the category input
+sat at the bottom of the screen.
+
+- **Mobile descriptions.** `Field`, `Toggle`, `Picker` and labelled `Segmented` now require `hint`; `null` marks the
+  few reviewed exceptions (search boxes, inline cart quantities, permission switches). About 110 controls gained a
+  French/English description (`app/strings-forms.ts`); help paragraphs that sat above a single field became that
+  field's description. The journal filters follow the same rule, and their sheet now scrolls.
+- **Product form.** Grouped as Product (name, main and other categories, barcode), Price, then Stock; categories
+  moved up from the bottom of the form.
+- **Keyboard.** Picker sheets shrink above the keyboard instead of pushing the search box or "create" field out of
+  view, and the "create" field (new category) sits above the list. Dialogs and sheets are edge-to-edge
+  (`statusBarTranslucent`, `navigationBarTranslucent`) so the keyboard controller can follow the keyboard in their
+  window. Scroll screens keep two lines of room under a focused input for its description or error.
+- **Mobile motion** (`components/motion.ts`, Reanimated 4.5 already present for the keyboard controller): pushed
+  screens slide in and out, destination changes cross-fade, buttons/segments/tabs shrink slightly when pressed,
+  selection colours transition, notices/errors/empty states fade in, dialogs rise into place, list rows ripple.
+  Follows Android's "remove animations" setting.
+- **Desktop motion** (CSS only, opacity and transform): screens and entry steps fade up, notices/alerts/new cart lines
+  fade in, dialogs scale in, controls transition colours with a one-pixel press; off under `prefers-reduced-motion`.
+  Smoke audits and screenshots wait for animations to finish.
+
+Verification: `tsc` (the required `hint` makes a bare control a type error), mobile Node tests including a new
+check that form strings are their own short `hint.*`/`section.*` keys, `npm run bundle:mobile` (Hermes). Desktop
+workflow smoke inside Electron with axe audits in both themes. Not verified: any of the mobile changes on a phone
+(no device or emulator attached; `verify:android` not run), including the keyboard behaviour in sheets and dialogs.
+
+### Follow-up: desktop descriptions and connection status
+
+- **Desktop descriptions.** `Field`, `Select` and a new `Check` require `hint`, shown under the control with
+  `aria-describedby`; about 120 controls (product, stock, finance, customers, suppliers, purchases, returns, till,
+  staff, settings, tax/terms, reports, analytics, journal, entry, backup/pairing/join) have French/English
+  descriptions (`renderer/text-forms.ts`), and help paragraphs that described a single field became its description.
+  Paired fields align by subgrid; report/journal toolbars align by label.
+- **Connection status.** "Available offline" is removed from the entry header, sidebar and till. The sidebar footer
+  says "Connected to <host>" when a server's last attempt succeeded (`connectedServer`), nothing otherwise. Mobile's
+  "Works offline" line on the entry screen is removed too.
+- **Smoke screenshots** capture twice, since the first capture after a theme switch could return the previous frame
+  (four light screenshots were dark before).
+
+Verification: desktop `tsc` (a bare control is a type error), renderer tests in Electron (`connection.test.ts`,
+`text-forms.test.ts`), full workflow smoke with axe audits in both themes, and a brightness check that all 119
+screenshots match their theme.
+
+## 2026-10-24: Till limits per shop and trial days on codes (ADR-039)
+
+Planned on 2026-10-21. The server counts tills, not people: staff travel inside sealed facts, so they stay unlimited.
+
+- **Server migration `0008_till_limits`.** `shops.max_tills` and `connection_codes.max_tills` (1–1000, null =
+  unlimited; every shop and code from before the upgrade stays unlimited), `shop_devices.held` (held implies active),
+  `connection_codes.included_days` (0–90), `payments.days`, and a payment check that allows `months` 0 only for a
+  `code` payment carrying days.
+- **Enforcement** (`sync/tills.ts`). A roster fact that makes a till active while the shop is full stores it `held`,
+  under the shop row lock: it keeps its facts but cannot open a session (`till_limit_reached`, 403, no retry), and
+  connecting fails before anything is stored. Revoking a till, raising the limit or clearing it releases held tills
+  oldest first. Lowering the limit holds nobody. Join by code is refused at `createJoin` and `enrollJoin` while full.
+  Owner recovery (ADR-036) is exempt. `/sync/status` and the dashboard count only tills holding a place.
+- **Plan endpoint.** `GET /api/v2/plan` → `{ max_tills, tills }` (`planSchema`), separate from the strictly parsed
+  entitlement. Tills record it each pass (client migration 33: `server_endpoints.plan_max_tills`, `plan_tills`). An
+  older server's 404 keeps the last known plan. Desktop Backup & devices and mobile server sync show "Your plan
+  allows N tills (M in use)" and explain `till_limit_reached`.
+- **Operator.** A hosted code must name its limit or unlimited (`till_limit_required`). Codes can carry trial days,
+  which are recorded as a `code` payment with any months (`make_interval(months, days)`). Dashboard: limit and
+  Unlimited on the code form, trial days, a till-limit panel on the shop page with in-use and waiting counts,
+  "waiting for a place" on devices, days in payments. `POST /admin/api/shops/:id/till-limit` (audited
+  `shop.till_limit` with from, to and released). CLI: `invite --trial-days --tills`, `till-limit <shop> <n>|unlimited`.
+
+Verification: `tills.test.ts` on PGlite and on real PostgreSQL 18 (`npm run test:server:pg`, 42 passed): hold and
+refusal, raise releases, lowering holds nobody, revocation frees the oldest waiting till, a revoked held till leaves the
+queue, join refused when full, two transactions racing for the last place (exactly one wins), the upgrade default,
+days alone / with months / grace and pause from a days-only shop, manual payments stay in months, invalid limits and
+days refused, the plan recorded by the till and kept against an older server. Dashboard route tests cover the viewer
+refusal, validation, the hosted requirement and listing. Not verified: the dashboard pages in a browser, the till
+screens with a real limited shop, and Android.
+
+## Review fixes: admin sign-in races and CSV guard (2026-10-24)
+
+From an external code review. Admin sign-in now counts failures in SQL (`failed_attempts + 1`, lock set by
+`CASE`) rather than from the row read before the transaction, and claims a successful sign-in with a conditional
+update (`totp_last_step < step`, not locked) under the row lock, so parallel requests can neither skip lockout counts
+nor spend one authenticator code twice. The dashboard audit CSV also neutralizes a leading tab or carriage return,
+matching `core/domain/audit-csv.ts`.
+
+Verification: `admin.test.ts` on real PostgreSQL 18 (`npm run test:server:pg`, 43 passed); the parallel test fails
+on the previous code ("one code signs in once"). `npm run check` passes.
+
+## Review fixes: revoked history, concurrent returns, revision history, vouched positions, join key (2026-10-24)
+
+From the same external review; see ADR-040–044. Client SQLite migration 34 (`review-policy-migration.ts`), server
+migration `0009_vouched_positions`.
+- **Revoked tills (ADR-040):** `DEVICE_HISTORY_ACCEPTED` cutoff signed before `DEVICE_REVOKED`; tills store and verify
+  revoked keys, apply up to the cutoff, hold the rest as `device_revoked` for owner review; server pull no longer
+  filters revoked origins.
+- **Concurrent returns (ADR-041):** owner may approve `return_conflict`; returns computed against their signed
+  ancestry (`return_fork_links`); a split sale takes no further returns.
+- **Revision history (ADR-042):** `membership_revisions` trigger; business facts judged by their signing revision.
+- **Vouched positions (ADR-043):** forwarded sealed facts cannot occupy an origin's positions.
+- **Join key (ADR-044):** Argon2id-stretched join code; older tills cannot join newer owners' codes.
+- Legacy v1 sale/purchase appliers validate totals and movements first and stop on an already-held record; line
+  product trigger on sale/purchase items; admin sign-in races and CSV guard fixed earlier today.
+- Desktop: renderer served from `kolo-app://` (CSP `'self'` no longer matches local files); owner "Waiting for your
+  approval" list in the journal (`heldBack`, `reviewHeldBack`).
+
+- Mobile: the same owner-only "Waiting for your approval" list at the top of the journal, with a confirmation
+  before each approval.
+- ADR-021, 023, 029, 030 and 032 carry "Amended by" notes.
+
+Verification: core exchange/sync tests, server tests on PostgreSQL 18 (47 passed), desktop tests in Electron (97
+passed), `npm run smoke:desktop:workflow`; after the last changes, full `npm run check`, `npm run bundle:mobile`,
+`npm run docs:api` and `npm run verify:desktop:linux` (packaged, with the review panel) pass. Android: the 0.10.0
+arm64 APK built from this tree passes `npm run verify:android` on a Galaxy A04e and opens an existing shop after
+migration 34. Not verified: the mobile review list with a real held-back fact, and Windows.

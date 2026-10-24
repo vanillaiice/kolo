@@ -98,7 +98,7 @@ export function SellScreen(): React.JSX.Element {
     ListHeaderComponent={<View style={{ padding: spacing.lg, gap: spacing.md }}>
       <Field label={t("scan")} value={term} onChange={setTerm} onSubmit={scan} inputRef={input} kind="code" hint={t("scanHint")} />
       {notice !== undefined && <Notice tone={notice.key === "addedToCart" ? "success" : "warning"} text={t(notice.key, notice.values)} />}
-      <Picker<Category> label={t("category")} value={category} onChange={setCategory} optional placeholder={t("allCategories")} load={page => categories(context, page)} revision={revision} />
+      <Picker<Category> label={t("category")} value={category} onChange={setCategory} optional placeholder={t("allCategories")} load={page => categories(context, page)} revision={revision} hint={t("hint.tillCategory")} />
     </View>}
     ListEmptyComponent={results.failed ? <Notice tone="error" text={t("loadFailed")} action={<Button label={t("retry")} variant="secondary" onPress={results.retry} />} />
       : <EmptyState title={query === "" && category === undefined ? t("noProducts") : t("noMatches")} text={query === "" && category === undefined ? t("noProductsHelp") : undefined} />}
@@ -153,7 +153,7 @@ function CartBody({ wide = false }: { readonly wide?: boolean }): React.JSX.Elem
         <Text style={{ fontSize: 13, fontWeight: "600", color: colors.muted }}>{t("quantity")}</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
           <Button label="−" variant="secondary" style={{ width: 56 }} accessibilityLabel={t("decrease", { name: line.name })} onPress={() => setDraft(current => ({ ...current, cart: setQuantity(current.cart, line.id, line.quantity - 1000) }))} />
-          <View style={{ flex: 1 }}><Field label={t("quantity")} labelHidden value={units} kind="quantity" onChange={value => setEditing(current => ({ ...current, [line.id]: value }))} onSubmit={() => commitQuantity(line.id, line.productId)} /></View>
+          <View style={{ flex: 1 }}><Field label={t("quantity")} labelHidden hint={null} value={units} kind="quantity" onChange={value => setEditing(current => ({ ...current, [line.id]: value }))} onSubmit={() => commitQuantity(line.id, line.productId)} /></View>
           <Button label="+" variant="secondary" style={{ width: 56 }} accessibilityLabel={t("increase", { name: line.name })} onPress={() => setDraft(current => ({ ...current, cart: setQuantity(current.cart, line.id, line.quantity + 1000) }))} />
         </View>
         {editing[line.id] !== undefined && <Button label={t("applyQuantity")} variant="secondary" onPress={() => commitQuantity(line.id, line.productId)} />}
@@ -163,11 +163,11 @@ function CartBody({ wide = false }: { readonly wide?: boolean }): React.JSX.Elem
       {permissions.includes("customers.view") && <Picker<{ readonly id: string; readonly name: string; readonly phone?: string | undefined }> label={t("customer")} optional placeholder={t("anonymous")} value={draft.customer === undefined ? undefined : { id: draft.customer.id, name: draft.customer.name }}
         onChange={value => setDraft(current => ({ ...current, customer: value === undefined ? undefined : { id: value.id, name: value.name }, cart: setCustomer(current.cart, value?.id),
           settlement: value === undefined && current.settlement === "credit" ? "cash" : current.settlement }))}
-        load={page => customers(context, page)} revision={revision} describe={item => item.phone} />}
+        load={page => customers(context, page)} revision={revision} describe={item => item.phone} hint={t("hint.saleCustomer")} />}
       {permissions.includes("sales.discount") && <View style={{ gap: 6 }}>
         <Text style={{ fontSize: 13, fontWeight: "600", color: colors.muted }}>{t("discount")}</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-          <View style={{ flex: 1 }}><Field label={t("discount")} labelHidden value={discount} onChange={setDiscountText} kind="money" onSubmit={applyDiscount} /></View>
+          <View style={{ flex: 1 }}><Field label={t("discount")} labelHidden value={discount} onChange={setDiscountText} kind="money" onSubmit={applyDiscount} hint={t("hint.discount")} /></View>
           <Button label={t("apply")} variant="secondary" onPress={applyDiscount} /></View></View>}
       {problem !== undefined && <Notice tone="error" text={t(problem)} />}
       {issue !== undefined && <Notice tone="error" text={t(PROBLEM_KEYS[issue] ?? "error")} />}
@@ -238,13 +238,13 @@ export function PaymentScreen(): React.JSX.Element {
   </>}>
     <Section><View style={s.between}><Text style={s.heading}>{t("total")}</Text><Text style={s.total}>{formatMoney(totals.totalMinor)}</Text></View>
       <Text style={s.muted}>{t("itemCount", { count: draft.cart.lines.length })}{draft.customer !== undefined ? ` · ${draft.customer.name}` : ""}</Text></Section>
-    <Segmented label={t("settlement")} value={draft.settlement} options={settlements} onChange={value => setDraft(current => ({ ...current, settlement: value,
+    <Segmented label={t("settlement")} hint={t("hint.settlement")} value={draft.settlement} options={settlements} onChange={value => setDraft(current => ({ ...current, settlement: value,
       cart: value === "cash" ? { ...current.cart, payments: [] } : current.cart }))} />
     {draft.settlement === "cash" && <Section>
       <Picker<Account> label={t("account")} value={draft.cashAccount === undefined ? undefined : { id: draft.cashAccount.id, name: draft.cashAccount.name } as Account}
-        onChange={value => setDraft(current => ({ ...current, cashAccount: value === undefined ? undefined : { id: value.id, name: value.name } }))} load={page => paymentAccounts(context, page)} revision={revision} />
+        onChange={value => setDraft(current => ({ ...current, cashAccount: value === undefined ? undefined : { id: value.id, name: value.name } }))} load={page => paymentAccounts(context, page)} revision={revision} hint={t("hint.collectAccount")} />
       <Field label={t("received")} value={received} onChange={setReceived} kind="money" hint={t("receivedHint")} />
-      {keepable > 0 && <Toggle label={t("keepChangeAsCredit", { name: draft.customer!.name })} value={draft.keepChange === true} onChange={value => setDraft(current => ({ ...current, keepChange: value }))} />}
+      {keepable > 0 && <Toggle label={t("keepChangeAsCredit", { name: draft.customer!.name })} value={draft.keepChange === true} onChange={value => setDraft(current => ({ ...current, keepChange: value }))} hint={t("hint.keepChange")} />}
       {keptMinor > 0 ? <Text style={[s.amount, { color: colors.primary }]}>{t("changeKept", { amount: formatMoney(keptMinor) })}</Text>
         : receivedMinor !== undefined && receivedMinor >= visibleTotals.totalMinor && <Text style={[s.amount, { color: colors.primary }]}>{t("changeDue", { amount: formatMoney(receivedMinor - visibleTotals.totalMinor) })}</Text>}
       {receivedMinor !== undefined && receivedMinor < visibleTotals.totalMinor && <Notice tone="warning" text={t("receivedShort", { amount: formatMoney(visibleTotals.totalMinor - receivedMinor) })} />}
@@ -254,7 +254,7 @@ export function PaymentScreen(): React.JSX.Element {
       <RowGroup>{draft.cart.payments.map(payment => <ListRow key={payment.id} title={draft.accountNames[payment.accountId] ?? t("account")} trailing={formatMoney(payment.amountMinor)}
         onPress={() => setDraft(current => ({ ...current, cart: removePayment(current.cart, payment.id) }))} accessibilityLabel={t("removePaymentLabel", { amount: formatMoney(payment.amountMinor) })} />)}</RowGroup>
       {totals.outstandingMinor > 0 && <>
-        <Picker<Account> label={t("account")} value={account} onChange={setAccount} load={page => paymentAccounts(context, page)} revision={revision} />
+        <Picker<Account> label={t("account")} value={account} onChange={setAccount} load={page => paymentAccounts(context, page)} revision={revision} hint={t("hint.collectAccount")} />
         <Field label={t("amount")} value={amount} onChange={setAmount} kind="money" hint={t("amountDefaultsRemaining", { amount: formatMoney(totals.outstandingMinor) })} />
         <Button label={t("addPayment")} variant="secondary" onPress={addAllocation} />
       </>}

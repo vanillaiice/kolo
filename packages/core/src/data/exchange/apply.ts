@@ -4,7 +4,7 @@ import { upsertCategory } from "../products/categories.ts";
 import { writeProductTaxRule, writeTaxSettings } from "../products/tax.ts";
 import { writePaymentTerms } from "../finance/terms.ts";
 import { parseEventPayload, type EventType, type JournalEnvelope } from "@kolo/contracts/events";
-import type { Queryable, SqlValue } from "../database/driver.ts";
+import type { Queryable, Row, SqlValue } from "../database/driver.ts";
 import { ExchangeError } from "../../exchange/types.ts";
 import { memberPermissions } from "../../identity/internal-authority.ts";
 import { PERMISSIONS, type Permission } from "../../rules/permissions.ts";
@@ -24,16 +24,23 @@ import { expenseApplier } from "../sync/expense-applier.ts";
 const appliers = [productApplier, customerApplier, supplierApplier, supplierPaymentApplier, accountApplier, saleApplier, purchaseApplier, paymentApplier, stockApplier, cashApplier, expenseApplier];
 
 /** @internal Strict v2 policy followed by the shared persistence implementation, inside a caller-owned transaction. */
-export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewed: boolean, recordedAt: string): void {
+export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewed: boolean, recordedAt: string, exceptions: { readonly returnConflict?: boolean } = {}): void {
   const model = eventModel(event);
   const actor = tx.get(`SELECT m.*,u.active AS user_active FROM local_memberships m JOIN users u ON u.id=m.user_id AND u.business_id=m.business_id WHERE m.business_id=? AND m.user_id=?`, [event.business_id,event.actor_id]);
   if (actor === undefined) throw new ExchangeError("missing_dependency");
   if (!reviewed) {
-    if (actor["active"] !== 1 || actor["user_active"] !== 1) throw new ExchangeError("permission_denied");
     const manifest = ["WORKSPACE_CREATED","LEGACY_WORKSPACE_ADOPTED"].includes(event.event_type);
     if (!manifest && event.authority_revision > Number(actor["revision"])) throw new ExchangeError("missing_dependency");
-    if (!manifest && event.authority_revision !== actor["revision"]) throw new ExchangeError("authority_revision");
-    const permissions = memberPermissions(tx,actor);
+    // A business fact signed under an earlier revision is judged by what that revision allowed (ADR-042): a cashier's
+    // offline sales survive a later PIN reset or permission change. Authority changes still need the current revision.
+    let member: Row = actor;
+    if (!manifest && event.authority_revision !== actor["revision"]) {
+      const past = model.authority ? undefined : tx.get(`SELECT * FROM membership_revisions WHERE business_id=? AND user_id=? AND revision=?`,[event.business_id,event.actor_id,event.authority_revision]);
+      if (past === undefined) throw new ExchangeError("authority_revision");
+      member = past;
+    }
+    if (member["active"] !== 1 || actor["user_active"] !== 1) throw new ExchangeError("permission_denied");
+    const permissions = memberPermissions(tx,member);
     if (![...event.required_permissions,...model.permissions].every(p => permissions.includes(p))) throw new ExchangeError("permission_denied");
   }
   if (model.authority) { applyAuthority(tx,event); return; }
@@ -50,7 +57,7 @@ export function applyBusinessFact(tx: Queryable, event: JournalEnvelope, reviewe
   }
   const require = (permission: Permission): void => { if (!reviewed && (!event.required_permissions.includes(permission) || !memberPermissions(tx,actor).includes(permission))) throw new ExchangeError("permission_denied"); };
   if (event.event_type === "SALE_RETURNED" || event.event_type === "PURCHASE_RETURNED") {
-    applyReturn(tx,event,recordedAt); claimEntities(tx,event,model); return;
+    applyReturn(tx,event,recordedAt,{ approvedConflict: exceptions.returnConflict === true }); claimEntities(tx,event,model); return;
   }
   if (event.event_type === "CATEGORY_SAVED") {
     const { category } = parseEventPayload("CATEGORY_SAVED",2,event.payload);
@@ -158,6 +165,7 @@ function applyAuthority(tx: Queryable, event: JournalEnvelope): void {
     return;
   }
   if (event.event_type === "DEVICE_TRUSTED" || event.event_type === "DEVICE_REVOKED") { applyDeviceTrust(tx,event); return; }
+  if (event.event_type === "DEVICE_HISTORY_ACCEPTED") { applyDeviceHistory(tx,event); return; }
   if (event.event_type === "SHOP_KEY_GRANTED") { applyShopKeyGrant(tx,event); return; }
   if (event.event_type === "SERVER_ENDPOINT_SET" || event.event_type === "SERVER_ENDPOINT_CLEARED") { applyServerEndpoint(tx,event); return; }
   if (event.event_type === "SHOP_BACKUP_KEY") { applyBackupKey(tx,event); return; }
@@ -235,6 +243,26 @@ function applyDeviceTrust(tx: Queryable, event: JournalEnvelope): void {
   // Only a change of trust invalidates in-flight verifications; recording the revision alone does not.
   const changed = pin["active"] !== 1 || pin["authority_allowed"] !== (authority_allowed ? 1 : 0);
   tx.run(`UPDATE trusted_exchange_devices SET active=1,authority_allowed=?,roster_revision=?,revision=revision+? WHERE business_id=? AND device_id=?`,[authority_allowed ? 1 : 0,revision,changed ? 1 : 0,event.business_id,id]);
+  if (pin["active"] !== 1) releaseRevokedHistory(tx,event.business_id,id); // Trusted again: what it signed meanwhile may apply.
+}
+
+// How far a revoked device's history stays accepted (ADR-040): the higher revision wins and an equal one must agree.
+// Facts already held back only for lack of this cutoff are released for application.
+function applyDeviceHistory(tx: Queryable, event: JournalEnvelope): void {
+  const { device_id, through_sequence, revision } = parseEventPayload("DEVICE_HISTORY_ACCEPTED",2,event.payload);
+  if (device_id === event.origin_device_id) throw new ExchangeError("permission_denied");
+  const pin = tx.get(`SELECT accepted_through,accepted_revision FROM trusted_exchange_devices WHERE business_id=? AND device_id=?`,[event.business_id,device_id]);
+  if (pin === undefined) throw new ExchangeError("missing_dependency");
+  if (revision === pin["accepted_revision"] && through_sequence !== pin["accepted_through"]) throw new ExchangeError("conflict");
+  if (revision <= Number(pin["accepted_revision"])) return;
+  tx.run(`UPDATE trusted_exchange_devices SET accepted_through=?,accepted_revision=? WHERE business_id=? AND device_id=?`,[through_sequence,revision,event.business_id,device_id]);
+  releaseRevokedHistory(tx,event.business_id,device_id,through_sequence);
+}
+
+/** @internal Returns facts held back only because their device was revoked to the retry queue, up to `through` (all if omitted). */
+export function releaseRevokedHistory(tx: Queryable, businessId: string, deviceId: string, through = Number.MAX_SAFE_INTEGER): void {
+  tx.run(`UPDATE applied_events SET status='stored',reason=NULL WHERE business_id=? AND status='quarantined' AND reason='device_revoked'
+    AND event_id IN (SELECT event_id FROM event_journal WHERE business_id=? AND origin_device_id=? AND origin_sequence<=?)`,[businessId,businessId,deviceId,through]);
 }
 
 // A device announces only its own encryption key, and that key never changes for the device ID.

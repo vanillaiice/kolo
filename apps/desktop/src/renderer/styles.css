@@ -150,7 +150,6 @@
 .welcome-shell{padding:28px 40px 48px;background:var(--canvas)}
 .auth-layout{display:block;max-width:1280px;margin:0 auto}
 .entry-header{display:flex;align-items:center;gap:30px;min-height:52px;padding-right:120px;border-bottom:1px solid var(--border);padding-bottom:18px}
-.entry-offline{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:12px}
 .entry-page{padding-top:30px}
 .entry-heading{margin-bottom:28px;max-width:900px}
 .entry-heading .eyebrow{margin-bottom:10px}
@@ -203,7 +202,7 @@
 .recovery-dialog .hint{margin-bottom:24px}
 @media(min-width:1500px){.auth-layout{max-width:1380px}.entry-page{padding-top:44px}.entry-panel{padding:40px}.entry-columns{gap:48px}.entry-heading h1{font-size:40px}}
 @media(max-width:1050px){.welcome-shell{padding:22px 28px 36px}.entry-columns{grid-template-columns:minmax(0,1.5fr) minmax(250px,1fr);gap:24px}.entry-panel{padding:24px}.entry-choice{padding:16px}.entry-heading h1{font-size:32px}.entry-aside{padding-top:18px}}
-@media(max-width:760px){.welcome-shell{padding:18px}.entry-columns{grid-template-columns:1fr}.entry-heading h1{font-size:28px}.entry-header{gap:18px}.entry-header .brand{font-size:23px}.entry-offline{font-size:11px}.entry-panel .two-fields{grid-template-columns:1fr}.entry-aside{padding:10px 0}.setup-progress{gap:16px}}
+@media(max-width:760px){.welcome-shell{padding:18px}.entry-columns{grid-template-columns:1fr}.entry-heading h1{font-size:28px}.entry-header{gap:18px}.entry-header .brand{font-size:23px}.entry-panel .two-fields{grid-template-columns:1fr}.entry-aside{padding:10px 0}.setup-progress{gap:16px}}
 .welcome-shell{position:relative}
 .welcome-shell .language-switch{position:absolute;top:28px;right:max(40px,calc((100% - 1280px)/2))}
 @media(min-width:1500px){.welcome-shell .language-switch{right:max(40px,calc((100% - 1380px)/2))}}
@@ -352,6 +351,7 @@ tbody tr:last-child td{border-bottom:0}
 .three-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;width:100%}
 @media print{.recovery-sheet,.recovery-sheet *{visibility:visible}.recovery-sheet{position:absolute;left:0;top:0;width:100%;border:0;background:#fff;color:#142b21}.recovery-sheet code{color:#142b21}}
 .journal-table td{vertical-align:top}.journal-table td .tag{display:table;margin:4px 0 0;white-space:nowrap}.journal-when{white-space:nowrap}.journal-details{width:38%;color:var(--muted);overflow-wrap:anywhere}.tag.neutral{background:var(--selected);color:var(--selected-ink)}.journal-notice{flex-basis:100%;margin:0}.journal-subject{flex-basis:100%;display:flex;gap:12px;align-items:center;margin:0}
+.held-back{margin-bottom:16px}.held-back h2{margin:0 0 4px}.held-back-list{list-style:none;margin:12px 0 0;padding:0}.held-back-list li{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:10px 0;border-top:1px solid var(--border)}.held-back-list li p{margin:4px 0 0}
 /* Report PDF: the save button sits above the figures, with its confirmation beside it. */
 .report-export{margin:0 0 18px;align-items:center}.report-export .notice{margin:0}
 /* Role matrix: permissions down, roles across; the permission names stay in view while scrolling sideways. */
@@ -361,3 +361,39 @@ tbody tr:last-child td{border-bottom:0}
 .role-matrix .group-row th{padding-top:22px;color:var(--muted);font-weight:700}.role-matrix thead small{margin-top:6px}.role-matrix thead .tag{display:table;margin:0 auto}.role-matrix thead .text-button{min-height:30px;padding:4px 6px;font-size:12px}
 .role-matrix tbody tr:last-child th[scope=row]{border-bottom:0}.staff-detail .check .tag{margin-left:0}
 .update-banner{margin:20px 32px 0;padding:16px 20px;border-color:var(--primary);display:flex;flex-direction:column;gap:10px}.update-banner>p,.update-banner .notice{margin:0}.release-notes{font-size:13px}.release-notes summary{cursor:pointer;font-weight:600;min-height:32px}.release-notes section{max-height:320px;overflow:auto;margin-top:8px}.release-notes h3{font-size:14px;margin:12px 0 6px}.release-notes h4{font-size:13px;margin:10px 0 4px}.release-notes p,.release-notes ul{margin:0 0 8px}.release-notes li{line-height:1.6}
+
+/*
+ * Motion: short fades and lifts that show what changed, never a wait before work. Opacity and transform only, so
+ * layout never moves; the reduced-motion rule above turns all of it off. A section restarts its entrance whenever it
+ * is shown again, since hidden sections are not rendered. Colour transitions are declared on interactive states only
+ * (hover, focus, press), so they ease in under the pointer while a theme change repaints everything at once.
+ */
+:root{--ease-out:cubic-bezier(.2,.8,.2,1);--motion-quick:140ms;--motion-enter:200ms}
+@keyframes kolo-enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes kolo-fade{from{opacity:0}to{opacity:1}}
+@keyframes kolo-pop{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+.workspace-content,.entry-page,.alerts-panel,.update-banner{animation:kolo-enter var(--motion-enter) var(--ease-out)}
+.notice,.cart-line,.alert-item,.file-summary{animation:kolo-fade var(--motion-enter) var(--ease-out)}
+dialog[open]{animation:kolo-pop var(--motion-enter) var(--ease-out)}
+dialog[open]::backdrop{animation:kolo-fade var(--motion-enter) ease-out}
+:is(button,.entry-choice,.product-tile,.nav-item):is(:hover,:focus-visible,:active){transition:background-color var(--motion-quick) ease,border-color var(--motion-quick) ease,color var(--motion-quick) ease,box-shadow var(--motion-quick) ease,transform var(--motion-quick) var(--ease-out)}
+:is(input,select,textarea):focus{transition:border-color var(--motion-quick) ease,box-shadow var(--motion-quick) ease}
+tbody tr:hover td{transition:background-color var(--motion-quick) ease}
+/* A press answers at once: buttons and tiles settle a pixel, then come back. */
+.primary:active:not(:disabled),.secondary:active:not(:disabled),.danger-action:active:not(:disabled),.icon-button:active:not(:disabled){transform:translateY(1px)}
+.primary:hover:not(:disabled){box-shadow:0 4px 12px var(--shadow-soft)}
+.product-tile:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 6px 16px var(--shadow-soft)}
+.product-tile:active:not(:disabled){transform:scale(.98);box-shadow:none}
+.entry-choice:hover:not(:disabled) .choice-arrow{transform:translateX(3px);transition:transform var(--motion-quick) var(--ease-out)}
+.nav-item:hover:not(.selected)>span{transform:translateX(2px);transition:transform var(--motion-quick) var(--ease-out)}
+.secret-toggle:active:not(:disabled){transform:none}
+.entry-section-title{margin-top:32px}
+/* Every form control carries its description directly under it, in one style. */
+.field-hint{display:block;font-size:12px;font-weight:400;line-height:1.5;color:var(--muted)}
+.check-field{display:flex;flex-direction:column;gap:2px}.check-field .field-hint{padding-left:28px;margin-top:-6px}
+/* Paired fields line up row by row (label, input, description) even when one label or description wraps. */
+.two-fields:not(:has(.customer-search,.customer-choice)){row-gap:8px}
+.two-fields:not(:has(.customer-search,.customer-choice))>.field{display:grid;grid-template-rows:subgrid;grid-template-columns:minmax(0,1fr);justify-content:stretch;grid-row:span 3;align-content:start;margin-bottom:8px}
+.two-fields:not(:has(.customer-search,.customer-choice))>.field>label{align-self:end}
+/* Toolbar filters align by their labels; each carries a one-line description. */
+.report-controls{align-items:flex-start}.report-controls .presets{align-self:center}

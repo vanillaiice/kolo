@@ -7,7 +7,7 @@ import { Button, Notice, Segmented } from "./ui.tsx";
 export function LanguageControl(): React.JSX.Element {
   const { t } = useText(), { language, setLanguage } = usePreferences();
   return <View style={{ gap: spacing.sm }}>
-    <Segmented label={t("language")} value={language} onChange={setLanguage} options={[{ id: "fr", label: "Français" }, { id: "en", label: "English" }]} />
+    <Segmented label={t("language")} hint={t("hint.language")} value={language} onChange={setLanguage} options={[{ id: "fr", label: "Français" }, { id: "en", label: "English" }]} />
     <PreferenceProblem />
   </View>;
 }
@@ -15,7 +15,7 @@ export function LanguageControl(): React.JSX.Element {
 /** System, light or dark appearance for this device. */
 export function AppearanceControl(): React.JSX.Element {
   const { t } = useText(), { appearance, setAppearance } = usePreferences();
-  return <Segmented label={t("appearance")} value={appearance} onChange={setAppearance}
+  return <Segmented label={t("appearance")} hint={t("hint.appearance")} value={appearance} onChange={setAppearance}
     options={[{ id: "system", label: t("appearance.system") }, { id: "light", label: t("appearance.light") }, { id: "dark", label: t("appearance.dark") }]} />;
 }
 

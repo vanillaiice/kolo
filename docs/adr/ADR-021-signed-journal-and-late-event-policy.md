@@ -2,6 +2,8 @@
 
 Date: 2026-10-06. Status: implemented F2 core; native platform acceptance remains open.
 Extends [ADR-019](ADR-019-event-exchange-and-destination-delivery.md).
+Amended by [ADR-040](ADR-040-revoked-device-history.md) (a revoked till's facts are accepted up to a signed cutoff) and
+[ADR-042](ADR-042-authority-revision-history.md) (business facts are judged by the revision they were signed under).
 
 ## Decision
 

@@ -208,6 +208,26 @@ tools, sells, prints, restarts, restores, and exchanges with mobile. Renderer es
 untrusted navigation and malformed IPC cannot access unrestricted files/SQL. Measure
 startup/search latency/memory on target hardware and record budgets/results.
 
+**Delivered (2026-10-24; see the progress log): start over on a locked computer without its code.** Reported on a Windows
+0.9.0 install: the owner forgot both the code and the recovery key, so "Reset this computer" (owner code required) and
+"Forgot your code?" were both dead ends. The till also could not import or join another shop, and uninstalling did not
+help because user data in `%APPDATA%\@kolo\desktop` survives uninstall (`deleteAppDataOnUninstall: false`). The only
+way out today is closing KOLO and renaming that folder by hand.
+
+- The backend already handles this: `startNewShop` accepts a `locked`/`pending` shop given only the typed shop name,
+  keeps the old database as a saved slot (still protected by its own credentials) and activates an empty one
+  (`apps/desktop/src/electron/transfer.test.ts`). Only the renderer is missing: `Workspace.tsx` offers the
+  confirm-name ("fresh") screen to `legacy` tills only, even though `recoveryNoKey` already tells locked users they
+  can start a new shop.
+- Add a "Start a new shop" choice to the recovery aside (next to import) and on the login screen's other options. Let
+  the fresh screen serve `locked`/`pending` too. On success, go to the empty home (create / join / import) rather than
+  straight to create, so the user can join or import another till's shop.
+- Keep set-aside rather than erase, so someone at the till cannot destroy a shop without its code; a set-aside shop can
+  be reopened later with its code or recovery key. Optionally show saved shops (`savedShops`/`openSavedShop`, not yet
+  shown anywhere in the UI) on the empty home.
+- Tests: a workflow-smoke DOM path (locked → recover → start new shop → empty home → join/import), plus checks that
+  the old shop is retained and that the existing transfer tests still pass. Run `verify:desktop:win` before release.
+
 ## F6: Optional Fastify synchronization server
 
 **Split (2026-10-11).** **F6a, the relay, is delivered** ([ADR-029](../adr/ADR-029-sync-server-relay.md)):
@@ -295,6 +315,20 @@ provider-neutral signed webhook, till-side status and support details, the [self
 template, backup/restore scripts and upgrade/rollback procedure. Acceptance evidence: real-PostgreSQL billing tests and a
 Docker Compose install → sync → backup → destroy → restore → resync drill. Remaining: choosing and adding a payment
 provider adapter, owner reminders and subscription invoices.
+
+**Delivered (2026-10-24, [ADR-039](../adr/ADR-039-till-limits-and-trial-days.md), server migration `0008`, client migration 33; see the progress log):**
+
+- **Till limit per shop.** The server can only count enrolled tills: staff users and roles travel inside sealed facts,
+  so a per-user limit is not enforceable and staff stay unlimited. Each shop gets a `max_tills` with an explicit
+  **unlimited** switch (stored as no limit); unlimited is the default on `selfhost` and for shops that existed before
+  the migration, so upgrades never lock anyone out. The operator sets it per shop in the dashboard or on a connection
+  code; changes are audited. A join checks active tills in the same transaction as enrollment and refuses with
+  `till_limit_reached`; already enrolled tills keep syncing when a limit is lowered, and removing a till frees a place.
+  Tills show "your plan allows N tills". Tests: the limit, unlimited, lowering below current use, concurrent joins for
+  the last place, and the upgrade default.
+- **Trial days on codes.** A connection code may include a number of paid days (for example a 7-day trial), recorded
+  as a `code` payment when the shop attaches, as included months are today. Recorded payments and the webhook stay in
+  whole calendar months. Tests: days alone, days with months, and expiry/grace from a days-only shop.
 
 **Dependencies:** F6 and client endpoint enrollment UI.
 

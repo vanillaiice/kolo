@@ -1,6 +1,6 @@
 import { randomBytes, randomUUIDv7, scrypt, timingSafeEqual } from "node:crypto";
 import { Secret, TOTP } from "otpauth";
-import type { Kysely, Transaction } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import type { ServerDatabase } from "../database.js";
 import { sha256 } from "../identity.js";
 
@@ -92,10 +92,9 @@ export async function signIn(db: Kysely<ServerDatabase>, input: { readonly usern
   // entry must survive the failure they describe.
   const outcome = await db.transaction().execute(async (tx): Promise<{ token: string; admin: Admin } | AdminError> => {
     const fail = async (code: string): Promise<AdminError> => {
-      if (row !== undefined) {
-        const attempts = row.failed_attempts + 1;
-        await tx.updateTable("admins").set({ failed_attempts: attempts, locked_until: attempts >= LOCK_AFTER ? new Date(input.now.getTime() + LOCK_MINUTES * 60_000) : row.locked_until }).where("admin_id", "=", row.admin_id).execute();
-      }
+      // Counted in SQL, not from the row read above: parallel failures must each add one.
+      if (row !== undefined) await tx.updateTable("admins").set({ failed_attempts: sql`failed_attempts + 1`,
+        locked_until: sql`CASE WHEN failed_attempts + 1 >= ${LOCK_AFTER} THEN ${new Date(input.now.getTime() + LOCK_MINUTES * 60_000)} ELSE locked_until END` }).where("admin_id", "=", row.admin_id).execute();
       await audit(tx, { adminId: row?.admin_id ?? null, username: username || "unknown" }, "admin.sign_in_failed", null, address, { reason: code });
       return new AdminError(401, "invalid_credentials");
     };
@@ -108,8 +107,14 @@ export async function signIn(db: Kysely<ServerDatabase>, input: { readonly usern
       step = Math.floor(input.now.getTime() / 30_000) + (delta ?? 0);
       if (delta === null || (row.totp_last_step !== null && step <= Number(row.totp_last_step))) return fail("code");
     }
+    // Claimed conditionally under the row lock: a parallel sign-in that already spent this step, or a lockout that
+    // landed after the read above, wins.
+    const claimed = await tx.updateTable("admins").set({ failed_attempts: 0, locked_until: null, ...(step === null ? {} : { totp_last_step: String(step) }), last_login_at: input.now })
+      .where("admin_id", "=", row.admin_id).where(where => where.or([where("locked_until", "is", null), where("locked_until", "<=", input.now)]))
+      .$if(step !== null, query => query.where(where => where.or([where("totp_last_step", "is", null), where("totp_last_step", "<", String(step))])))
+      .executeTakeFirst();
+    if (claimed.numUpdatedRows !== 1n) return fail("code");
     const token = randomBytes(32).toString("base64url");
-    await tx.updateTable("admins").set({ failed_attempts: 0, locked_until: null, ...(step === null ? {} : { totp_last_step: String(step) }), last_login_at: input.now }).where("admin_id", "=", row.admin_id).execute();
     await tx.deleteFrom("admin_sessions").where("expires_at", "<", input.now).execute();
     await tx.insertInto("admin_sessions").values({ token_hash: sha256(token), admin_id: row.admin_id, expires_at: new Date(input.now.getTime() + ADMIN_SESSION_HOURS * 3_600_000), last_seen_at: input.now, address }).execute();
     await audit(tx, { adminId: row.admin_id, username }, "admin.sign_in", null, address, totpRequired ? null : { second_factor: "off" });

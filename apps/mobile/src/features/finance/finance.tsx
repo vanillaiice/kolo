@@ -21,7 +21,7 @@ export function AccountsScreen(): React.JSX.Element {
   const { t } = useText(), nav = useNav(), { context } = useSession(), permissions = usePermissions(), revision = useRevision(["accounts"]), [archived, setArchived] = useState(false);
   return <Screen title={t("accounts")} onBack={nav.back} scroll={false} actions={permissions.includes("finance.accounts.manage") ? <Button label={t("new")} variant="ghost" onPress={() => nav.push("accountForm", {})} /> : undefined}>
     <PagedList<Account & { onHandMinor: number }> revision={revision} identify={item => item.id} deps={[archived]} load={page => accounts(context, { ...page, includeInactive: archived })}
-      header={<Toggle label={t("showArchived")} value={archived} onChange={setArchived} />} empty={{ title: t("noAccounts") }}
+      header={<Toggle label={t("showArchived")} value={archived} onChange={setArchived} hint={t("hint.showArchived")} />} empty={{ title: t("noAccounts") }}
       render={item => <ListRow title={item.name} subtitle={t(item.kind)} tag={item.active ? undefined : t("archived")} trailing={formatMoney(item.onHandMinor)} trailingTone={item.onHandMinor < 0 ? "danger" : "normal"}
         onPress={() => nav.push("account", { accountId: item.id })} />} />
   </Screen>;
@@ -75,8 +75,8 @@ export function AccountFormScreen(): React.JSX.Element {
     return loaded.id;
   }, id => { request.renew(); if (loaded === undefined) nav.replace("account", { accountId: id }); else nav.leave(); });
   return <Screen title={loaded === undefined ? t("newAccount") : t("edit")} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={save} /></>}>
-    <Section><Field label={t("name")} value={name} onChange={setName} autoFocus />
-      <Segmented label={t("kind")} value={kind} onChange={setKind} options={KINDS.map(id => ({ id, label: t(id) }))} /></Section>
+    <Section><Field label={t("name")} value={name} onChange={setName} autoFocus hint={t("hint.accountName")} />
+      <Segmented label={t("kind")} hint={t("hint.accountKind")} value={kind} onChange={setKind} options={KINDS.map(id => ({ id, label: t(id) }))} /></Section>
   </Screen>;
 }
 
@@ -99,9 +99,9 @@ export function MoneyScreen(): React.JSX.Element {
   }, () => { request.renew(); nav.leave(); });
   return <Screen title={t(mode === "in" ? "cashIn" : mode === "out" ? "cashOut" : "transferCash")} eyebrow={item?.name} onBack={nav.back} footer={<>{action.notice}<Button label={t("save")} onPress={save} /></>}>
     <Section>
-      {mode === "transfer" && <Picker<Account> label={t("destination")} value={destination} onChange={setDestination} load={page => paymentAccounts(context, page)} revision={revision} />}
-      <Field label={t("amount")} value={amount} onChange={setAmount} kind="money" autoFocus={mode !== "transfer"} />
-      <Field label={t("reason")} value={reason} onChange={setReason} />
+      {mode === "transfer" && <Picker<Account> label={t("destination")} value={destination} onChange={setDestination} load={page => paymentAccounts(context, page)} revision={revision} hint={t("hint.transferDestination")} />}
+      <Field label={t("amount")} value={amount} onChange={setAmount} kind="money" autoFocus={mode !== "transfer"} hint={t("hint.movementAmount")} />
+      <Field label={t("reason")} value={reason} onChange={setReason} hint={t("hint.movementReason")} />
     </Section>
   </Screen>;
 }
@@ -129,7 +129,7 @@ export function CashCountScreen(): React.JSX.Element {
       <Facts items={[[t("expected"), formatMoney(current.result.expectedMinor)], [t("counted"), formatMoney(current.counted)],
         [t("difference"), formatMoney(current.result.differenceMinor), current.result.differenceMinor === 0 ? "strong" : "danger"]]} />
       {current.result.differenceMinor !== 0 && permissions.includes("cash.reconcile") && permissions.includes("cash.move") && <>
-        <Field label={t("reason")} value={reason} onChange={setReason} />
+        <Field label={t("reason")} value={reason} onChange={setReason} hint={t("hint.correctionReason")} />
         <Button label={t("correctCash")} variant="danger" disabled={reason.trim() === ""} onPress={() => setConfirming(true)} /></>}
     </Section>}
     <Confirm visible={confirming} destructive title={t("correctCash")} text={t("correctCashText", { amount: formatMoney(current?.result.differenceMinor ?? 0) })} confirmLabel={t("correctCash")}

@@ -26,21 +26,26 @@ export function entitlementOf(edition: Edition, paidUntil: Date | null, now: Dat
   return { edition: "hosted", status: now < paidUntil ? "active" : now < graceUntil ? "grace" : "inactive", paid_until: paidUntil.toISOString(), grace_until: graceUntil.toISOString() };
 }
 
-/** A payment to record: one plan per shop, so only the number of months matters for service. */
+/**
+ * A payment to record: one plan per shop, so only the paid time matters for service. Manual and webhook payments are
+ * whole months; a code payment may also, or only, carry days (a trial, ADR-039).
+ */
 export interface PaymentInput {
-  readonly shopId: string; readonly months: number; readonly amountMinor: number; readonly method: PaymentMethod;
+  readonly shopId: string; readonly months: number; readonly days?: number; readonly amountMinor: number; readonly method: PaymentMethod;
   readonly reference?: string | undefined; readonly source: "manual" | "webhook" | "code"; readonly externalId?: string | undefined; readonly recordedBy: string;
 }
 /** The stored effect of a payment: the paid-until date before and after it. */
 export interface RecordedPayment { readonly paymentId: string; readonly paidUntilBefore: string | null; readonly paidUntilAfter: string; readonly duplicate: boolean }
 
 /**
- * Records a payment and moves the shop's paid-until date forward by whole calendar months, from today if it had
- * lapsed or from its current end otherwise, in the caller's transaction. A repeated `externalId` (a provider retrying
+ * Records a payment and moves the shop's paid-until date forward by whole calendar months (then any days), from today
+ * if it had lapsed or from its current end otherwise, in the caller's transaction. A repeated `externalId` (a provider retrying
  * its webhook) changes nothing and returns the original payment.
  */
 export async function recordPayment(tx: Transaction<ServerDatabase>, input: PaymentInput, now: Date): Promise<RecordedPayment> {
-  if (!Number.isInteger(input.months) || input.months < 1 || input.months > 36) throw new BillingError(400, "invalid_months");
+  const days = input.days ?? 0;
+  if (!Number.isInteger(days) || days < 0 || days > 90 || days > 0 && input.source !== "code") throw new BillingError(400, "invalid_days");
+  if (!Number.isInteger(input.months) || input.months < (days > 0 ? 0 : 1) || input.months > 36) throw new BillingError(400, "invalid_months");
   if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor < 0) throw new BillingError(400, "invalid_amount");
   if (!PAYMENT_METHODS.includes(input.method)) throw new BillingError(400, "invalid_method");
   const reference = input.reference?.trim() || null;
@@ -55,9 +60,9 @@ export async function recordPayment(tx: Transaction<ServerDatabase>, input: Paym
   const shop = await tx.selectFrom("shops").select(["paid_until", "status"]).where("business_id", "=", input.shopId).forUpdate().executeTakeFirst();
   if (shop === undefined || shop.status === "removed") throw new BillingError(404, "not_found");
   const start = shop.paid_until !== null && shop.paid_until > now ? shop.paid_until : now;
-  const { after } = (await sql<{ after: Date }>`SELECT (${start}::timestamptz + make_interval(months => ${input.months}::int)) AS after`.execute(tx)).rows[0]!;
+  const { after } = (await sql<{ after: Date }>`SELECT (${start}::timestamptz + make_interval(months => ${input.months}::int, days => ${days}::int)) AS after`.execute(tx)).rows[0]!;
   const paymentId = randomUUIDv7();
-  await tx.insertInto("payments").values({ payment_id: paymentId, business_id: input.shopId, months: input.months, amount_minor: String(input.amountMinor), currency: "XAF",
+  await tx.insertInto("payments").values({ payment_id: paymentId, business_id: input.shopId, months: input.months, days, amount_minor: String(input.amountMinor), currency: "XAF",
     method: input.method, reference, source: input.source, external_id: input.externalId ?? null, recorded_by: input.recordedBy.slice(0, 120), paid_until_before: shop.paid_until, paid_until_after: after }).execute();
   await tx.updateTable("shops").set({ paid_until: after }).where("business_id", "=", input.shopId).execute();
   return { paymentId, paidUntilBefore: shop.paid_until?.toISOString() ?? null, paidUntilAfter: new Date(after).toISOString(), duplicate: false };
@@ -66,7 +71,7 @@ export async function recordPayment(tx: Transaction<ServerDatabase>, input: Paym
 /** A shop's payments, newest first. */
 export async function listPayments(db: Kysely<ServerDatabase>, shopId: string) {
   const rows = await db.selectFrom("payments").selectAll().where("business_id", "=", shopId).orderBy("recorded_at", "desc").limit(200).execute();
-  return rows.map(row => ({ paymentId: row.payment_id, months: row.months, amountMinor: Number(row.amount_minor), method: row.method, reference: row.reference, source: row.source,
+  return rows.map(row => ({ paymentId: row.payment_id, months: row.months, days: row.days, amountMinor: Number(row.amount_minor), method: row.method, reference: row.reference, source: row.source,
     recordedBy: row.recorded_by, recordedAt: row.recorded_at.toISOString(), paidUntilAfter: row.paid_until_after.toISOString() }));
 }
 

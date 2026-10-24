@@ -99,9 +99,9 @@ export function JoinByCode({ ports, files, platform, onActivated, onCancel }: {
   if (step.name === "shop") return <Section>
     <Text style={s.heading}>{step.invitation.businessName}</Text>
     <Text style={s.body}>{t("joinShopOf", { owner: step.invitation.ownerName })}</Text>
-    <Field label={t("deviceName")} value={label} onChange={setLabel} />
+    <Field label={t("deviceName")} value={label} onChange={setLabel} hint={t("hint.tillName")} />
     <Field label={t("newLocalSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("codeRule")} />
-    <Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" />
+    <Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" hint={t("hint.confirmCode")} />
     {notice}
     <Button label={t("askToJoin")} busy={busy} disabled={secret === "" || label.trim() === ""} onPress={() => { void ask(step); }} />
     <Button label={t("cancel")} variant="secondary" disabled={busy} onPress={cancel} />
@@ -112,7 +112,7 @@ export function JoinByCode({ ports, files, platform, onActivated, onCancel }: {
     <Button label={t(nearby ? "localJoinMode" : "serverJoinMode")} variant="secondary" onPress={() => setNearby(value => !value)} />
     <Button label={t("scanCode")} busy={busy} onPress={() => { void (async () => { if (permission?.granted !== true && !(await askPermission()).granted) { setProblem(t("cameraDenied")); return; } setScanning(true); })(); }} />
     <Text style={[s.muted, { textAlign: "center" }]}>{t("orTypeCode")}</Text>
-    <Field label={t("joinCodeLabel")} value={typed} onChange={setTyped} kind="code" placeholder="K7F2-9QXM-4D" />
+    <Field label={t("joinCodeLabel")} value={typed} onChange={setTyped} kind="code" placeholder="K7F2-9QXM-4D" hint={t("hint.joinCode")} />
     <Field label={t(nearby ? "localAddressLabel" : "serverAddressLabel")} value={address} onChange={setAddress} kind="code" placeholder={nearby ? "http://192.168.1.10:…" : "https://…"} hint={t("serverAddressHelp")} />
     {notice}
     <Button label={t("continue")} variant="secondary" busy={busy} disabled={typed.trim() === "" || address.trim() === "" && parseJoinLink(typed) === undefined && parseLocalJoinLink(typed) === undefined} onPress={() => {

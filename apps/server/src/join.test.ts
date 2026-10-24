@@ -110,8 +110,9 @@ it("a JSON enrollment as releases before ADR-035 sent it is refused and installs
     salt: crypto.randomHex(32), nonce: crypto.randomHex(12), compression: "deflate", plaintext_bytes: compressed.byteLength, content_bytes: plain.byteLength };
   const sealed = await crypto.encrypt(await crypto.derive(secret, header.salt, 600000), header.nonce, compressed, canonicalJson(header));
   const legacy = canonicalJson({ header, ...sealed }, 64 * 1024 * 1024);
-  // The mailbox MAC as join.ts defines it: HMAC under an HKDF key from the code, over the carried text's digest and the sealed password.
-  const key = await crypto.hkdf(Buffer.from(start.code, "utf8").toString("hex"), "", "kolo.join-mac.v1", 32);
+  // The mailbox MAC as join.ts defines it: HMAC under an HKDF key from the code's Argon2id key, over the carried text's digest and the sealed password.
+  const codeKey = await crypto.argon2id(crypto.encodeText(start.code), crypto.encodeText("kolo.join-key.v2"), { memoryKiB: 65536, passes: 3, parallelism: 1, length: 32 });
+  const key = await crypto.hkdf(Buffer.from(codeKey).toString("hex"), "", "kolo.join-mac.v2", 32);
   const mac = await crypto.hmac(key, `kolo.join.enrollment.v1\u0000${await crypto.sha256(legacy)}\u0000${canonicalJson(current.sealed_password)}`);
   await target.transport.joinEnroll(start.token, start.joinId, { enrollment: legacy, sealed_password: current.sealed_password, mac });
   // The MAC is genuine, so only the format check stops it.
@@ -143,4 +144,14 @@ it("a wrong code, a swapped invite, a forged request or a refused join never ins
   assert.equal(c.ports.database.get(`SELECT count(*) AS n FROM businesses`)!["n"], 0);
   assert.equal(Number((await query(target, `SELECT count(*)::int AS n FROM join_sessions`))[0].n), 0);
   assert.equal(await joinIdOf(second.code, crypto) === second.joinId, true);
+});
+
+it("the mailbox handle is derived from a memory-hard key of the code, never a fast hash an observer could search (ADR-044)", { skip }, async () => {
+  const code = "ABCDEFGHJK", handle = await joinIdOf(code, crypto);
+  assert.match(handle, /^[a-f0-9]{64}$/);
+  assert.notEqual(handle, await crypto.sha256(`kolo.join-id.v1\u0000${code}`), "not the fast hash earlier releases used");
+  const key = await crypto.argon2id(crypto.encodeText(code), crypto.encodeText("kolo.join-key.v2"), { memoryKiB: 65536, passes: 3, parallelism: 1, length: 32 });
+  assert.equal(handle, await crypto.hkdf(Buffer.from(key).toString("hex"), "", "kolo.join-id.v2", 32));
+  assert.equal(await joinIdOf(code, crypto), handle, "stable across polls");
+  assert.notEqual(await joinIdOf("ABCDEFGHJM", crypto), handle);
 });

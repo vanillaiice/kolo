@@ -1,4 +1,4 @@
-import { bootstrapResponseSchema, challengeSchema, entitlementSchema, joinEnrollmentSchema, joinOfferSchema, joinRequestSchema, pullResponseSchema, pushResponseSchema, receiptResponseSchema, serverIdentitySchema,
+import { bootstrapResponseSchema, challengeSchema, entitlementSchema, planSchema, joinEnrollmentSchema, joinOfferSchema, joinRequestSchema, pullResponseSchema, pushResponseSchema, receiptResponseSchema, serverIdentitySchema,
   sessionSchema, syncErrorSchema, syncStatusSchema, PULL_MAX_LIMIT } from "@kolo/contracts/sync";
 import { canonicalJson } from "@kolo/contracts/canonical";
 import { MAX_JOIN_ENROLLMENT_CHARS, type JoinEnrollment, type JoinRequestBody } from "@kolo/contracts/sync";
@@ -59,6 +59,7 @@ export function createHttpSyncTransport(baseUrl: string, options: { readonly fet
     receipt: async (token, receipt) => (await call("POST", "/sync/receipts", receiptResponseSchema, receipt, token)).acknowledged,
     status: token => call("GET", "/sync/status", syncStatusSchema, undefined, token),
     entitlements: token => call("GET", "/entitlements", entitlementSchema, undefined, token),
+    plan: token => call("GET", "/plan", planSchema, undefined, token),
     joinCreate: (token, offer) => call("POST", "/join", { safeParse: (value: unknown) => typeof value === "object" && value !== null && typeof (value as { expires_at?: unknown }).expires_at === "string" ? { success: true as const, data: value as { expires_at: string } } : { success: false as const } }, offer, token),
     joinRead: joinId => call("GET", `/join/${joinId}`, joinOfferSchema),
     joinRequest: async (joinId, body) => { await call("POST", `/join/${joinId}/request`, undefined, body); },

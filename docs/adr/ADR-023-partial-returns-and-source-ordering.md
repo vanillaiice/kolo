@@ -1,6 +1,8 @@
 # ADR-023: Partial returns and source ordering
 
 Date: 2026-10-06. Status: proposed policy, implemented for review against specification §41 and F4.
+Amended by [ADR-041](ADR-041-concurrent-returns.md): the owner may approve a concurrent `return_conflict`, and each
+return is computed against the returns it was signed against.
 
 A return is an immutable fact referencing one original sale/purchase and original items.
 Partial and full returns append stock movements, account refunds and customer/supplier

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FoundUpdate, UpdateService, UpdateView } from "../../shared/service.ts";
 import { parseNotes } from "../release-notes.ts";
-import { call, ErrorText, useAction, useText } from "./ui.tsx";
+import { call, Check, ErrorText, useAction, useText } from "./ui.tsx";
 
 /** The update state, kept current from the main process; undefined without an update service (tests, other hosts). */
 export function useUpdates(updates: UpdateService | undefined): UpdateView | undefined {
@@ -101,9 +101,8 @@ export function UpdatesPanel({ updates, view }: { readonly updates: UpdateServic
   const busy = action.busy || view.status.state === "checking" || view.status.state === "downloading";
   return <div className="panel"><h2>{t("updates")}</h2><p className="hint">{t("updatesHelp")}</p>
     <StatusText view={view}/><UpdateActions updates={updates} view={view}/>
-    {view.mode === "install" && <><label className="check" htmlFor="automatic-updates"><input id="automatic-updates" type="checkbox" checked={view.automatic} disabled={action.busy}
-      onChange={event => { void action.run(() => updates.setAutomaticUpdates({ enabled: event.target.checked })); }}/>{t("updateAutomatic")}</label>
-      <p className="hint">{t(view.installsOnClose ? "updateAutomaticHelp" : "updateAutomaticDebHelp")}</p></>}
+    {view.mode === "install" && <Check id="automatic-updates" label={t("updateAutomatic")} hint={t(view.installsOnClose ? "updateAutomaticHelp" : "updateAutomaticDebHelp")} checked={view.automatic} disabled={action.busy}
+      onChange={enabled => { void action.run(() => updates.setAutomaticUpdates({ enabled })); }}/>}
     <div className="actions"><button className="secondary" disabled={busy || view.status.state === "ready"} onClick={() => { void action.run(() => updates.checkForUpdate()); }}>{t("updateCheck")}</button></div>
     <ErrorText message={action.error}/>
   </div>;

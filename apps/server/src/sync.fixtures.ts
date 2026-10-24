@@ -68,7 +68,7 @@ hmacSha256:(key,data)=>new Uint8Array(createHmac("sha256",key).update(data).dige
 };
 
 export interface Device { db: Database; ports: WorkspacePorts; context: OperationContext; install: Installation; publicKey: string; privateKey: string; destination?: string }
-export interface Server { app: FastifyInstance; url: string; key: ServerKey; transport: SyncTransport; databaseUrl: string; invite(label?: string, days?: number, months?: number): Promise<{ code: string; token: string }> }
+export interface Server { app: FastifyInstance; url: string; key: ServerKey; transport: SyncTransport; databaseUrl: string; invite(label?: string, days?: number, months?: number, extra?: { readonly maxTills?: number | null; readonly includedDays?: number }): Promise<{ code: string; token: string }> }
 
 const sqlite: Database[] = [], databases: string[] = [], servers: Server[] = [];
 
@@ -132,7 +132,7 @@ export async function started(options: { rateLimitMax?: number; key?: ServerKey;
   app.addHook("onClose", async () => { await db.destroy(); });
   const url = await app.listen({ host: "127.0.0.1", port: 0 });
   const server: Server = { app, url, key, transport: createHttpSyncTransport(url), databaseUrl,
-    async invite(label = "Fixture shop", days = 7, months = 0) { const issued = await issueCode(db, key, url, CLI_ACTOR, { label, days, now: options.now?.() ?? new Date(), includedMonths: months }); return { code: issued.code, token: parseConnectionCode(issued.code)!.token! }; } };
+    async invite(label = "Fixture shop", days = 7, months = 0, extra = {}) { const issued = await issueCode(db, key, url, CLI_ACTOR, { label, days, now: options.now?.() ?? new Date(), includedMonths: months, ...extra }); return { code: issued.code, token: parseConnectionCode(issued.code)!.token! }; } };
   servers.push(server);
   return server;
 }

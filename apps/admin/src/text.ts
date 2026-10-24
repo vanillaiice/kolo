@@ -58,6 +58,14 @@ const strings = {
   issueRecovery: ["Créer un code de récupération", "Issue a recovery code"], recovery: ["récupération", "recovery"],
   public_url_missing: ["Définissez KOLO_PUBLIC_URL sur le serveur pour créer des codes.", "Set KOLO_PUBLIC_URL on the server to create codes."],
   network: ["Le serveur ne répond pas.", "The server is not answering."], internal: ["Une erreur est survenue.", "Something went wrong."],
+  tillLimit: ["Caisses autorisées", "Tills allowed"], unlimitedTills: ["Illimité", "Unlimited"], tillsOf: ["sur", "of"], waiting: ["en attente", "waiting"],
+  tillLimitHelp: ["Le nombre de caisses qui peuvent synchroniser. Une caisse de plus est gardée en attente jusqu’à ce qu’une place se libère ; le personnel reste illimité.", "How many tills may sync. One more till is held waiting until a place frees; staff stay unlimited."],
+  tillLimitChoose: ["Indiquez un nombre de caisses ou cochez « Illimité ».", "Give a number of tills or tick “Unlimited”."],
+  trialDays: ["Jours d’essai", "Trial days"], trialDaysShort: ["j d’essai", "trial days"], tillsShort: ["caisses", "tills"],
+  saveLimit: ["Enregistrer la limite", "Save the limit"], limitSaved: ["Limite enregistrée.", "Limit saved."], released: ["caisse(s) en attente peuvent maintenant synchroniser.", "waiting till(s) may sync now."],
+  heldTill: ["en attente d’une place", "waiting for a place"], daysShort: ["j", "d"],
+  invalid_till_limit: ["Choisissez de 1 à 1000 caisses, ou illimité.", "Choose 1 to 1000 tills, or unlimited."], till_limit_required: ["Indiquez un nombre de caisses ou cochez « Illimité ».", "Give a number of tills or tick “Unlimited”."],
+  invalid_trial_days: ["Choisissez de 0 à 90 jours d’essai.", "Choose 0 to 90 trial days."], not_found: ["Introuvable.", "Not found."],
 } as const;
 
 export type TextKey = keyof typeof strings;

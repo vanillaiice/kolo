@@ -5,6 +5,8 @@ a real server remains. "Implementation notes" below records where the build refi
 [ADR-029](ADR-029-sync-server-relay.md): replaces its deployment-wide enrollment code and its
 "the server holds signed business facts in plaintext" consequence, and drops server-side business
 application and centralized reports from F6.
+Amended by [ADR-040](ADR-040-revoked-device-history.md) (revoked origins are still relayed) and
+[ADR-043](ADR-043-vouched-positions.md) (only a vouched fact holds its origin position).
 
 ## Context
 

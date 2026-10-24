@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BackHandler, Pressable, Text, View, useWindowDimensions } from "react-native";
+import { BackHandler, Text, View, useWindowDimensions } from "react-native";
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { ActiveContext, usePermissions } from "../../app/session.tsx";
 import { availableTabs } from "../../app/destinations.ts";
@@ -7,6 +8,7 @@ import { GuardContext, NavigationContext, RouteContext, type Navigation, type Ro
 import { useText, type TextKey } from "../../app/i18n.tsx";
 import { spacing, TOUCH_TARGET, useTheme, WIDE_LAYOUT } from "../../components/theme.ts";
 import { BelowScreenContext, Confirm } from "../../components/ui.tsx";
+import { AnimatedPressable, DURATION, popOut, pushIn, useColorTransition, usePressMotion } from "../../components/motion.ts";
 import { DETAIL_ROUTES, SCREENS } from "./routes.tsx";
 import { useAlertAnnouncer } from "../more/alerts.tsx";
 
@@ -19,7 +21,8 @@ const route = <K extends RouteName>(name: K, params: RouteMap[K]): Route => ({ k
  * Operational shell: four destinations (bottom bar on phones, side rail from 600 dp) each with a
  * list → detail → action stack. Hidden stack screens stay mounted to keep search and scroll, but
  * freeze their queries. Back closes sheets (handled by the sheet), pops the stack with a discard
- * check, returns to the landing destination, then leaves the app.
+ * check, returns to the landing destination, then leaves the app. Pushed screens slide in from the
+ * right and leave the same way; changing destination cross-fades the content.
  */
 export function Shell(): React.JSX.Element {
   const { t } = useText(), { colors } = useTheme(), permissions = usePermissions(), { width, fontScale } = useWindowDimensions();
@@ -64,41 +67,54 @@ export function Shell(): React.JSX.Element {
     return () => subscription.remove();
   }, [navigation, stack.length, tab, landing, pendingLeave]);
 
+  // The new destination's content fades up from partly visible, so the change reads without hiding anything for long.
+  const shown = useSharedValue(1), fade = useAnimatedStyle(() => ({ opacity: shown.value }));
+  const previousTab = useRef(tab);
+  useEffect(() => {
+    if (previousTab.current === tab) return;
+    previousTab.current = tab; shown.value = 0.35; shown.value = withTiming(1, { duration: DURATION.screen });
+  }, [tab, shown]);
+
   const register = useCallback((key: string, dirty: boolean) => { if (dirty) guards.current.set(key, true); else guards.current.delete(key); }, []);
   const top = stack.length - 1, split = wide && top > 0 && DETAIL_ROUTES.has(stack[top]!.name);
 
   const destinations = <View accessibilityRole="tablist" onLayout={event => setBarHeight(wide ? 0 : event.nativeEvent.layout.height)} style={wide
     ? { width: 96, backgroundColor: colors.surface, borderRightWidth: 1, borderRightColor: colors.border, paddingVertical: spacing.md, gap: spacing.xs }
     : { flexDirection: "row", backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
-    {tabs.map(item => {
-      const on = item === tab;
-      return <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={t(TAB_LABEL[item])}
-        onPress={() => on ? navigation.open(item) : setSelected(item)}
-        style={{ flex: wide ? undefined : 1, minHeight: TOUCH_TARGET + 8, alignItems: "center", justifyContent: "center", paddingVertical: spacing.xs,
-          borderTopWidth: wide ? 0 : 3, borderLeftWidth: wide ? 3 : 0, borderColor: on ? colors.primary : "transparent", backgroundColor: on ? colors.selected : "transparent" }}>
-        <Text importantForAccessibility="no" style={{ fontSize: 18, color: on ? colors.selectedInk : colors.muted }}>{TAB_GLYPH[item]}</Text>
-        <Text numberOfLines={1} style={{ fontSize: 12, fontWeight: on ? "700" : "500", color: on ? colors.selectedInk : colors.muted }}>{t(TAB_LABEL[item])}</Text>
-      </Pressable>;
-    })}
+    {tabs.map(item => <TabItem key={item} label={t(TAB_LABEL[item])} glyph={TAB_GLYPH[item]} on={item === tab} wide={wide}
+      onPress={() => item === tab ? navigation.open(item) : setSelected(item)} />)}
   </View>;
 
   return <SafeAreaView edges={["top", "bottom", "left", "right"]} style={{ flex: 1, backgroundColor: colors.canvas }}>
     <NavigationContext.Provider value={navigation}><GuardContext.Provider value={register}><BelowScreenContext.Provider value={wide ? bottomInset : barHeight + bottomInset}>
       <View style={{ flex: 1, flexDirection: wide ? "row" : "column-reverse" }}>
         {destinations}
-        <View style={{ flex: 1, flexDirection: "row" }}>
+        <Animated.View style={[{ flex: 1, flexDirection: "row" }, fade]}>
           {stack.map((item, index) => {
             const visible = index === top || (split && index === top - 1);
             const Screen = SCREENS[item.name];
-            return <View key={item.key} style={visible ? { flex: split ? index === top ? 3 : 2 : 1, borderRightWidth: split && index === top - 1 ? 1 : 0, borderRightColor: colors.border } : { display: "none" }}
+            // Destination roots are there from the start; only screens pushed on top of them move.
+            return <Animated.View key={item.key} {...(index > 0 ? { entering: pushIn, exiting: popOut } : {})}
+              style={visible ? { flex: split ? index === top ? 3 : 2 : 1, borderRightWidth: split && index === top - 1 ? 1 : 0, borderRightColor: colors.border } : { display: "none" }}
               importantForAccessibility={visible ? "auto" : "no-hide-descendants"}>
               <ActiveContext.Provider value={visible}><RouteContext.Provider value={item}><Screen /></RouteContext.Provider></ActiveContext.Provider>
-            </View>;
+            </Animated.View>;
           })}
-        </View>
+        </Animated.View>
       </View>
       <Confirm visible={pendingLeave !== undefined} title={t("discardTitle")} text={t("discardText")} confirmLabel={t("discard")} destructive
         onCancel={() => setPendingLeave(undefined)} onConfirm={() => { const leave = pendingLeave; setPendingLeave(undefined); leave?.(); }} />
     </BelowScreenContext.Provider></GuardContext.Provider></NavigationContext.Provider>
   </SafeAreaView>;
+}
+
+/** One destination in the bottom bar or side rail; the selection colour and indicator change smoothly. */
+function TabItem({ label, glyph, on, wide, onPress }: { readonly label: string; readonly glyph: string; readonly on: boolean; readonly wide: boolean; readonly onPress: () => void }): React.JSX.Element {
+  const { colors } = useTheme(), press = usePressMotion(), transition = useColorTransition();
+  return <AnimatedPressable accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={label} onPress={onPress} onPressIn={press.onPressIn} onPressOut={press.onPressOut}
+    style={[{ flex: wide ? undefined : 1, minHeight: TOUCH_TARGET + 8, alignItems: "center", justifyContent: "center", paddingVertical: spacing.xs,
+      borderTopWidth: wide ? 0 : 3, borderLeftWidth: wide ? 3 : 0, borderColor: on ? colors.primary : "transparent", backgroundColor: on ? colors.selected : "transparent", ...transition }, press.style]}>
+    <Text importantForAccessibility="no" style={{ fontSize: 18, color: on ? colors.selectedInk : colors.muted }}>{glyph}</Text>
+    <Text numberOfLines={1} style={{ fontSize: 12, fontWeight: on ? "700" : "500", color: on ? colors.selectedInk : colors.muted }}>{label}</Text>
+  </AnimatedPressable>;
 }

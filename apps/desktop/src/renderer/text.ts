@@ -1,4 +1,6 @@
-const strings = {
+import { formText } from "./text-forms.ts";
+
+const baseStrings = {
   setupNamesInput: ["Renseignez le nom de la boutique, votre nom et les noms de caisse et du compte espèces.", "Enter the shop name, your name, and the till and cash account names."],
   beforeYouStart: ["Avant de commencer", "Before you start"],
   entryWelcome: ["Comment souhaitez-vous commencer ?", "How would you like to start?"],
@@ -27,7 +29,7 @@ const strings = {
   localGuideHelp: ["Votre boutique et ses données sont enregistrées sur cet ordinateur. Chaque utilisateur l’ouvre avec son propre code.", "Your shop and its data are saved on this computer. Each user opens it with their own code."],
   offlineGuide: ["Vous pouvez travailler sans connexion Internet.", "You can work without an internet connection."],
   otherOptions: ["Autres options", "Other options"],
-  newChoiceHelp: ["Commencez avec une boutique vide et choisissez un nouveau code.", "Start with an empty shop and choose a new code."],
+  newChoiceHelp: ["Commencez, rejoignez ou importez une autre boutique. Celle-ci est mise de côté, pas effacée.", "Start, join or import another shop. This one is set aside, not erased."],
   createChoiceHelp: ["Pour une nouvelle activité : donnez un nom à votre boutique et créez votre accès.", "For a new business: name your shop and set up your access."],
   confirmNewShop: ["Confirmer avant de commencer", "Confirm before you start"],
   continueSetup: ["Passer à la configuration", "Continue to setup"],
@@ -63,15 +65,20 @@ const strings = {
   keyReady: ["Votre accès est prêt", "Your access is ready"],
 
   startNewShop: ["Créer une nouvelle boutique", "Start a new shop"],
-  startNewShopHelp: ["Repartez avec une boutique vide et choisissez de nouveaux codes. La boutique actuelle est conservée séparément.", "Start with an empty shop and choose new codes. Your current shop is kept separately."],
+  startNewShopHelp: ["Mettez cette boutique de côté pour en créer, rejoindre ou importer une autre. Elle reste sur cet ordinateur et s’ouvre toujours avec ses propres codes.", "Set this shop aside to start, join or import another. It stays on this computer and still opens with its own codes."],
+  setAsideContinue: ["Mettre de côté et continuer", "Set aside and continue"],
   startNewShopConfirm: ["Pour confirmer, saisissez le nom affiché :", "To confirm, type the name shown:"],
   startNewShopName: ["Nom affiché", "Displayed name"],
+  savedShopsTitle: ["Rouvrir une boutique mise de côté", "Reopen a set-aside shop"],
+  savedShopsHelp: ["Ces boutiques sont toujours sur cet ordinateur. Chacune s’ouvre avec ses propres codes.", "These shops are still on this computer. Each one opens with its own codes."],
+  savedShopLastUsed: ["Utilisée pour la dernière fois le {date}", "Last used {date}"],
+  reopenSavedShop: ["Rouvrir avec son code ou sa clé de récupération", "Reopen with its code or recovery key"],
   recoverHelp: ["Remplacez le code du propriétaire avec sa clé de récupération. Les articles, ventes et autres données de la boutique sont conservés.", "Replace the owner’s code using their recovery key. The shop’s products, sales and other data are kept."],
   skipContent: ["Aller au contenu", "Skip to content"],
   identityInput: ["Vérifiez les noms et utilisez un code de 6 à 8 chiffres ou un mot de passe de 12 caractères minimum.", "Check the names and use a 6–8 digit code or a password of at least 12 characters."],
   welcome: ["Votre boutique. Votre caisse.", "Your shop. Your till."],
   welcomeHelp: ["Créez votre boutique et commencez à vendre, même sans connexion.", "Set up your shop and start selling, even without a connection."],
-  offline: ["Disponible hors connexion", "Available offline"], local: ["Enregistré sur cet ordinateur", "Saved on this computer"],
+  connectedTo: ["Connecté à {server}", "Connected to {server}"], local: ["Enregistré sur cet ordinateur", "Saved on this computer"],
   shopName: ["Nom de la boutique", "Shop name"], ownerName: ["Votre nom", "Your name"], deviceName: ["Nom de cette caisse", "Till name"],
   cashName: ["Nom du compte espèces", "Cash account name"], defaultTill: ["Caisse principale", "Main till"], defaultCash: ["Espèces", "Cash"],
   secret: ["Code ou mot de passe", "Code or password"], secretHelp: ["Code de 6 à 8 chiffres, ou mot de passe de 12 caractères minimum.", "A 6–8 digit code, or a password of at least 12 characters."],
@@ -271,7 +278,7 @@ const strings = {
   refundAccount: ["Compte du remboursement", "Refund account"], toCustomerAccount: ["Crédité sur le compte du client", "Credited to the customer’s account"],
   toSupplierAccount: ["Déduit de la dette fournisseur", "Deducted from the supplier debt"], needsFullRefund: ["Sans client ou fournisseur, le remboursement doit couvrir tout le retour.", "Without a customer or supplier, the refund must cover the whole return."],
   refundTooLarge: ["Le remboursement dépasse la valeur du retour.", "The refund is more than the return is worth."], refundExceedsPaid: ["Le remboursement dépasse ce qui a été réglé ; le reste va au compte.", "The refund is more than was paid; the rest goes to the account."], refundableUpTo: ["Remboursable au plus :", "Refundable up to:"], recordReturn: ["Enregistrer le retour", "Record return"], returnSaved: ["Retour enregistré.", "Return saved."], nothingReturnable: ["Tout a déjà été retourné.", "Everything has already been returned."],
-  returned: ["Retourné", "Returned"], stale_return: ["Un autre retour a été enregistré entre-temps. Rechargez avant de recommencer.", "Another return was recorded meanwhile. Reload before trying again."],
+  returned: ["Retourné", "Returned"], stale_return: ["Un autre retour a été enregistré entre-temps. Rechargez avant de recommencer. Si deux caisses ont repris cette vente en même temps, elle n’accepte plus de retour.", "Another return was recorded meanwhile. Reload before trying again. If two tills took back this sale at the same time, it takes no further returns."],
   invalid_photo: ["Cette image ne peut pas être utilisée. Choisissez une photo JPEG, PNG ou WebP.", "This image cannot be used. Choose a JPEG, PNG or WebP photo."],
   photo_storage_full: ["L’espace réservé aux photos est plein. Retirez des photos puis réessayez.", "The shop's photo storage is full. Remove photos and retry."],
   addPhoto: ["Ajouter une photo", "Add photo"], changePhoto: ["Changer la photo", "Change photo"], removePhoto: ["Retirer la photo", "Remove photo"], processingPhoto: ["Préparation…", "Preparing…"],
@@ -423,6 +430,9 @@ const strings = {
   connection_code_used: ["Ce code de connexion a déjà servi. Demandez-en un nouveau.", "This connection code was already used. Ask for a new one."],
   connection_code_expired: ["Ce code de connexion a expiré. Demandez-en un nouveau.", "This connection code has expired. Ask for a new one."],
   shop_suspended: ["La synchronisation de cette boutique est suspendue par le gestionnaire du serveur. La caisse continue de fonctionner.", "Sync for this shop is suspended by whoever runs the server. The till keeps working."],
+  till_limit_reached: ["La boutique a atteint le nombre de caisses de son abonnement. Retirez une caisse ou augmentez l’abonnement pour en synchroniser une autre ; les caisses continuent de fonctionner.", "The shop has reached its plan’s number of tills. Remove a till or raise the plan to sync another; tills keep working."],
+  planTills: ["Votre abonnement permet {max} caisses ({count} utilisées).", "Your plan allows {max} tills ({count} in use)."],
+  planUnlimitedTills: ["Caisses illimitées ({count} utilisées).", "Unlimited tills ({count} in use)."],
   hosted_service_inactive: ["L’abonnement de synchronisation de cette boutique a expiré. La caisse continue de fonctionner ; tout sera envoyé dès le renouvellement.", "This shop’s sync subscription has expired. The till keeps working; everything is sent as soon as it is renewed."],
   servicePaidUntil: ["Abonnement payé jusqu’au", "Subscription paid until"],
   serviceGrace: ["Abonnement expiré : la synchronisation s’arrêtera le", "Subscription expired: sync stops on"],
@@ -486,6 +496,13 @@ const strings = {
   journalHelp: ["Qui a fait quoi, quand et sur quel appareil. Les opérations des autres caisses apparaissent une fois synchronisées ; rien ne peut y être modifié.", "Who did what, when and on which device. Other tills’ operations appear once synced; nothing here can be changed."],
   journalWho: ["Qui", "Who"], journalDevice: ["Appareil", "Device"], journalWhat: ["Opération", "Operation"], journalRecord: ["Concerne", "Record"], journalDetails: ["Détails", "Details"],
   journalAnyone: ["Tout le monde", "Everyone"], journalAnyDevice: ["Tous les appareils", "All devices"], journalAnyGroup: ["Toutes les opérations", "All operations"], journalFamily: ["Type", "Type"],
+  heldBackTitle: ["En attente de votre accord", "Waiting for your approval"],
+  heldBackHelp: ["Ces opérations viennent d’autres caisses et ont été mises de côté. Vérifiez chacune avant de l’accepter : elle sera alors enregistrée ici, sous toutes les autres règles.", "These operations came from other tills and were held back. Check each one before accepting it: it is then recorded here, under every other rule."],
+  "heldBack.permission_denied": ["La personne n’avait pas ce droit sur cette caisse.", "The person did not have this right on this till."],
+  "heldBack.authority_revision": ["Faite sous des droits que cette caisse ne connaît plus.", "Made under rights this till no longer knows."],
+  "heldBack.device_revoked": ["Faite par une caisse retirée, après la limite que vous aviez acceptée.", "Made by a removed till, after the point you accepted."],
+  "heldBack.return_conflict": ["Un autre retour de la même vente a été fait en même temps. Les deux remboursements ont déjà été versés ; après accord, cette vente n’accepte plus de retour.", "Another return of the same sale was made at the same time. Both refunds were already paid; once accepted, this sale takes no further returns."],
+  heldBackApprove: ["Accepter…", "Accept…"], heldBackConfirm: ["Oui, enregistrer cette opération", "Yes, record this operation"],
   journalAll: ["Tout", "All"], journalEmpty: ["Aucune opération pour ces critères.", "No operations match."], journalShowRecord: ["Voir l’historique de", "Show the history of"],
   journalOnlyRecord: ["Historique de", "History of"], journalClearRecord: ["Tout afficher", "Show everything"], journalUnknown: ["inconnu", "unknown"],
   journalThisDevice: ["Cet appareil seulement", "This device only"], journalThisDeviceHelp: ["Un comptage qui n’a rien changé n’est enregistré que sur l’appareil où il a été fait.", "A count that changed nothing is recorded only on the device where it was made."],
@@ -514,7 +531,7 @@ const strings = {
   "j.OWNER_ACCESS_RECOVERED": ["Accès du propriétaire récupéré", "Owner access recovered"],
   "j.DEVICE_TRUSTED": ["Appareil autorisé", "Device approved"], "j.DEVICE_REVOKED": ["Appareil retiré", "Device removed"], "j.DEVICE_ENCRYPTION_KEY": ["Clé de chiffrement d’un appareil", "Device encryption key"],
   "j.SHOP_KEY_GRANTED": ["Clé de boutique transmise", "Shop key granted"], "j.SERVER_ENDPOINT_SET": ["Serveur de synchronisation choisi", "Sync server chosen"],
-  "j.SERVER_ENDPOINT_CLEARED": ["Serveur de synchronisation retiré", "Sync server removed"], "j.SHOP_BACKUP_KEY": ["Clé de récupération des sauvegardes", "Backup recovery key"],
+  "j.SERVER_ENDPOINT_CLEARED": ["Serveur de synchronisation retiré", "Sync server removed"], "j.DEVICE_HISTORY_ACCEPTED": ["Historique de l’appareil accepté", "Device history accepted"], "j.SHOP_BACKUP_KEY": ["Clé de récupération des sauvegardes", "Backup recovery key"],
   "j.other": ["Autre opération", "Other operation"],
   "jd.price": ["Prix {value}", "Price {value}"], "jd.cost": ["Coût {value}", "Cost {value}"], "jd.lines": ["{count} lignes", "{count} lines"], "jd.counted": ["compté {counted}, attendu {expected}", "counted {counted}, expected {expected}"],
   "jd.difference": ["écart {value}", "difference {value}"], "jd.days": ["{count} jours", "{count} days"], "jd.defaultDays": ["délai par défaut", "default terms"],
@@ -525,6 +542,7 @@ const strings = {
   pdfName: ["Nom", "Name"], pdfUncategorized: ["Sans catégorie", "Uncategorized"], pdfNoSupplier: ["Sans fournisseur", "No supplier"],
   pdfPeriod: ["Du {from} au {to}", "From {from} to {to}"], pdfAsOf: ["Situation au {date}", "As of {date}"], pdfPrinted: ["Imprimé le {date}", "Printed on {date}"],
 } as const;
+const strings = { ...baseStrings, ...formText } as const;
 export type TextKey = keyof typeof strings;
 export type Language = "fr" | "en";
 /** Keyed French/English DOM UI text, with no translated business calculations. */

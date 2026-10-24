@@ -1,5 +1,7 @@
 import { analyticsView, reportView, REPORT_KINDS } from "@kolo/core/application/report-views";
 import { auditExport, auditTrail, AUDIT_GROUPS, type AuditEntry, type AuditGroup, type AuditPage, type AuditQuery } from "@kolo/core/application/audit";
+import { heldBackFacts, reviewQuarantinedEvent, type HeldBackFact } from "@kolo/core/application/event-application";
+import { ExchangeError } from "@kolo/core/exchange/types";
 import { WorkspaceError } from "@kolo/core/identity/types";
 import type { AnalyticsBucket, AnalyticsResult, ReportKind, ReportResult } from "../shared/service.js";
 import { object, optional, text, uuid, whole } from "./validation.ts";
@@ -42,6 +44,24 @@ export function journal(host: Host, input: unknown): AuditPage {
 export function journalExport(host: Host, input: unknown): { readonly items: readonly AuditEntry[]; readonly truncated: boolean } {
   const data = object(input, ["sessionId", "from", "until", "actorId", "deviceId", "group", "subjectId"]), context = host.actor(data);
   return auditExport(context, filters(data));
+}
+
+/** Owner only: other tills' facts held back for a reason the owner may approve (core `heldBackFacts`). */
+export function heldBack(host: Host, input: unknown): readonly HeldBackFact[] {
+  return heldBackFacts(host.actor(object(input, ["sessionId"])));
+}
+
+/** Owner approves one exact held-back fact by its digest; it is then applied under every other check. */
+export function reviewHeldBack(host: Host, input: unknown): { readonly outcome: string } {
+  const data = object(input, ["sessionId", "eventId", "digest"]), digest = text(data["digest"], 64, false);
+  if (!/^[a-f0-9]{64}$/.test(digest)) throw new WorkspaceError("invalid_input");
+  const context = host.actor(data), eventId = uuid(data["eventId"]);
+  try { return { outcome: reviewQuarantinedEvent(context, eventId, digest) }; }
+  catch (error) {
+    // Not held back for a reviewable reason, another digest, or not the owner: one stable refusal.
+    if (error instanceof ExchangeError && error.code === "permission_denied") throw new WorkspaceError("permission_denied");
+    throw error;
+  }
 }
 
 function filters(data: Record<string, unknown>): Omit<AuditQuery, "after" | "limit"> {

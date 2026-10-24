@@ -81,6 +81,11 @@ export const syncStatusSchema = z.strictObject({ pending: count, delivered: coun
  */
 export const entitlementSchema = z.strictObject({ edition: z.enum(["selfhost", "hosted"]), status: z.enum(["unlimited", "active", "grace", "inactive"]),
   paid_until: timestamp.nullable(), grace_until: timestamp.nullable() });
+/**
+ * The shop's till limit (ADR-039): `max_tills` null is unlimited; `tills` counts the active tills that hold a place.
+ * A separate endpoint, since tills parse `entitlementSchema` strictly.
+ */
+export const planSchema = z.strictObject({ max_tills: z.number().int().min(1).max(1000).nullable(), tills: count });
 /** Stable failure body; never contains payloads, credentials or internals. */
 export const syncErrorSchema = z.strictObject({ error: z.strictObject({ code: z.string().max(64), retry: z.boolean().optional() }) });
 
@@ -98,6 +103,7 @@ export type PullResponse = z.infer<typeof pullResponseSchema>;
 export type BootstrapResponse = z.infer<typeof bootstrapResponseSchema>;
 export type SyncStatus = z.infer<typeof syncStatusSchema>;
 export type Entitlement = z.infer<typeof entitlementSchema>;
+export type Plan = z.infer<typeof planSchema>;
 export type SealedEvent = z.infer<typeof sealedEventSchema>;
 export type SyncEvent = z.infer<typeof syncEventSchema>;
 export type SyncBatch = z.infer<typeof syncBatchSchema>;
@@ -146,7 +152,7 @@ export function parseConnectionCode(text: string): ConnectionCode | undefined {
 
 /**
  * Join codes (ADR-032): 10 Crockford base32 characters (50 bits) shown as `XXXX-XXXX-XX` on the owner's till. The
- * server only ever sees `joinIdOf(code)`; both tills derive a MAC key from the code itself.
+ * server only ever sees `joinIdOf(code)`; both tills derive it and a MAC key from an Argon2id key of the code (ADR-044).
  */
 export const JOIN_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const JOIN_LINK = /kolo:\/\/join\?[^\s"'<>]+/i;

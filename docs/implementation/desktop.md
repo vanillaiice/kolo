@@ -59,9 +59,10 @@ whole desktop edition.
 
 The locked screen offers "Forgot your code?" for owner recovery with the saved recovery
 key. When neither the code nor the key is available, **Import a backup** replaces the
-computer's shop (see "Desktop entry flow"). Legacy installations can import a backup or
-start a new shop, which confirms the displayed name (`KOLO` when none is configured) and
-activates a migrated empty slot. Existing files and credential records stay separate and
+computer's shop (see "Desktop entry flow"), or **Start a new shop** (on the login, pending-setup
+and recovery screens, and for legacy installations) sets it aside: it confirms the displayed name
+(`KOLO` when none is configured), activates a migrated empty slot and returns to the empty home,
+where the till can create, join or import a shop, or reopen a set-aside one with its own code. Existing files and credential records stay separate and
 protected; neither path unlocks or modifies the old shop.
 The command is refused while unlocked and must be used after locking. Durable slot
 activation and single-flight identity handling reuse the restore/pairing infrastructure.
@@ -429,3 +430,24 @@ One shop per computer, three tasks (user decision 2026-10-09):
 Saved-shop pickers and "start a new shop" on the login page were removed. Adding another till is started by the owner from Backup & devices.
 
 The welcome screen presents three explained choices: create a shop, restore a backup file, or join another till’s shop. Retained shops appear alongside these choices and open with their original code. New setup has two steps (shop details, then owner access), keeps details when going back, and supplies default till/cash account names under an optional customization section. Login names the selected shop, groups the user/code fields together, and keeps shop switching in the side panel. Owner-code recovery explains the saved recovery key and returns to login with a confirmation after replacement. Backup and joining screens share the same desktop task/guidance layout and explain their file requirements before opening native pickers.
+
+### Motion
+
+Screens fade up a few pixels when shown (hidden sections restart it when shown again; entry steps
+animate through the Web Animations API so their forms keep state), notices, alerts and new cart
+lines fade in, dialogs scale in from 98 %, and buttons, choices, tiles, tabs, rows and inputs
+transition their colours, with a one-pixel press. Only opacity and transform move, so layout and
+measurements never change, and `prefers-reduced-motion` turns all of it off. The workflow smoke's
+accessibility audits and screenshots wait until `document.getAnimations()` is empty.
+
+### Field descriptions and connection status
+
+Every desktop form control says what it is for, as on mobile: `Field`, `Select` and `Check` require `hint`
+(`renderer/text-forms.ts`, keys `hint.*`), shown under the control and linked with `aria-describedby`; `null` marks the
+reviewed exceptions (inline cart quantities). List filters ("Show archived"), category multi-selects, the
+permission grid and inline split-payment cells stay plain. Paired fields use a subgrid so labels, inputs and
+descriptions line up across both columns.
+
+The sidebar footer reads "Connected to <server host>" while a server's last attempt succeeded (re-read every 30 s and
+on each data change) and shows nothing otherwise; the former "Available offline" labels (entry header, sidebar, till)
+are gone, since working offline is the normal state.

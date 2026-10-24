@@ -1,14 +1,15 @@
-import { app, BrowserWindow, dialog, ipcMain, powerMonitor, safeStorage, nativeTheme, shell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor, protocol, safeStorage, nativeTheme, shell, type IpcMainInvokeEvent } from "electron";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "node:crypto";
 import { desktopStatus } from "./database.js";
 import { DesktopApplication } from "./application.js";
 import { desktopSessionMemory } from "./session-memory.js";
 import { desktopHandlers } from "./handlers.js";
-import { isRendererUrl } from "./renderer-origin.js";
+import { isRendererUrl, rendererFile, RENDERER_SCHEME, RENDERER_URL } from "./renderer-origin.js";
 import { localCredentialsOnDesktop, desktopSealingCrypto } from "./local-credentials.js";
 import { clearOutgoing, pickDesktopTransferFile, saveDesktopExportFile, saveDesktopPdfFile, saveDesktopTransferFile, saveDesktopTransferStream } from "./transfer-files.js";
 import { renderPdf } from "./pdf.js";
@@ -25,6 +26,8 @@ const selfCheck = process.argv.includes("--self-check");
 const benchmarkSmoke = process.argv.includes("--benchmark-smoke");
 const bootStart = performance.now();
 nativeTheme.themeSource = "system";
+// Must precede `ready`: a standard, secure scheme gives the renderer its own origin for CSP `'self'`.
+protocol.registerSchemesAsPrivileged([{ scheme: RENDERER_SCHEME, privileges: { standard: true, secure: true } }]);
 const windowBackground = (): string => nativeTheme.shouldUseDarkColors ? "#1f2b25" : "#f4f7f3";
 if (smokeTest || workflowSmoke || benchmarkSmoke) {
   const temporaryDirectory = process.env["KOLO_DESKTOP_SMOKE_DIR"];
@@ -116,11 +119,17 @@ if (selfCheck) {
         return created;
       };
       application = await serve(database);
-      const rendererPath = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
+      const rendererRoot = fileURLToPath(new URL("../renderer/", import.meta.url));
+      protocol.handle(RENDERER_SCHEME, async request => {
+        const file = rendererFile(request.url, rendererRoot);
+        if (file === undefined) return new Response(null, { status: 404 });
+        try { return new Response(await readFile(file.path), { headers: { "content-type": file.type, "x-content-type-options": "nosniff" } }); }
+        catch { return new Response(null, { status: 404 }); }
+      });
       const trusted = (candidate: unknown): boolean => {
         const event = candidate as IpcMainInvokeEvent;
         return !closing && window !== undefined && !window.isDestroyed() && event.sender === window.webContents &&
-          event.senderFrame === window.webContents.mainFrame && isRendererUrl(event.senderFrame?.url, rendererPath);
+          event.senderFrame === window.webContents.mainFrame && isRendererUrl(event.senderFrame?.url);
       };
       for (const [channel, handler] of Object.entries(desktopHandlers(() => application!, () => desktopStatus(database!), trusted))) ipcMain.handle(channel, handler);
       // Smoke and benchmark runs of a packaged build never look for updates.
@@ -155,7 +164,7 @@ if (selfCheck) {
       window.webContents.on("will-attach-webview", event => event.preventDefault());
       window.webContents.on("will-navigate", event => event.preventDefault());
       interval = setInterval(() => { void application?.seal(); }, 3000);
-      await window.loadFile(rendererPath);
+      await window.loadURL(RENDERER_URL);
       if (!window.isVisible()) window.show();
       loaded = true;
       updates.start();

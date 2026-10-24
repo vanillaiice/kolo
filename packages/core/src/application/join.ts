@@ -28,9 +28,30 @@ export interface JoinCandidate { readonly label: string; readonly platform: stri
 export interface JoinInvitation { readonly businessName: string; readonly ownerName: string; readonly authorityAllowed: boolean; readonly inviteText: string }
 
 const toHex = (bytes: Uint8Array): string => Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
-/** The server's handle for a code: a hash, so the mailbox never names the code itself. */
-export async function joinIdOf(code: string, crypto: SealingCrypto): Promise<string> { return crypto.sha256(`kolo.join-id.v1\u0000${code}`); }
-async function macKey(code: string, crypto: SealingCrypto): Promise<string> { return crypto.hkdf(toHex(crypto.encodeText(code)), "", "kolo.join-mac.v1", 32); }
+// The parameters every platform's startup check already proves (platform-check.ts); about a second on a phone.
+const JOIN_KDF = { memoryKiB: 65536, passes: 3, parallelism: 1, length: 32 } as const;
+const joinKeys = new Map<string, Promise<string>>();
+/**
+ * The one secret everything about a join is derived from (ADR-044): Argon2id of the code. A 50-bit code behind a fast
+ * hash could be searched offline within its ten minutes by whoever sees the mailbox handle (the server, or the local
+ * network for a desktop's listener); behind a memory-hard function that search no longer fits. Kept briefly in
+ * memory so polling does not repeat it.
+ */
+async function joinKey(code: string, crypto: SealingCrypto): Promise<string> {
+  let key = joinKeys.get(code);
+  if (key === undefined) {
+    key = crypto.argon2id(crypto.encodeText(code), crypto.encodeText("kolo.join-key.v2"), JOIN_KDF).then(bytes => {
+      if (bytes.length !== 32) throw new TransferError("authentication_failed");
+      return toHex(bytes);
+    });
+    joinKeys.set(code, key); key.catch(() => joinKeys.delete(code));
+    for (const old of joinKeys.keys()) if (joinKeys.size > 4) joinKeys.delete(old);
+  }
+  return key;
+}
+/** The server's handle for a code: derived from the code's Argon2id key, so the mailbox never names the code itself. */
+export async function joinIdOf(code: string, crypto: SealingCrypto): Promise<string> { return crypto.hkdf(await joinKey(code, crypto), "", "kolo.join-id.v2", 32); }
+async function macKey(code: string, crypto: SealingCrypto): Promise<string> { return crypto.hkdf(await joinKey(code, crypto), "", "kolo.join-mac.v2", 32); }
 async function mac(code: string, label: string, value: string, crypto: SealingCrypto): Promise<string> { return crypto.hmac(await macKey(code, crypto), `kolo.join.${label}.v1\u0000${value}`); }
 function equal(left: string, right: string): boolean {
   if (left.length !== right.length) return false;

@@ -198,7 +198,7 @@ function describe(cause: unknown): string {
 }
 
 /** Native file slots and private SQLite staging, shared by desktop and real-database recovery tests. */
-export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActive():Database; activeId():string; saved():Promise<readonly {id:string;name:string}[]>; selectSaved(id:string,target:Database):Promise<Database>; close():void } {
+export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActive():Database; activeId():string; saved():Promise<readonly {id:string;name:string;lastUsedAt:string}[]>; selectSaved(id:string,target:Database):Promise<Database>; close():void } {
   mkdirSync(directory,{recursive:true,mode:0o700});
   const control=openDatabase({location:join(directory,"workspace-slots.db")});
   control.run("PRAGMA synchronous=FULL");
@@ -242,15 +242,16 @@ export function nodeWorkspaceFiles(directory:string): SnapshotPort & { openActiv
     /** File name of the active slot; a failed replacement selects it again. */
     activeId(){return String(control.get(`SELECT filename FROM active_slot WHERE id=1`)!["filename"]);},
     openActive(){const row=control.get(`SELECT * FROM active_slot WHERE id=1`)!;const filename=String(row["filename"]);if(filename!=="kolo.db"&&!existsSync(name(filename)))throw new TransferError("activation_failed");const database=openDatabase({location:name(filename)});bindings.set(database,{filename,generation:Number(row["generation"])});return database;},
+    /** Other shops on this computer, most recently used first; the last write to a file (or its WAL) is its last use. */
     async saved(){
-      const active=String(control.get("SELECT filename FROM active_slot WHERE id=1")!["filename"]), result:{id:string;name:string}[]=[];
+      const active=String(control.get("SELECT filename FROM active_slot WHERE id=1")!["filename"]), result:{id:string;name:string;lastUsedAt:string}[]=[];
       for(const filename of readdirSync(directory).sort()){
         if(filename===active||! /^(kolo\.db|workspace-[0-9a-f-]+\.db)$/.test(filename))continue;
         let connection:DatabaseSync|undefined;
-        try{if(!lstatSync(name(filename)).isFile())continue;connection=new DatabaseSync(name(filename),{readOnly:true});const shop=connection.prepare("SELECT name FROM businesses ORDER BY id LIMIT 1").get();if(typeof shop?.["name"]==="string")result.push({id:filename,name:shop["name"]});}
+        try{if(!lstatSync(name(filename)).isFile())continue;connection=new DatabaseSync(name(filename),{readOnly:true});const shop=connection.prepare("SELECT name FROM businesses ORDER BY id LIMIT 1").get();if(typeof shop?.["name"]==="string"){const wal=join(directory,`${filename}-wal`),used=Math.max(statSync(name(filename)).mtimeMs,existsSync(wal)?statSync(wal).mtimeMs:0);result.push({id:filename,name:shop["name"],lastUsedAt:new Date(used).toISOString()});}}
         catch{/* Incomplete or damaged files are never offered as shops. */}finally{connection?.close();}
       }
-      return result;
+      return result.sort((left,right)=>right.lastUsedAt.localeCompare(left.lastUsedAt));
     },
     async selectSaved(id,target){
       const binding=bindings.get(target);

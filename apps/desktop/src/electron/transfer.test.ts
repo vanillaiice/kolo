@@ -102,7 +102,8 @@ it("saved shops reopen with their original credentials and facts across restart"
     value(await f.app.createProduct({ sessionId, requestId: randomUUID(), name: "Retained rice", unit: "bag", divisible: false, sellingPriceMinor: 500, openingThousandths: 4000 }));
     failure(await f.app.savedShops(), "permission_denied");
     value(await f.app.lock()); value(await f.app.startNewShop({confirmedName:"Original"}));
-    const saved = value(await f.app.savedShops()); assert.deepEqual(saved, [{id:"kolo.db",name:"Original"}]);
+    const saved = value(await f.app.savedShops()); assert.deepEqual(saved.map(({id,name})=>({id,name})), [{id:"kolo.db",name:"Original"}]);
+    assert.ok(Number.isFinite(Date.parse(saved[0]!.lastUsedAt)), "a set-aside shop says when it was last used");
     failure(await f.app.openSavedShop({id:"../kolo.db"}), "activation_failed");
     failure(await f.app.openSavedShop({id:saved[0]!.id,path:"/forged"}), "invalid_input");
     assert.equal(value(await f.app.getWorkspace()).state,"empty");

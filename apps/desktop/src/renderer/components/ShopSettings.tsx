@@ -3,7 +3,7 @@ import { rateEntry, rateInput } from "@kolo/core/domain/entry";
 import { formatRate } from "@kolo/core/domain/money";
 import type { PaymentTermsView, ShopService, TaxSettingsView } from "../../shared/service.ts";
 import { setSystemNotificationsEnabled, systemNotificationsEnabled } from "./Notifications.tsx";
-import { ErrorText, Field, useAction, useRead, useText } from "./ui.tsx";
+import { Check, ErrorText, Field, useAction, useRead, useText } from "./ui.tsx";
 
 /** Whole days from 0 to 3650, or undefined for anything else. */
 export function daysEntry(value: string): number | undefined {
@@ -28,10 +28,10 @@ export function TaxPanel({ service, sessionId }: { readonly service: ShopService
   };
   return <div className="panel"><h2>{t("taxTitle")}</h2><p className="hint">{t("taxHelp")}</p>
     {shown === undefined ? <ErrorText message={read.error}/> : <form onSubmit={event => { event.preventDefault(); submit(); }}><fieldset disabled={action.busy}>
-      <label className="check" htmlFor="tax-enabled"><input id="tax-enabled" type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)}/>{t("taxEnabled")}</label>
-      <div className="two-fields"><Field id="tax-label" label={t("taxLabel")} value={label} onChange={setLabel} maxLength={20}/>
-        <Field id="tax-rate" label={t("taxRate")} value={rate} onChange={setRate} numeric maxLength={8}/></div>
-      <Field id="tax-registration" label={t("taxRegistration")} value={registration} onChange={setRegistration} required={false} maxLength={40}/>
+      <Check id="tax-enabled" label={t("taxEnabled")} hint={t("hint.taxEnabled")} checked={enabled} onChange={setEnabled}/>
+      <div className="two-fields"><Field id="tax-label" label={t("taxLabel")} hint={t("hint.taxLabel")} value={label} onChange={setLabel} maxLength={20}/>
+        <Field id="tax-rate" label={t("taxRate")} hint={t("hint.taxRate")} value={rate} onChange={setRate} numeric maxLength={8}/></div>
+      <Field id="tax-registration" label={t("taxRegistration")} hint={t("hint.taxRegistration")} value={registration} onChange={setRegistration} required={false} maxLength={40}/>
       <p className="hint">{t("taxRegistrationHelp")} {t("taxNewSalesOnly")}</p>
       {shown.enabled && <p className="hint">{t("productTaxNow")} {formatRate(shown.standardRateBasisPoints, language)}</p>}
     </fieldset>
@@ -63,8 +63,8 @@ export function TermsPanel({ service, sessionId }: { readonly service: ShopServi
   };
   return <div className="panel"><h2>{t("termsTitle")}</h2><p className="hint">{t("termsHelp")}</p>
     {shown === undefined ? <ErrorText message={read.error}/> : <form onSubmit={event => { event.preventDefault(); void submit(); }}><fieldset disabled={action.busy}>
-      <div className="two-fields"><Field id="terms-customers" label={t("termsCustomers")} value={customer} onChange={setCustomer} numeric maxLength={4}/>
-        <Field id="terms-suppliers" label={t("termsSuppliers")} value={supplier} onChange={setSupplier} numeric maxLength={4}/></div>
+      <div className="two-fields"><Field id="terms-customers" label={t("termsCustomers")} hint={t("hint.termsDays")} value={customer} onChange={setCustomer} numeric maxLength={4}/>
+        <Field id="terms-suppliers" label={t("termsSuppliers")} hint={t("hint.termsDays")} value={supplier} onChange={setSupplier} numeric maxLength={4}/></div>
       {(!shown.customer.stored || !shown.supplier.stored) && <p className="hint">{t("termsDefaultNote")}</p>}
     </fieldset>
       <ErrorText message={action.error} conflictMessage="staleVersion"/>{saved && <p role="status" className="notice success">{t("termsSaved")}</p>}
@@ -83,8 +83,7 @@ export function SystemNotificationsPanel(): React.JSX.Element {
     if (value && supported && Notification.permission === "default") void Notification.requestPermission().then(setPermission);
   };
   return <div className="panel"><h2>{t("systemNotifications")}</h2>
-    <label className="check" htmlFor="system-notifications"><input id="system-notifications" type="checkbox" checked={enabled && supported} disabled={!supported} onChange={event => change(event.target.checked)}/>{t("systemNotificationsLabel")}</label>
-    <p className="hint">{t("systemNotificationsHelp")}</p>
+    <Check id="system-notifications" label={t("systemNotificationsLabel")} hint={t("systemNotificationsHelp")} checked={enabled && supported} disabled={!supported} onChange={change}/>
     {enabled && permission === "denied" && <p className="notice error">{t("systemNotificationsBlocked")}</p>}
   </div>;
 }

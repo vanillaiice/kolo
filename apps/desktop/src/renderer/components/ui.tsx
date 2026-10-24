@@ -44,28 +44,46 @@ export function useRead<T>(load: () => Promise<Result<T>>, dependencies: readonl
   return { data, error, loading, retry: () => setRetry(value => value + 1) };
 }
 /** Labelled keyboard-friendly form input with browser-native focus and accessible error handling. */
-export function Field({ label, value, onChange, secret = false, numeric = false, required = true, id, disabled = false, maxLength = 120 }: {
-  readonly label: string; readonly value: string; readonly onChange: (value: string) => void; readonly secret?: boolean;
+/**
+ * A labelled text input. Like every form control it says what it is for: `hint` is required and shown under the
+ * input (read with it by screen readers); `null` marks a field whose label and place already say everything.
+ */
+export function Field({ label, hint, value, onChange, secret = false, numeric = false, required = true, id, disabled = false, maxLength = 120 }: {
+  readonly label: string; readonly hint: string | null; readonly value: string; readonly onChange: (value: string) => void; readonly secret?: boolean;
   readonly numeric?: boolean; readonly required?: boolean; readonly id: string; readonly disabled?: boolean; readonly maxLength?: number;
 }): React.JSX.Element {
   const { t } = useText(), [visible, setVisible] = useState(false);
   const input = <input id={id} name={id} value={value} onChange={event => onChange(event.target.value)}
     type={secret && !visible ? "password" : "text"} inputMode={numeric ? "decimal" : "text"} autoComplete="off" spellCheck={false}
-    required={required} disabled={disabled} maxLength={maxLength} />;
-  if (!secret) return <label className="field" htmlFor={id}><span>{label}</span>{input}</label>;
+    required={required} disabled={disabled} maxLength={maxLength} {...described(id, hint)} />;
+  if (!secret) return <div className="field"><label htmlFor={id}>{label}</label>{input}<FieldHint id={id} hint={hint}/></div>;
   // Secrets can be revealed to check typing; the toggle sits beside the input, outside its label.
   const toggle = t(visible ? "hideSecret" : "showSecret");
   return <div className="field"><label htmlFor={id}>{label}</label><div className="secret-input">{input}
     <button type="button" className="secret-toggle" aria-controls={id} aria-label={`${toggle} · ${label}`} disabled={disabled}
-      onClick={() => setVisible(current => !current)}>{toggle}</button></div></div>;
+      onClick={() => setVisible(current => !current)}>{toggle}</button></div><FieldHint id={id} hint={hint}/></div>;
 }
-/** Labelled native select; options are supplied already localized. */
-export function Select({ label, value, onChange, id, options, disabled = false }: {
-  readonly label: string; readonly value: string; readonly onChange: (value: string) => void; readonly id: string;
+/** The description under a control, linked to it with `aria-describedby`. */
+function FieldHint({ id, hint }: { readonly id: string; readonly hint: string | null }): React.JSX.Element | null {
+  return hint === null ? null : <small className="field-hint" id={`${id}-hint`}>{hint}</small>;
+}
+function described(id: string, hint: string | null): { "aria-describedby"?: string } {
+  return hint === null ? {} : { "aria-describedby": `${id}-hint` };
+}
+/** A settings checkbox with its description; list filters and permission grids use plain `label.check` rows. */
+export function Check({ id, label, hint, checked, onChange, disabled = false }: {
+  readonly id: string; readonly label: string; readonly hint: string | null; readonly checked: boolean; readonly onChange: (checked: boolean) => void; readonly disabled?: boolean;
+}): React.JSX.Element {
+  return <div className="check-field"><label className="check" htmlFor={id}><input id={id} type="checkbox" checked={checked} disabled={disabled}
+    onChange={event => onChange(event.target.checked)} {...described(id, hint)}/>{label}</label><FieldHint id={id} hint={hint}/></div>;
+}
+/** Labelled native select with its description; options are supplied already localized. */
+export function Select({ label, hint, value, onChange, id, options, disabled = false }: {
+  readonly label: string; readonly hint: string | null; readonly value: string; readonly onChange: (value: string) => void; readonly id: string;
   readonly options: readonly { readonly value: string; readonly label: string; readonly disabled?: boolean }[]; readonly disabled?: boolean;
 }): React.JSX.Element {
-  return <label className="field" htmlFor={id}><span>{label}</span><select id={id} name={id} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}>
-    {options.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select></label>;
+  return <div className="field"><label htmlFor={id}>{label}</label><select id={id} name={id} value={value} disabled={disabled} onChange={event => onChange(event.target.value)} {...described(id, hint)}>
+    {options.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select><FieldHint id={id} hint={hint}/></div>;
 }
 /** Paged views keep only the current bounded result. */
 export function Pager({ hasFirst, hasNext, onFirst, onNext }: { readonly hasFirst: boolean; readonly hasNext: boolean; readonly onFirst: () => void; readonly onNext: () => void }): React.JSX.Element {

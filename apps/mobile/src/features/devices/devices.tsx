@@ -112,8 +112,9 @@ export function BackupCreateScreen(): React.JSX.Element {
       held.current = file; setPassword(""); setConfirmation(""); setPrepared(file);
       const saved = await session.systemUi(() => file.save()); if (saved) { held.current = undefined; setPrepared(undefined); } return saved;
     }, done); }} /></>}>
-    <Section><Text style={s.muted}>{t("backupPasswordRule")}</Text>
-      <Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" /><Field label={t("confirmPassword")} value={confirmation} onChange={setConfirmation} kind="secret" />
+    <Section>
+      <Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" hint={t("backupPasswordRule")} />
+      <Field label={t("confirmPassword")} value={confirmation} onChange={setConfirmation} kind="secret" hint={t("hint.confirmPassword")} />
       <Toggle label={t("includePhotos")} value={photos} onChange={setPhotos} hint={t("includePhotosHelp")} /><PhotoUsage />
       {hasKey && <Text style={s.muted}>{t("backupAlsoKey")}</Text>}</Section>
     {prepared !== undefined && <Section><Text selectable style={s.muted}>{t("readyFilename", { filename: prepared.filename })}</Text><Button label={t("saveReadyFile")} busy={action.busy} onPress={() => { void save(prepared); }} /></Section>}
@@ -151,8 +152,8 @@ export function BackupRestoreScreen(): React.JSX.Element {
     {working !== undefined && <Working text={t(working)} />}
     <Section title={t("stepFile")}>
       <Button label={file === undefined ? t("pickFile") : t("pickAnotherFile")} variant="secondary" disabled={action.busy} onPress={() => { void action.runAsync(async () => { await showing("workingReadFile"); const next = await io.pickLarge("backup"); if (next !== undefined) { await picked.current?.close(); picked.current = next; setFile(next); setPreview(undefined); } }); }} />
-      {file !== undefined && <><Field label={withKey ? t("recoveryKeyField") : t("filePassword")} value={password} onChange={setPassword} kind={withKey ? "text" : "secret"} />
-        <Toggle label={t("useRecoveryKey")} value={withKey} onChange={value => { setWithKey(value); setPassword(""); }} />
+      {file !== undefined && <><Field label={withKey ? t("recoveryKeyField") : t("filePassword")} value={password} onChange={setPassword} kind={withKey ? "text" : "secret"} hint={t(withKey ? "hint.useRecoveryKey" : "backupPasswordHelp")} />
+        <Toggle label={t("useRecoveryKey")} value={withKey} onChange={value => { setWithKey(value); setPassword(""); }} hint={null} />
         <Button label={t("checkBackup")} disabled={action.busy || password === ""} onPress={() => { void action.runAsync(async () => {
           if (staged.current !== undefined) { await cancelBackupPreview(staged.current); staged.current = undefined; }
           await showing("workingCheckBackup"); const checked = await previewBackupFile(file, withKey ? { recoveryKey: password } : password, files, crypto); staged.current = checked; setPreview(checked); setPassword("");
@@ -162,8 +163,9 @@ export function BackupRestoreScreen(): React.JSX.Element {
     {preview !== undefined && <Section title={preview.businessName}>
       <Text style={s.body}>{t("backupSummary", { owner: preview.ownerName, date: formatDate(preview.createdAt, language), count: preview.appliedEvents })}</Text>
       <Field label={t("confirmShopName")} value={typed} onChange={setTyped} hint={t("typeShopNameHelp", { name: preview.businessName })} />
-      <Field label={t("deviceName")} value={label} onChange={setLabel} />
-      <Field label={t("newLocalSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("codeRule")} /><Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" />
+      <Field label={t("deviceName")} value={label} onChange={setLabel} hint={t("hint.tillName")} />
+      <Field label={t("newLocalSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("codeRule")} />
+      <Field label={t("confirmNewSecret")} value={confirmation} onChange={setConfirmation} kind="secret" hint={t("hint.confirmCode")} />
       <Button label={t("replaceShop")} variant="danger" disabled={action.busy || typed.trim() !== preview.businessName || secret === ""} onPress={() => setConfirming(true)} />
     </Section>}
     <Confirm visible={confirming} destructive title={t("replaceTitle")} text={t("replaceText", { current: businessName, next: preview?.businessName ?? "" })} confirmLabel={t("replaceShop")}
@@ -225,10 +227,10 @@ export function AddTillScreen(): React.JSX.Element {
   const [byFiles, setByFiles] = useState(false);
   return <Screen title={t("addTill")} onBack={nav.back} footer={action.notice}>
     <Section title={t("addTillByCode")}>
-      <Toggle label={t("allowStaffManagement")} value={allowStaff} onChange={setAllowStaff} />
+      <Toggle label={t("allowStaffManagement")} value={allowStaff} onChange={setAllowStaff} hint={t("hint.allowStaffManagement")} />
       <AddTillByCode allowStaff={allowStaff} />
     </Section>
-    <Toggle label={t("pairByFiles")} value={byFiles} onChange={setByFiles} />
+    <Toggle label={t("pairByFiles")} value={byFiles} onChange={setByFiles} hint={t("hint.pairByFiles")} />
     {byFiles && <><Section title={t("stepInvite")}>
       <Button label={t("createInvite")} busy={action.busy} onPress={() => { void action.runAsync(async () => {
         const doc = await createPairingInvite(context, crypto, allowStaff); setDocument(doc); setFingerprint((await previewPairingInvite(doc.bytes, crypto)).fingerprint); return io.save(doc);
@@ -242,7 +244,8 @@ export function AddTillScreen(): React.JSX.Element {
       {request !== undefined && <>
         <Facts items={[[t("deviceName"), request.view.deviceLabel], [t("shopName"), request.view.businessName], [t("pairingCodeLabel"), request.view.verificationCode, "strong"]]} />
         <Field label={t("newTillCode")} value={code} onChange={setCode} kind="code" hint={t("compareCodeHelp")} />
-        <Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" hint={t("enrollmentPasswordHelp")} /><Field label={t("confirmPassword")} value={confirmation} onChange={setConfirmation} kind="secret" />
+        <Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" hint={t("enrollmentPasswordHelp")} />
+        <Field label={t("confirmPassword")} value={confirmation} onChange={setConfirmation} kind="secret" hint={t("hint.confirmPassword")} />
         <Button label={t("approvePairing")} busy={action.busy} disabled={code.trim() === "" || password === ""} onPress={() => { void action.runAsync(async () => {
           if (password !== confirmation) throw new FormProblem("passwordsMismatch");
           const doc = await confirmPairing(context, request.file, code.trim(), password, files, crypto); setDocument(doc); setPassword(""); setConfirmation(""); return io.save(doc);
@@ -265,7 +268,7 @@ export function ExchangeSendScreen(): React.JSX.Element {
     if (doc === undefined) { action.show({ tone: "info", key: "nothingToExport" }); return undefined; }
     setDocument(doc); return io.save(doc);
   }, ok => { if (ok !== undefined) saved(ok); }); }} /></>}>
-    <Segmented label={t("destinationDevice")} value={chosen} onChange={setDestination} options={peers.map(peer => ({ id: peer.id, label: `${peer.label} · ${t("pendingEventCount", { count: peer.pending })}` }))} />
+    <Segmented label={t("destinationDevice")} hint={t("hint.exchangeDestination")} value={chosen} onChange={setDestination} options={peers.map(peer => ({ id: peer.id, label: `${peer.label} · ${t("pendingEventCount", { count: peer.pending })}` }))} />
     <Section><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" hint={t("exchangePasswordHelp")} /></Section>
     <PreparedFile document={document} busy={action.busy} onSave={() => { void action.runAsync(() => io.save(document), saved); }} />
   </Screen>;
@@ -281,7 +284,7 @@ export function ExchangeReceiveScreen(): React.JSX.Element {
   return <Screen title={t("receiveChanges")} onBack={nav.back} footer={action.notice}>
     <Section title={t("stepFile")}>
       <Button label={file === undefined ? t("pickFile") : t("pickAnotherFile")} variant="secondary" busy={action.busy} onPress={() => { void action.runAsync(async () => { const picked = await io.pick("exchange"); if (picked !== undefined) { setFile(picked); setBundle(undefined); setProcessed(undefined); } }); }} />
-      {file !== undefined && <><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" />
+      {file !== undefined && <><Field label={t("filePassword")} value={password} onChange={setPassword} kind="secret" hint={t("hint.exchangeOpenPassword")} />
         <Button label={t("previewEvents")} busy={action.busy} disabled={password === ""} onPress={() => { void action.runAsync(async () => { setBundle(await previewBundle(context, file, password, crypto)); }); }} /></>}
     </Section>
     {counts !== undefined && <Section title={t("preview")}>
@@ -309,7 +312,7 @@ export function ExchangeConfirmScreen(): React.JSX.Element {
       }, saved); }} />)}
     </Section>
     {peers.length > 0 && <Section title={t("importReceipt")}>
-      <Segmented label={t("destinationDevice")} value={chosen} onChange={setDestination} options={peers.map(peer => ({ id: peer.id, label: peer.label }))} />
+      <Segmented label={t("destinationDevice")} hint={t("hint.receiptDestination")} value={chosen} onChange={setDestination} options={peers.map(peer => ({ id: peer.id, label: peer.label }))} />
       <Button label={t("pickReceiptFile")} variant="secondary" busy={action.busy} disabled={password === "" || chosen === undefined} onPress={() => { void action.runAsync(async () => {
         const file = await io.pick("receipt"); if (file === undefined) return undefined; return importReceipt(context, chosen!, file, password, crypto);
       }, count => { if (count !== undefined) action.show({ tone: "success", key: "receiptsRecorded", values: { count } }); }); }} />
@@ -360,7 +363,7 @@ export function BackupKeyScreen(): React.JSX.Element {
       await confirmBackupRecoveryKey(context, pending, groups, crypto); setPending(undefined); setStep("show"); setVersion(value => value + 1);
     }, () => action.show({ tone: "success", key: "backupKeyDone" })); }} /></>}>
     <Section><Text style={s.muted}>{t("backupKeyConfirm")}</Text>
-      {pending.confirm.map((index, i) => <Field key={index} label={t("backupKeyGroup", { index: index + 1 })} value={groups[i]!} onChange={value => setGroups(list => list.map((item, j) => j === i ? value : item))} />)}</Section>
+      {pending.confirm.map((index, i) => <Field key={index} label={t("backupKeyGroup", { index: index + 1 })} value={groups[i]!} onChange={value => setGroups(list => list.map((item, j) => j === i ? value : item))} hint={t("hint.backupKeyGroup")} />)}</Section>
   </Screen>;
   return <Screen title={t("backupKeyTitle")} onBack={nav.back} footer={<>{action.notice}
     <Button label={current === undefined ? t("backupKeyCreate") : t("backupKeyRotate")} busy={action.busy} disabled={secret === ""} onPress={() => { void action.runAsync(async () => {
@@ -369,7 +372,7 @@ export function BackupKeyScreen(): React.JSX.Element {
     <Section><Text style={s.body}>{t("backupKeyHelp")}</Text>
       <Text style={s.muted}>{current === undefined ? t("backupKeyNone") : t("backupKeyCurrent", { id: current.keyId.slice(0, 8), date: formatDate(current.createdAt, language) })}</Text>
       {keys.length > 1 && <Text style={s.muted}>{t("backupKeyOlder", { count: keys.length - 1 })}</Text>}
-      <Field label={t("currentSecret")} value={secret} onChange={setSecret} kind="secret" /></Section>
+      <Field label={t("currentSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("hint.currentSecretConfirm")} /></Section>
   </Screen>;
 }
 
@@ -377,7 +380,7 @@ export function RecoveryKeyScreen(): React.JSX.Element {
   const { t } = useText(), s = useStyles(), nav = useNav(), { context } = useSession(), action = useAction(), [secret, setSecret] = useState(""), [key, setKey] = useState<string | null>();
   useEffect(() => () => setKey(undefined), []);
   return <Screen title={t("viewRecoveryKey")} onBack={nav.back} footer={<>{action.notice}<Button label={t("showKey")} busy={action.busy} disabled={secret === ""} onPress={() => { void action.runAsync(async () => ownerRecoveryCode(context, secret), value => { setSecret(""); setKey(value ?? null); }); }} /></>}>
-    <Section><Field label={t("currentSecret")} value={secret} onChange={setSecret} kind="secret" /></Section>
+    <Section><Field label={t("currentSecret")} value={secret} onChange={setSecret} kind="secret" hint={t("hint.currentSecretConfirm")} /></Section>
     {key === null && <Notice tone="warning" text={t("localKeyUnavailable")} />}
     {typeof key === "string" && <Section><Text style={s.body}>{t("recoveryKeyHelp")}</Text><Text selectable style={[s.mono, { fontSize: 18, lineHeight: 30 }]}>{key.match(/.{1,8}/g)?.join("-")}</Text></Section>}
   </Screen>;

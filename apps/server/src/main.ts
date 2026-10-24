@@ -7,7 +7,7 @@ import { migrateToLatest, openDatabase, schemaCurrent } from "./database.js";
 import { loadServerKey } from "./identity.js";
 import { createAdminApplication } from "./admin/admin-app.js";
 import { createAdmin, resetTotp } from "./admin/accounts.js";
-import { CLI_ACTOR, createMetrics, issueCode, purgeRemovedShops } from "./admin/operations.js";
+import { CLI_ACTOR, createMetrics, issueCode, purgeRemovedShops, setTillLimit } from "./admin/operations.js";
 
 const config = readConfig();
 const [command, ...args] = process.argv.slice(2);
@@ -19,7 +19,10 @@ const uiDir = config.adminUiDir ?? (() => { const built = fileURLToPath(new URL(
 const usage = `Usage: node dist/main.js [command]
   (none)                         serve sync and, unless KOLO_ADMIN_PORT=off, the operator dashboard
   migrate [--discard-plaintext]  apply schema migrations and exit
-  invite --label <shop> [--days 7] [--months 0]   issue a single-use code for one shop (hosted: with paid months)
+  invite --label <shop> [--days 7] [--months 0] [--trial-days 0] [--tills <n>|unlimited]
+                                  issue a single-use code for one shop (hosted: with paid months or trial days;
+                                  a hosted code must name its till limit)
+  till-limit <shop id> <n>|unlimited   set a shop's till limit; raising it releases waiting tills
   invite --recovery-shop <shop id> [--days 1]     issue an owner-recovery code for an existing shop whose tills were all lost
   admin create <username> [--role admin|viewer] [--password-stdin]
   admin reset-totp <username>    replace an operator's authenticator secret
@@ -55,9 +58,18 @@ else if (command === "migrate") {
   const label = option("label") ?? (recoveryShop === undefined ? fail("Give the shop a name: invite --label \"Shop name\"") : ""), days = Number(option("days") ?? (recoveryShop === undefined ? "7" : "1"));
   if (config.publicUrl === undefined) fail("Set KOLO_PUBLIC_URL to the address tills use to reach this server");
   const key = loadServerKey(config.keyFile ?? ".kolo-server-key.json");
-  const months = config.edition === "hosted" ? Number(option("months") ?? "0") : 0;
-  const issued = await withDatabase(db => issueCode(db, key, config.publicUrl!, CLI_ACTOR, { label, days, now: new Date(), includedMonths: recoveryShop === undefined ? months : 0, ...(recoveryShop === undefined ? {} : { recoveryShopId: recoveryShop }) }));
+  const hosted = config.edition === "hosted" && recoveryShop === undefined;
+  const months = hosted ? Number(option("months") ?? "0") : 0, trialDays = hosted ? Number(option("trial-days") ?? "0") : 0, tills = option("tills");
+  if (hosted && tills === undefined) fail("A hosted code names its till limit: --tills <n> or --tills unlimited");
+  const maxTills = tills === undefined || tills === "unlimited" ? null : Number(tills);
+  const issued = await withDatabase(db => issueCode(db, key, config.publicUrl!, CLI_ACTOR, { label, days, now: new Date(), includedMonths: months, includedDays: trialDays,
+    ...(recoveryShop === undefined ? { maxTills } : { recoveryShopId: recoveryShop }) }));
   process.stdout.write(`Connection code for ${issued.label} (single use, expires ${issued.expiresAt}):\n\n${issued.code}\n\n${await QRCode.toString(issued.code, { type: "terminal", small: true })}\n`);
+} else if (command === "till-limit") {
+  const [shopId, value] = args;
+  if (shopId === undefined || value === undefined) fail("Usage: till-limit <shop id> <n>|unlimited");
+  const released = await withDatabase(db => setTillLimit(db, CLI_ACTOR, shopId!, value === "unlimited" ? null : Number(value)));
+  process.stdout.write(`Till limit set to ${value}${released.length > 0 ? `; ${released.length} waiting till(s) may sync now` : ""}\n`);
 } else if (command === "admin" && (args[0] === "create" || args[0] === "reset-totp")) {
   const username = args[1] ?? fail(usage);
   if (args[0] === "create") {

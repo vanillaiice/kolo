@@ -39,10 +39,10 @@ export function usePeriod(key: string, initial: Preset): { state: PeriodState; p
   try { period = localDayPeriod(state.from, state.to); } catch { period = undefined; }
   const choose = (preset: Preset): void => { const next = { preset, from: localDay(presetStart(preset)), to: today }; setState(next); setFrom(next.from); setTo(next.to); };
   const control = <Section>
-    <Segmented label={t("period")} value={state.preset} onChange={choose} options={PRESETS.map(id => ({ id, label: t(`preset.${id}` as TextKey) }))} />
+    <Segmented label={t("period")} hint={t("hint.period")} value={state.preset} onChange={choose} options={PRESETS.map(id => ({ id, label: t(`preset.${id}` as TextKey) }))} />
     <View style={{ flexDirection: "row", gap: spacing.sm }}>
-      <View style={{ flex: 1 }}><Field label={t("from")} value={from} onChange={setFrom} kind="date" /></View>
-      <View style={{ flex: 1 }}><Field label={t("to")} value={to} onChange={setTo} kind="date" /></View>
+      <View style={{ flex: 1 }}><Field label={t("from")} value={from} onChange={setFrom} kind="date" hint={t("hint.periodFrom")} /></View>
+      <View style={{ flex: 1 }}><Field label={t("to")} value={to} onChange={setTo} kind="date" hint={t("hint.periodTo")} /></View>
     </View>
     <Button label={t("applyPeriod")} variant="secondary" onPress={() => setState({ preset: undefined, from: from.trim(), to: to.trim() })} />
     {period === undefined && <Notice tone="error" text={t("invalidPeriod")} />}
@@ -161,7 +161,7 @@ export function AnalyticsScreen(): React.JSX.Element {
   const ranked = value === undefined ? [] : [...value.products].sort((a, b) => rank === "quantity" ? b.soldThousandths - a.soldThousandths : rank === "profit" ? (b.grossProfitMinor ?? 0) - (a.grossProfitMinor ?? 0) : b.revenueMinor - a.revenueMinor).slice(0, 10);
   return <Screen title={t("analytics")} onBack={nav.back}>
     {control}
-    <Segmented label={t("groupBy")} value={bucket} onChange={setBucket} options={(["auto", "hour", "day", "week", "month"] as const).map(id => ({ id, label: t(`bucket.${id}` as TextKey) }))} />
+    <Segmented label={t("groupBy")} hint={t("hint.groupBy")} value={bucket} onChange={setBucket} options={(["auto", "hour", "day", "week", "month"] as const).map(id => ({ id, label: t(`bucket.${id}` as TextKey) }))} />
     {result.loading && <ActivityIndicator accessibilityLabel={t("loading")} />}
     {result.failed && <Notice tone="error" text={t("loadFailed")} />}
     {value !== undefined && <>

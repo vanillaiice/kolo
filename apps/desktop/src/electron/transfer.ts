@@ -36,7 +36,7 @@ export interface TransferDialogs {
   savePdf?(filename: string, html: string): Promise<boolean>;
 }
 /** What the desktop host provides for backup, pairing and exchange. */
-export interface TransferPorts { readonly files: SnapshotPort & { activeId?(): string; saved?(): Promise<readonly {id:string;name:string}[]>; selectSaved?(id:string,target:Database):Promise<Database> }; readonly dialogs: TransferDialogs; readonly crypto: TransferCrypto; }
+export interface TransferPorts { readonly files: SnapshotPort & { activeId?(): string; saved?(): Promise<readonly {id:string;name:string;lastUsedAt:string}[]>; selectSaved?(id:string,target:Database):Promise<Database> }; readonly dialogs: TransferDialogs; readonly crypto: TransferCrypto; }
 /** What an imported file turned out to be. */
 export type ImportKind = "backup" | "invite";
 /** One checked file per installation; checking another or locking forgets it. */

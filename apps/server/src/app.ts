@@ -9,7 +9,7 @@ import type { ServerConfig } from "./config.js";
 import { openDatabase, schemaCurrent, type ServerDatabase } from "./database.js";
 import { loadServerKey, type ServerKey } from "./identity.js";
 import { createMetrics, type Metrics } from "./admin/operations.js";
-import { RelayError, acceptReceipt, authenticate, bootstrap, createChallenge, endSession, enroll, entitlement, openSession, pull, push, requireService, status, type Relay } from "./sync/relay.js";
+import { RelayError, acceptReceipt, authenticate, bootstrap, createChallenge, endSession, enroll, entitlement, openSession, plan, pull, push, requireService, status, type Relay } from "./sync/relay.js";
 import { BillingError, genericWebhookAdapter, recordPayment } from "./billing.js";
 import { audit } from "./admin/accounts.js";
 
@@ -145,6 +145,7 @@ export async function createApplication(config: ServerConfig, options: Applicati
   application.delete("/api/v2/join/:id", async (request, reply) => { const { relay: active, scope: current } = await scope(request); await cancelJoin(active, current, joinId(request)); return reply.code(204).send(); });
 
   application.get("/api/v2/entitlements", async request => { const { relay: active, scope: current } = await scope(request); return entitlement(active, current); });
+  application.get("/api/v2/plan", async request => { const { relay: active, scope: current } = await scope(request); return plan(active, current); });
 
   // Provider-neutral signed payment webhook (ADR-031); absent unless hosted with a configured secret.
   if (config.edition === "hosted" && config.billingWebhookSecret !== undefined && db !== undefined) {

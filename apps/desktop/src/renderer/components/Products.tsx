@@ -6,7 +6,7 @@ import type { Cursor } from "@kolo/core/application/queries";
 import type { Permission } from "@kolo/core/identity/permissions";
 import type { CategoryView, ProductTaxView, ProductView, Result, ShopService } from "../../shared/service.ts";
 import type { TextKey } from "../text.ts";
-import { ErrorText, Field, Pager, ReadState, Select, useAction, useRead, useText } from "./ui.tsx";
+import { Check, ErrorText, Field, Pager, ReadState, Select, useAction, useRead, useText } from "./ui.tsx";
 
 type Props = { readonly service: ShopService; readonly sessionId: string; readonly revision: number; readonly permissions: readonly Permission[] };
 
@@ -30,7 +30,7 @@ function ProductList({service,sessionId,revision,onOpen}:{service:ShopService;se
   const {t,language}=useText();
   const [term,setTerm]=useState(""),[archived,setArchived]=useState(false),[cursor,setCursor]=useState<{ after: Cursor; revision: number }>();
   const list=useRead(()=>service.listProducts({sessionId,term,includeInactive:archived,...(cursor?.revision===revision?{after:cursor.after}: {})}),[service,sessionId,term,archived,cursor,revision]);
-  return <div className="panel"><Field id="catalogue-search" label={t("search")} value={term} required={false} onChange={value=>{setTerm(value);setCursor(undefined);}} />
+  return <div className="panel"><Field id="catalogue-search" label={t("search")} hint={t("hint.productSearch")} value={term} required={false} onChange={value=>{setTerm(value);setCursor(undefined);}} />
     <label className="check"><input type="checkbox" checked={archived} onChange={event=>{setArchived(event.target.checked);setCursor(undefined);}}/>{t("showArchived")}</label>
     <ReadState loading={list.loading} error={list.error} empty={list.data?.items.length===0} emptyText={t("noResults")} retry={list.retry}>
       <div className="table-wrap"><table><thead><tr><th>{t("name")}</th><th>{t("price")}</th><th>{t("stock")}</th></tr></thead><tbody>
@@ -92,9 +92,9 @@ function ProductTax({service,sessionId,revision,productId,canEdit}:{service:Shop
   return <div className="panel"><h2>{t("productTax")}</h2>
     {settings.data?.enabled===false?<p className="hint">{t("productTaxOff")}</p>:<p className="hint">{t("productTaxNow")} {formatRate(shown.effectiveRateBasisPoints,language)}</p>}
     {canEdit?<form onSubmit={event=>{event.preventDefault();submit();}}><fieldset disabled={action.busy}>
-      <Select id="product-tax-rule" label={t("productTax")} value={rule} onChange={value=>setRule(value as ProductTaxView["rule"])}
+      <Select id="product-tax-rule" label={t("productTax")} hint={t("hint.productTaxRule")} value={rule} onChange={value=>setRule(value as ProductTaxView["rule"])}
         options={(["STANDARD","EXEMPT","RATE"] as const).map(value=>({value,label:`${t(`taxRule.${value}`)}${value==="STANDARD"?standard:""}`}))}/>
-      {rule==="RATE"&&<Field id="product-tax-rate" label={t("productOwnRate")} value={rate} onChange={setRate} numeric maxLength={8}/>}
+      {rule==="RATE"&&<Field id="product-tax-rate" label={t("productOwnRate")} hint={t("hint.productOwnRate")} value={rate} onChange={setRate} numeric maxLength={8}/>}
     </fieldset><ErrorText message={action.error} conflictMessage="staleVersion"/>{saved&&<p role="status" className="notice success">{t("productTaxSaved")}</p>}
       <div className="actions"><button className="primary" type="submit" disabled={action.busy}>{t("save")}</button>
         {action.error?.code==="request_conflict"&&<button type="button" className="secondary" onClick={read.retry}>{t("reload")}</button>}</div></form>
@@ -117,10 +117,10 @@ function EditProduct({service,sessionId,product,canAddCategory,onReload,onSaved,
     if(value!==undefined)onSaved(value);
   };
   return <div className="panel form-panel"><h2>{t("editProduct")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}>
-    <fieldset disabled={action.busy}><div className="two-fields"><Field id="edit-name" label={t("name")} value={name} onChange={setName}/><Field id="edit-unit" label={t("unit")} value={unit} onChange={setUnit}/></div>
-      <div className="two-fields"><Field id="edit-barcode" label={t("barcode")} value={barcode} onChange={setBarcode} required={false} maxLength={256}/><CategoryChoice id="edit-category" service={service} sessionId={sessionId} items={options.data?.items??[]} kept={product.categoryId} value={categoryId} onChange={setCategoryId} canAdd={canAddCategory} onAdded={options.retry}/></div>
-      <div className="two-fields"><Field id="edit-price" label={t("price")} value={price} onChange={setPrice} numeric/><Field id="edit-cost" label={t("cost")} value={cost} onChange={setCost} numeric required={false}/></div>
-      <Field id="edit-minimum" label={t("minimumStock")} value={minimum} onChange={setMinimum} numeric/>
+    <fieldset disabled={action.busy}><div className="two-fields"><Field id="edit-name" label={t("name")} hint={t("hint.productName")} value={name} onChange={setName}/><Field id="edit-unit" label={t("unit")} hint={t("hint.unit")} value={unit} onChange={setUnit}/></div>
+      <div className="two-fields"><Field id="edit-barcode" label={t("barcode")} hint={t("hint.barcode")} value={barcode} onChange={setBarcode} required={false} maxLength={256}/><CategoryChoice id="edit-category" service={service} sessionId={sessionId} items={options.data?.items??[]} kept={product.categoryId} value={categoryId} onChange={setCategoryId} canAdd={canAddCategory} onAdded={options.retry}/></div>
+      <div className="two-fields"><Field id="edit-price" label={t("price")} hint={t("hint.sellingPrice")} value={price} onChange={setPrice} numeric/><Field id="edit-cost" label={t("cost")} hint={t("hint.cost")} value={cost} onChange={setCost} numeric required={false}/></div>
+      <Field id="edit-minimum" label={t("minimumStock")} hint={t("hint.minimumStock")} value={minimum} onChange={setMinimum} numeric/>
       <fieldset className="permission-group"><legend>{t("otherCategories")}</legend>
         {(options.data?.items??[]).filter(item=>item.id!==categoryId&&(item.active||others.includes(item.id))).map(item=><label key={item.id} className="check">
           <input type="checkbox" checked={others.includes(item.id)} onChange={event=>setOthers(current=>event.target.checked?[...current,item.id].slice(0,20):current.filter(id=>id!==item.id))}/>{item.active?item.name:`${item.name} · ${t("archived")}`}</label>)}
@@ -154,7 +154,7 @@ function StockMovement({service,sessionId,product,permissions,onSaved}:{service:
   };
   return <div className="panel form-panel"><h2>{t("stockMovement")}</h2><p className="hint">{t("movementHelp")}</p><form onSubmit={event=>{event.preventDefault();void submit();}}>
     <fieldset disabled={action.busy||uncertain}><div className="segmented" role="radiogroup" aria-label={t("stockMovement")}>{kinds.map(item=><label key={item} className={kind===item?"selected":""}><input type="radio" name="movement-kind" value={item} checked={kind===item} onChange={()=>setKind(item)}/>{t(item==="add"?"addStock":item)}</label>)}</div>
-      <div className="two-fields"><Field id="movement-quantity" label={t(kind==="count"?"countedQuantity":"quantity")} value={quantity} onChange={setQuantity} numeric/><Field id="movement-reason" label={t("reason")} value={reason} onChange={setReason}/></div>
+      <div className="two-fields"><Field id="movement-quantity" label={t(kind==="count"?"countedQuantity":"quantity")} hint={t(kind==="count"?"hint.countedQuantity":"hint.movementQuantity")} value={quantity} onChange={setQuantity} numeric/><Field id="movement-reason" label={t("reason")} hint={t("hint.stockReason")} value={reason} onChange={setReason}/></div>
     </fieldset>
     <ErrorText message={action.error}/>{saved!==undefined&&<p role="status" className="notice success">{saved}</p>}
     <div className="actions"><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):uncertain?t("retry"):t("recordMovement")}</button></div>
@@ -204,14 +204,14 @@ function CreateCategory({service,sessionId}:{service:ShopService;sessionId:strin
     if(value!==undefined){setName("");setRequestId(crypto.randomUUID());}
   };
   return <div className="panel form-panel"><form className="inline-form" onSubmit={event=>{event.preventDefault();void submit();}}>
-    <fieldset disabled={action.busy||uncertain}><Field id="category-name" label={t("newCategory")} value={name} onChange={setName}/></fieldset>
+    <fieldset disabled={action.busy||uncertain}><Field id="category-name" label={t("newCategory")} hint={t("hint.categoryName")} value={name} onChange={setName}/></fieldset>
     <button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):uncertain?t("retry"):t("save")}</button>
   </form><ErrorText message={action.error}/></div>;
 }
 function CategoryForm({service,sessionId,category,onDone}:{service:ShopService;sessionId:string;category:CategoryView;onDone:()=>void}):React.JSX.Element{
   const {t}=useText(),action=useAction(),[name,setName]=useState(category.name);
   return <div className="panel form-panel"><form className="inline-form" onSubmit={event=>{event.preventDefault();void action.run(()=>service.updateCategory({sessionId,categoryId:category.id,version:category.version,name,active:category.active})).then(value=>{if(value!==undefined)onDone();});}}>
-    <fieldset disabled={action.busy}><Field id="category-rename" label={t("rename")} value={name} onChange={setName}/></fieldset>
+    <fieldset disabled={action.busy}><Field id="category-rename" label={t("rename")} hint={t("hint.categoryName")} value={name} onChange={setName}/></fieldset>
     <button className="primary" type="submit" disabled={action.busy}>{t("save")}</button><button type="button" className="secondary" onClick={onDone}>{t("cancel")}</button>
   </form><ErrorText message={action.error} conflictMessage="staleVersion"/></div>;
 }
@@ -237,12 +237,12 @@ function CreateProduct({service,sessionId,canAdjust,canAddCategory,onClose}:{ser
     });
   };
   return <div className="panel form-panel"><h2>{t("newProduct")}</h2><form onSubmit={event=>{event.preventDefault();void submit();}}>
-    <fieldset disabled={action.busy||uncertain}><div className="two-fields"><Field id="product-name" label={t("name")} value={name} onChange={setName}/><Field id="product-unit" label={t("unit")} value={unit} onChange={setUnit}/></div>
-      <div className="two-fields"><Field id="product-barcode" label={t("barcode")} value={barcode} onChange={setBarcode} required={false} maxLength={256}/>
+    <fieldset disabled={action.busy||uncertain}><div className="two-fields"><Field id="product-name" label={t("name")} hint={t("hint.productName")} value={name} onChange={setName}/><Field id="product-unit" label={t("unit")} hint={t("hint.unit")} value={unit} onChange={setUnit}/></div>
+      <div className="two-fields"><Field id="product-barcode" label={t("barcode")} hint={t("hint.barcode")} value={barcode} onChange={setBarcode} required={false} maxLength={256}/>
         <CategoryChoice id="product-category" service={service} sessionId={sessionId} items={options.data?.items??[]} value={categoryId} onChange={setCategoryId} canAdd={canAddCategory} onAdded={options.retry}/></div>
-      <div className="two-fields"><Field id="product-price" label={t("price")} value={price} onChange={setPrice} numeric/><Field id="product-cost" label={t("cost")} value={cost} onChange={setCost} numeric required={false}/></div>
-      <label className="check"><input type="checkbox" checked={divisible} onChange={event=>setDivisible(event.target.checked)}/>{t("divisible")}</label>
-      {canAdjust&&<Field id="opening-stock" label={t("openingStock")} value={opening} onChange={setOpening} numeric/>}
+      <div className="two-fields"><Field id="product-price" label={t("price")} hint={t("hint.sellingPrice")} value={price} onChange={setPrice} numeric/><Field id="product-cost" label={t("cost")} hint={t("hint.cost")} value={cost} onChange={setCost} numeric required={false}/></div>
+      <Check id="product-divisible" label={t("divisible")} hint={t("hint.divisible")} checked={divisible} onChange={setDivisible}/>
+      {canAdjust&&<Field id="opening-stock" label={t("openingStock")} hint={t("hint.openingStock")} value={opening} onChange={setOpening} numeric/>}
     </fieldset>
     <ErrorText message={action.error}/><div className="actions"><button className="primary" type="submit" disabled={action.busy}>{action.busy?t("recording"):uncertain?t("retry"):t("saveProduct")}</button><button type="button" className="secondary" disabled={action.busy||uncertain} onClick={onClose}>{t("cancel")}</button></div>
   </form></div>;
@@ -267,9 +267,9 @@ function CategoryChoice({id,service,sessionId,items,kept,value,onChange,canAdd,o
     if(category===undefined)return;
     setAdded(category);onChange(category.id);setAdding(false);setName("");setRequestId(crypto.randomUUID());onAdded();
   };
-  if(!adding)return <Select id={id} label={t("category")} value={value} onChange={next=>{if(next==="new"){setAdding(true);action.setError(undefined);}else onChange(next);}} options={choices}/>;
+  if(!adding)return <Select id={id} label={t("category")} hint={t("hint.mainCategory")} value={value} onChange={next=>{if(next==="new"){setAdding(true);action.setError(undefined);}else onChange(next);}} options={choices}/>;
   return <div className="field" onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();if(!action.busy)void add();}}}><div className="inline-form">
-    <fieldset disabled={action.busy||uncertain}><Field id={`${id}-new`} label={t("categoryName")} value={name} onChange={setName} required={false}/></fieldset>
+    <fieldset disabled={action.busy||uncertain}><Field id={`${id}-new`} label={t("categoryName")} hint={t("hint.newCategory")} value={name} onChange={setName} required={false}/></fieldset>
     <button type="button" className="primary" disabled={action.busy} onClick={()=>{void add();}}>{action.busy?t("recording"):uncertain?t("retry"):t("addCategoryHere")}</button>
     <button type="button" className="secondary" disabled={action.busy||uncertain} onClick={()=>{setAdding(false);setName("");action.setError(undefined);}}>{t("cancel")}</button>
   </div><ErrorText message={action.error}/></div>;

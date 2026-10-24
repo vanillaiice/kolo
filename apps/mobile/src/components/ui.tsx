@@ -4,7 +4,9 @@ import { AccessibilityInfo, ActivityIndicator, FlatList, Modal, Pressable, Style
 import { SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardAvoidingView, KeyboardAwareScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import type { Cursor, Page, PageQuery } from "@kolo/core/application/queries";
+import Animated from "react-native-reanimated";
 import { useText } from "../app/i18n.tsx";
+import { AnimatedPressable, appear, disappear, rise, useColorTransition, usePressMotion } from "./motion.ts";
 import { radius, spacing, TOUCH_TARGET, type as typography, useTheme, type Palette } from "./theme.ts";
 
 /** Styles derived from the current palette; memoized per palette so screens do not rebuild them every render. */
@@ -33,6 +35,9 @@ function makeStyles(c: Palette) {
   });
 }
 
+/** Space kept between a focused input and the keyboard (or footer): enough for a two-line description under it. */
+const DESCRIPTION_ROOM = spacing.xl * 2 + spacing.sm;
+
 /** Height of what sits under screens (the bottom tab bar on phones), which the keyboard covers first. */
 export const BelowScreenContext = createContext(0);
 
@@ -42,8 +47,9 @@ export function Screen({ title, eyebrow, onBack, actions, children, footer, scro
   readonly children: ReactNode; readonly footer?: ReactNode; readonly scroll?: boolean; readonly testID?: string;
 }): React.JSX.Element {
   const s = useStyles(), { colors } = useTheme(), { t } = useText(), [footerHeight, setFooterHeight] = useState(0), below = useContext(BelowScreenContext);
-  // A focused field in the scroll area scrolls clear of the keyboard and the footer; the footer rides on the
-  // keyboard (less whatever already sits below the screen, such as the tab bar). Lists shrink above the keyboard.
+  // A focused field in the scroll area scrolls clear of the keyboard and the footer, with room for its description
+  // or error underneath; the footer rides on the keyboard (less whatever already sits below the screen, such as the
+  // tab bar). Lists shrink above the keyboard.
   return <View style={s.screen} testID={testID}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border }}>
         {onBack !== undefined && <Pressable accessibilityRole="button" accessibilityLabel={t("back")} onPress={onBack} hitSlop={8}
@@ -52,7 +58,7 @@ export function Screen({ title, eyebrow, onBack, actions, children, footer, scro
           <Text accessibilityRole="header" style={s.title}>{title}</Text></View>
         {actions}
       </View>
-      {scroll ? <KeyboardAwareScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" bottomOffset={footerHeight + spacing.lg}>{children}</KeyboardAwareScrollView>
+      {scroll ? <KeyboardAwareScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" bottomOffset={footerHeight + DESCRIPTION_ROOM}>{children}</KeyboardAwareScrollView>
         : <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">{children}</KeyboardAvoidingView>}
       {footer !== undefined && footer !== null && footer !== false && <KeyboardStickyView offset={{ closed: 0, opened: below }}>
         <View onLayout={event => setFooterHeight(event.nativeEvent.layout.height)} style={{ padding: spacing.md, gap: spacing.sm, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>{footer}</View>
@@ -83,19 +89,24 @@ export function Button({ label, onPress, variant = "primary", disabled = false, 
     danger: { bg: colors.dangerSoft, border: colors.dangerBorder, ink: colors.danger },
     ghost: { bg: "transparent", border: "transparent", ink: colors.primary },
   };
-  const v = look[variant];
-  return <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? label} accessibilityHint={hint} accessibilityState={{ disabled: off, busy: spinning }} disabled={off} onPress={() => { setPressed(true); onPress(); }}
-    style={({ pressed }) => [{ minHeight: TOUCH_TARGET, borderRadius: radius.control, borderWidth: 1, borderColor: v.border, backgroundColor: v.bg, paddingHorizontal: spacing.lg,
-      paddingVertical: 10, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: spacing.sm, opacity: spinning ? 1 : off ? 0.5 : pressed ? 0.85 : 1 }, style]}>
+  const v = look[variant], press = usePressMotion(spinning ? 1 : off ? 0.5 : 1);
+  return <AnimatedPressable accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? label} accessibilityHint={hint} accessibilityState={{ disabled: off, busy: spinning }} disabled={off}
+    onPress={() => { setPressed(true); onPress(); }} onPressIn={press.onPressIn} onPressOut={press.onPressOut}
+    style={[{ minHeight: TOUCH_TARGET, borderRadius: radius.control, borderWidth: 1, borderColor: v.border, backgroundColor: v.bg, paddingHorizontal: spacing.lg,
+      paddingVertical: 10, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: spacing.sm }, style, press.style]}>
     {spinning && <ActivityIndicator color={v.ink} />}<Text style={{ color: v.ink, fontSize: 16, fontWeight: "600", textAlign: "center", flexShrink: 1 }}>{label}</Text>
-  </Pressable>;
+  </AnimatedPressable>;
 }
 
 /** Field input kinds: money is whole francs, quantity accepts decimals, secret hides input. */
 export type FieldKind = "text" | "money" | "quantity" | "secret" | "phone" | "code" | "date";
-/** Visible label stays available while typing, including hardware-keyboard input. */
+/**
+ * Visible label stays available while typing, including hardware-keyboard input. Every field says what it is for:
+ * `hint` is required, and `null` marks the rare field whose label and context already say everything (search boxes,
+ * inline quantities whose row is the description).
+ */
 export function Field({ label, value, onChange, kind = "text", hint, error, onSubmit, autoFocus, inputRef, placeholder, editable = true, multiline = false, labelHidden = false }: {
-  readonly label: string; readonly value: string; readonly onChange: (value: string) => void; readonly kind?: FieldKind; readonly hint?: string | undefined;
+  readonly label: string; readonly value: string; readonly onChange: (value: string) => void; readonly kind?: FieldKind; readonly hint: string | null;
   readonly error?: string | undefined; readonly onSubmit?: (() => void) | undefined; readonly autoFocus?: boolean; readonly inputRef?: Ref<TextInput>;
   readonly placeholder?: string | undefined; readonly editable?: boolean; readonly multiline?: boolean;
   /** For inline rows whose label sits above the whole row: the label is still read by screen readers. */
@@ -104,7 +115,7 @@ export function Field({ label, value, onChange, kind = "text", hint, error, onSu
   const s = useStyles(), { colors } = useTheme();
   const keyboard = kind === "money" ? "number-pad" : kind === "quantity" ? "decimal-pad" : kind === "phone" ? "phone-pad" : "default";
   const { t } = useText(), [shown, setShown] = useState(false), secret = kind === "secret";
-  const input = <TextInput ref={inputRef} accessibilityLabel={label} accessibilityHint={error ?? hint} value={value} onChangeText={onChange} keyboardType={keyboard}
+  const input = <TextInput ref={inputRef} accessibilityLabel={label} accessibilityHint={error ?? hint ?? undefined} value={value} onChangeText={onChange} keyboardType={keyboard}
       secureTextEntry={secret && !shown} autoCapitalize={kind === "text" ? "sentences" : "none"} autoCorrect={false} autoFocus={autoFocus} editable={editable}
       placeholder={placeholder ?? (kind === "date" ? "AAAA-MM-JJ" : undefined)} placeholderTextColor={colors.muted} multiline={multiline}
       onSubmitEditing={onSubmit} submitBehavior={multiline ? "newline" : onSubmit ? "submit" : "blurAndSubmit"}
@@ -119,36 +130,49 @@ export function Field({ label, value, onChange, kind = "text", hint, error, onSu
         style={{ position: "absolute", right: 0, minHeight: TOUCH_TARGET, minWidth: 88, paddingHorizontal: spacing.md, alignItems: "center", justifyContent: "center" }}>
         <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 14 }}>{t(shown ? "hideSecret" : "showSecret")}</Text>
       </Pressable></View> : input}
-    {error !== undefined ? <Text style={{ ...typography.small, color: colors.danger }}>{error}</Text> : hint !== undefined ? <Text style={s.muted}>{hint}</Text> : null}
+    <Description hint={hint} error={error} />
   </View>;
 }
 
-/** A labelled switch with a full-width touch target. */
-export function Toggle({ label, value, onChange, hint }: { readonly label: string; readonly value: boolean; readonly onChange: (value: boolean) => void; readonly hint?: string }): React.JSX.Element {
+/** A control's description under it; an error takes its place and fades in so the change is noticed. */
+function Description({ hint, error }: { readonly hint: string | null | undefined; readonly error?: string | undefined }): React.JSX.Element | null {
   const s = useStyles(), { colors } = useTheme();
-  return <Pressable accessibilityRole="switch" accessibilityState={{ checked: value }} accessibilityLabel={label} onPress={() => onChange(!value)}
+  if (error !== undefined) return <Animated.Text key={error} entering={appear} style={{ ...typography.small, color: colors.danger }}>{error}</Animated.Text>;
+  return hint === null || hint === undefined ? null : <Text style={s.muted}>{hint}</Text>;
+}
+
+/** A labelled switch with a full-width touch target and, like every field, a description (`null` only when the label says it all). */
+export function Toggle({ label, value, onChange, hint }: { readonly label: string; readonly value: boolean; readonly onChange: (value: boolean) => void; readonly hint: string | null }): React.JSX.Element {
+  const s = useStyles(), { colors } = useTheme();
+  return <Pressable accessibilityRole="switch" accessibilityState={{ checked: value }} accessibilityLabel={label} accessibilityHint={hint ?? undefined} onPress={() => onChange(!value)}
     style={{ minHeight: TOUCH_TARGET, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-    <View style={{ flex: 1 }}><Text style={s.body}>{label}</Text>{hint !== undefined && <Text style={s.muted}>{hint}</Text>}</View>
+    <View style={{ flex: 1, gap: 2 }}><Text style={s.body}>{label}</Text>{hint !== null && <Text style={s.muted}>{hint}</Text>}</View>
     <Switch value={value} onValueChange={onChange} trackColor={{ true: colors.primary, false: colors.border }} thumbColor={colors.surface} importantForAccessibility="no" />
   </Pressable>;
 }
 
-/** Mutually exclusive choices shown as a wrapping segmented control. */
-export function Segmented<T extends string>({ label, value, options, onChange }: {
-  readonly label?: string; readonly value: T | undefined; readonly options: readonly { readonly id: T; readonly label: string }[]; readonly onChange: (value: T) => void;
+/**
+ * Mutually exclusive choices shown as a wrapping segmented control. A labelled one is a form field and carries a
+ * description like the others; an unlabelled one switches views (tabs, steps) and has neither.
+ */
+export function Segmented<T extends string>({ label, hint, value, options, onChange }: ({ readonly label: string; readonly hint: string | null } | { readonly label?: undefined; readonly hint?: undefined }) & {
+  readonly value: T | undefined; readonly options: readonly { readonly id: T; readonly label: string }[]; readonly onChange: (value: T) => void;
 }): React.JSX.Element {
   const { colors } = useTheme();
   return <View style={{ gap: 6 }} accessibilityRole="radiogroup" accessibilityLabel={label}>
     {label !== undefined && <Text style={{ ...typography.label, color: colors.muted }}>{label}</Text>}
-    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>{options.map(option => {
-      const on = option.id === value;
-      return <Pressable key={option.id} accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={option.label} onPress={() => onChange(option.id)}
-        style={{ minHeight: TOUCH_TARGET, paddingHorizontal: spacing.md, justifyContent: "center", borderRadius: radius.control, borderWidth: 1,
-          borderColor: on ? colors.primary : colors.controlBorder, backgroundColor: on ? colors.selected : colors.surface }}>
-        <Text style={{ color: on ? colors.selectedInk : colors.text, fontWeight: on ? "700" : "400", fontSize: 15 }}>{option.label}</Text>
-      </Pressable>;
-    })}</View>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>{options.map(option =>
+      <SegmentOption key={option.id} label={option.label} on={option.id === value} onPress={() => onChange(option.id)} />)}</View>
+    <Description hint={hint} />
   </View>;
+}
+function SegmentOption({ label, on, onPress }: { readonly label: string; readonly on: boolean; readonly onPress: () => void }): React.JSX.Element {
+  const { colors } = useTheme(), press = usePressMotion(), transition = useColorTransition();
+  return <AnimatedPressable accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={label} onPress={onPress} onPressIn={press.onPressIn} onPressOut={press.onPressOut}
+    style={[{ minHeight: TOUCH_TARGET, paddingHorizontal: spacing.md, justifyContent: "center", borderRadius: radius.control, borderWidth: 1,
+      borderColor: on ? colors.primary : colors.controlBorder, backgroundColor: on ? colors.selected : colors.surface, ...transition }, press.style]}>
+    <Text style={{ color: on ? colors.selectedInk : colors.text, fontWeight: on ? "700" : "400", fontSize: 15 }}>{label}</Text>
+  </AnimatedPressable>;
 }
 
 /** Tappable list row: title, optional subtitle and trailing figure; the whole row is the target. */
@@ -170,7 +194,8 @@ export function ListRow({ title, subtitle, trailing, trailingTone = "normal", on
     backgroundColor: colors.surface };
   const label = accessibilityLabel ?? [title, tag, subtitle, trailing].filter(Boolean).join(", ");
   return onPress === undefined ? <View style={style} accessible accessibilityLabel={label}>{body}</View>
-    : <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [style, pressed && { backgroundColor: colors.surfaceSoft }]}>{body}</Pressable>;
+    : <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} android_ripple={{ color: colors.selected }}
+      style={({ pressed }) => [style, pressed && { backgroundColor: colors.surfaceSoft }]}>{body}</Pressable>;
 }
 
 /** Hairline between rows; lists draw it between items only, never after the last one. */
@@ -208,10 +233,10 @@ export function Tag({ text, tone = "attention" }: { readonly text: string; reado
 export function Working({ text }: { readonly text: string }): React.JSX.Element {
   const { colors } = useTheme();
   useEffect(() => { AccessibilityInfo.announceForAccessibility(text); }, [text]);
-  return <View accessibilityRole="progressbar" accessibilityLabel={text} accessibilityLiveRegion="polite"
+  return <Animated.View entering={appear} exiting={disappear} accessibilityRole="progressbar" accessibilityLabel={text} accessibilityLiveRegion="polite"
     style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surfaceSoft, borderColor: colors.border, borderWidth: 1, borderRadius: radius.control, padding: spacing.md }}>
     <ActivityIndicator size="large" color={colors.primary} /><Text style={{ ...typography.small, color: colors.text, flex: 1 }}>{text}</Text>
-  </View>;
+  </Animated.View>;
 }
 
 /** Resolves after the next frame is drawn, so a status shown just before synchronous work is on screen. */
@@ -219,22 +244,23 @@ export function nextPaint(): Promise<void> {
   return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }
 
+/** A message in its tone's colours; it fades in when it appears, and success and error are announced. */
 export function Notice({ tone = "info", text, action }: { readonly tone?: "info" | "success" | "warning" | "error"; readonly text: string; readonly action?: ReactNode }): React.JSX.Element {
   const { colors } = useTheme();
   const look = { info: [colors.surfaceSoft, colors.text, colors.border], success: [colors.selected, colors.selectedInk, colors.selected], warning: [colors.yellowSoft, colors.yellowInk, colors.yellow],
     error: [colors.dangerSoft, colors.danger, colors.dangerBorder] }[tone];
   useEffect(() => { if (tone === "error" || tone === "success") AccessibilityInfo.announceForAccessibility(text); }, [text, tone]);
-  return <View accessibilityRole={tone === "error" ? "alert" : "text"} accessibilityLiveRegion="polite"
+  return <Animated.View entering={appear} exiting={disappear} accessibilityRole={tone === "error" ? "alert" : "text"} accessibilityLiveRegion="polite"
     style={{ backgroundColor: look[0], borderColor: look[2], borderWidth: 1, borderRadius: radius.control, padding: spacing.md, gap: spacing.sm }}>
     <Text style={{ ...typography.small, color: look[1] }}>{text}</Text>{action}
-  </View>;
+  </Animated.View>;
 }
 
 /** Empty list or missing record, with an optional next step. */
 export function EmptyState({ title, text, action }: { readonly title: string; readonly text?: string | undefined; readonly action?: ReactNode }): React.JSX.Element {
   const s = useStyles();
-  return <View style={{ alignItems: "center", padding: spacing.xl, gap: spacing.sm }}><Text style={[s.heading, { textAlign: "center" }]}>{title}</Text>
-    {text !== undefined && <Text style={[s.muted, { textAlign: "center" }]}>{text}</Text>}{action}</View>;
+  return <Animated.View entering={appear} style={{ alignItems: "center", padding: spacing.xl, gap: spacing.sm }}><Text style={[s.heading, { textAlign: "center" }]}>{title}</Text>
+    {text !== undefined && <Text style={[s.muted, { textAlign: "center" }]}>{text}</Text>}{action}</Animated.View>;
 }
 
 /** A titled panel grouping related fields or facts. */
@@ -263,19 +289,20 @@ export function Stat({ label, value, note, tone }: { readonly label: string; rea
 /** Confirmation dialog; `typed` requires the user to type an exact text, such as the shop name, before confirming. */
 export function Confirm({ visible, title, text, confirmLabel, onConfirm, onCancel, destructive = false, typed }: {
   readonly visible: boolean; readonly title: string; readonly text?: string | undefined; readonly confirmLabel: string; readonly onConfirm: () => void; readonly onCancel: () => void;
-  readonly destructive?: boolean; readonly typed?: { readonly label: string; readonly expected: string } | undefined;
+  readonly destructive?: boolean; readonly typed?: { readonly label: string; readonly expected: string; readonly hint?: string } | undefined;
 }): React.JSX.Element {
   const s = useStyles(), { colors } = useTheme(), { t } = useText(), [entry, setEntry] = useState("");
   useEffect(() => { if (!visible) setEntry(""); }, [visible]);
   const ready = typed === undefined || entry.trim() === typed.expected;
-  return <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+  // Edge-to-edge modals: on Android the keyboard controller can only follow the keyboard in a translucent window.
+  return <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel} statusBarTranslucent navigationBarTranslucent>
     <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: "center", padding: spacing.lg }}>
-      <View accessibilityViewIsModal style={[s.panel, { gap: spacing.md }]}>
+      <Animated.View entering={rise} accessibilityViewIsModal style={[s.panel, { gap: spacing.md }]}>
         <Text accessibilityRole="header" style={s.heading}>{title}</Text>{text !== undefined && <Text style={s.body}>{text}</Text>}
-        {typed !== undefined && <Field label={typed.label} value={entry} onChange={setEntry} autoFocus />}
+        {typed !== undefined && <Field label={typed.label} value={entry} onChange={setEntry} autoFocus hint={typed.hint ?? t("hint.typedConfirm", { text: typed.expected })} />}
         <Button label={confirmLabel} variant={destructive ? "danger" : "primary"} disabled={!ready} onPress={onConfirm} />
         <Button label={t("cancel")} variant="secondary" onPress={onCancel} />
-      </View>
+      </Animated.View>
     </KeyboardAvoidingView>
   </Modal>;
 }
@@ -283,13 +310,14 @@ export function Confirm({ visible, title, text, confirmLabel, onConfirm, onCance
 /** Bottom sheet with its own Back handling; Android Back closes it first. */
 export function Sheet({ visible, title, onClose, children }: { readonly visible: boolean; readonly title: string; readonly onClose: () => void; readonly children: ReactNode }): React.JSX.Element {
   const s = useStyles(), { colors } = useTheme(), { t } = useText();
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+  // The sheet shrinks above the keyboard rather than sliding under it: everything below the header may give up height.
+  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
     <View style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: "flex-end" }}>
-      <KeyboardAvoidingView behavior="padding" style={{ maxHeight: "90%" }}>
-        <SafeAreaView edges={["bottom"]} accessibilityViewIsModal style={{ backgroundColor: colors.canvas, borderTopLeftRadius: radius.panel, borderTopRightRadius: radius.panel, overflow: "hidden" }}>
+      <KeyboardAvoidingView behavior="padding" style={{ maxHeight: "92%" }}>
+        <SafeAreaView edges={["bottom"]} accessibilityViewIsModal style={{ flexShrink: 1, backgroundColor: colors.canvas, borderTopLeftRadius: radius.panel, borderTopRightRadius: radius.panel, overflow: "hidden" }}>
           <View style={[s.between, { padding: spacing.lg, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border }]}>
             <Text accessibilityRole="header" style={[s.heading, { flex: 1 }]}>{title}</Text><Button label={t("close")} variant="ghost" onPress={onClose} /></View>
-          {children}
+          <View style={{ flexShrink: 1 }}>{children}</View>
         </SafeAreaView>
       </KeyboardAvoidingView>
     </View>
@@ -341,7 +369,7 @@ export function PagedList<T>({ load, revision, identify, render, header, empty, 
   return <FlatList data={pages.items} keyExtractor={identify} renderItem={({ item }) => render(item)} style={s.screen} keyboardShouldPersistTaps="handled" ItemSeparatorComponent={Divider}
     initialNumToRender={12} maxToRenderPerBatch={12} windowSize={7} removeClippedSubviews onEndReachedThreshold={0.5} onEndReached={pages.loadMore}
     ListHeaderComponent={<View style={{ padding: spacing.lg, gap: spacing.md }}>{header}
-      {searchable && <Field label={searchLabel ?? t("search")} value={term} onChange={setTerm} />}</View>}
+      {searchable && <Field label={searchLabel ?? t("search")} value={term} onChange={setTerm} hint={null} />}</View>}
     ListEmptyComponent={pages.failed ? <View style={{ padding: spacing.lg }}><Notice tone="error" text={t("loadFailed")} action={<Button label={t("retry")} variant="secondary" onPress={pages.retry} />} /></View>
       : <EmptyState title={query !== "" ? t("noMatches") : empty?.title ?? t("empty")} text={query !== "" ? undefined : empty?.text} action={query !== "" ? undefined : empty?.action} />}
     ListFooterComponent={<View style={{ padding: spacing.lg, gap: spacing.sm }}>
@@ -352,30 +380,33 @@ export function PagedList<T>({ load, revision, identify, render, header, empty, 
 }
 
 /** Searchable local chooser in a sheet; shows bounded pages and keeps the chosen label visible. */
-export function Picker<T extends { readonly id: string; readonly name: string }>({ label, value, onChange, load, revision, optional = false, describe, placeholder, create }: {
-  readonly label: string; readonly value: T | undefined; readonly onChange: (value: T | undefined) => void; readonly load: (query: PageQuery) => Page<T>;
+export function Picker<T extends { readonly id: string; readonly name: string }>({ label, hint, value, onChange, load, revision, optional = false, describe, placeholder, create }: {
+  /** What the choice is for, shown under it like every field's description; `null` only when the label says it all. */
+  readonly label: string; readonly hint: string | null; readonly value: T | undefined; readonly onChange: (value: T | undefined) => void; readonly load: (query: PageQuery) => Page<T>;
   readonly revision: string; readonly optional?: boolean; readonly describe?: (item: T) => string | undefined; readonly placeholder?: string;
   /**
    * Lets the sheet create the item it lacks: `add` records it and calls `select` with the stored item,
    * which is then chosen. `notice` shows the caller's outcome inside the sheet.
    */
-  readonly create?: { readonly label: string; readonly add: (name: string, select: (item: T) => void) => void; readonly notice?: React.ReactNode } | undefined;
+  readonly create?: { readonly label: string; readonly hint: string | null; readonly add: (name: string, select: (item: T) => void) => void; readonly notice?: React.ReactNode } | undefined;
 }): React.JSX.Element {
   const { t } = useText(), s = useStyles(), { colors } = useTheme(), [open, setOpen] = useState(false), [draft, setDraft] = useState("");
   const add = (): void => create?.add(draft, item => { onChange(item); setDraft(""); setOpen(false); });
   return <View style={{ gap: 6 }}>
     <Text style={{ ...typography.label, color: colors.muted }}>{label}</Text>
-    <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${value?.name ?? placeholder ?? t("none")}`} accessibilityHint={t("opensChooser")} onPress={() => setOpen(true)}
-      style={[s.input, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${value?.name ?? placeholder ?? t("none")}`} accessibilityHint={hint === null ? t("opensChooser") : `${hint} ${t("opensChooser")}`} onPress={() => setOpen(true)}
+      android_ripple={{ color: colors.selected }} style={({ pressed }) => [s.input, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, pressed && { backgroundColor: colors.surfaceSoft }]}>
       <Text style={[s.body, value === undefined && { color: colors.muted }]}>{value?.name ?? placeholder ?? t("choose")}</Text><Text style={{ color: colors.muted }}>▾</Text>
     </Pressable>
+    <Description hint={hint} />
     <Sheet visible={open} title={label} onClose={() => setOpen(false)}>
-      {open && <View style={{ height: 480 }}><PagedList<T> load={load} revision={revision} identify={item => item.id}
+      {/* Creating sits above the list, where the keyboard never covers it; the list gives up height instead. */}
+      {open && create !== undefined && <View style={{ gap: spacing.sm, padding: spacing.lg, paddingBottom: 0 }}>
+        <Field label={create.label} value={draft} onChange={setDraft} onSubmit={add} hint={create.hint} />
+        {create.notice}<Button label={t("add")} variant="secondary" disabled={draft.trim() === ""} onPress={add} /></View>}
+      {open && <View style={{ height: 480, flexShrink: 1, minHeight: 140 }}><PagedList<T> load={load} revision={revision} identify={item => item.id}
         header={optional ? <Button label={t("none")} variant="secondary" onPress={() => { onChange(undefined); setOpen(false); }} /> : undefined}
         render={item => <ListRow title={item.name} subtitle={describe?.(item)} tag={item.id === value?.id ? t("selected") : undefined} onPress={() => { onChange(item); setOpen(false); }} />} /></View>}
-      {open && create !== undefined && <View style={{ gap: 8 }}>
-        <Field label={create.label} value={draft} onChange={setDraft} onSubmit={add} />
-        {create.notice}<Button label={t("add")} variant="secondary" onPress={add} /></View>}
     </Sheet>
   </View>;
 }

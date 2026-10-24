@@ -7,6 +7,8 @@ import { AUDIT_GROUPS } from "@kolo/core/application/audit";
 import { AUDIT_CSV_COLUMNS } from "@kolo/core/domain/audit-csv";
 import { EVENT_PAYLOAD_SCHEMAS } from "@kolo/contracts/events";
 import { permissionKeys, strings, translate } from "./strings.ts";
+import { mobileStrings } from "./strings-mobile.ts";
+import { formStrings } from "./strings-forms.ts";
 import { transferErrorKey, workspaceErrorText } from "./identity-errors.ts";
 
 test("French and English messages have matching interpolation fields and all permissions have labels", () => {
@@ -54,4 +56,14 @@ test("every journal operation, local check, family, status and export column has
   const types = [...Object.keys(EVENT_PAYLOAD_SCHEMAS), "STOCK_COUNTED", "CASH_COUNTED", "CASH_RECONCILED", "other"];
   for (const key of [...types.map(type => `j.${type}`), ...AUDIT_GROUPS.map(group => `jg.${group}`), ...["quarantined", "deferred", "unsupported", "stored"].map(status => `jst.${status}`), ...AUDIT_CSV_COLUMNS.map(column => `jc.${column}`)])
     assert.ok(Object.hasOwn(strings, key), key);
+});
+
+test("field descriptions are their own keys and never replace another screen's text", () => {
+  for (const key of Object.keys(formStrings)) {
+    assert.match(key, /^(hint|section)\./, key);
+    assert.ok(!Object.hasOwn(mobileStrings, key), key);
+  }
+  // Descriptions are one or two short sentences under a field, not paragraphs.
+  for (const [key, [fr, en]] of Object.entries(formStrings)) assert.ok(fr.length <= 140 && en.length <= 140, key);
+  assert.equal(translate("en", "hint.typedConfirm", { text: "Boutique $&" }), "Type exactly “Boutique $&”.");
 });

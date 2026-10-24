@@ -16,6 +16,7 @@ import { applyAppearance, Settings, storedAppearance, type Appearance } from "./
 import { LegalDialog, LegalLinks } from "./components/Legal.tsx";
 import type { LegalKind } from "./legal.ts";
 import { call, ErrorText, Field, TextContext, useAction, useText, type Message } from "./components/ui.tsx";
+import { ConnectionStatus } from "./components/ConnectionStatus.tsx";
 import { text, type Language } from "./text.ts";
 import { dropNav, saveNavOrder, storedNavOrder, type NavId } from "./nav-order.ts";
 import { AlertsButton, AlertsPanel, useNotifications, type AlertTarget } from "./components/Notifications.tsx";
@@ -48,7 +49,7 @@ export function App({service,updates}:{readonly service:ShopService;readonly upd
     <div className={view?.state==="unlocked"?"app-shell":"welcome-shell"}>
       <div className="language-switch" role="group" aria-label={language==="fr"?"Langue":"Language"}><button aria-pressed={language==="fr"} onClick={()=>setLanguage("fr")}>FR</button><button aria-pressed={language==="en"} onClick={()=>setLanguage("en")}>EN</button></div>
       {view===undefined?<main id="main-content" tabIndex={-1} className="auth-card"><p className="brand">KOLO</p><h1>{t("opening")}</h1><ErrorText message={error}/>{error&&<button className="secondary" onClick={refresh}>{t("retry")}</button>}</main>:
-        view.state!=="unlocked"||view.sessionId===null||view.actor===null?<main id="main-content" tabIndex={-1} className="auth-layout"><header className="entry-header"><span className="brand">KOLO<span className="brand-mark" aria-hidden="true">.</span></span><span className="entry-offline"><span className="status-dot"/>{t("offline")}</span></header>
+        view.state!=="unlocked"||view.sessionId===null||view.actor===null?<main id="main-content" tabIndex={-1} className="auth-layout"><header className="entry-header"><span className="brand">KOLO<span className="brand-mark" aria-hidden="true">.</span></span></header>
           <Workspace service={service} view={view} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})} onLegal={setLegal}/>
           <footer className="entry-legal"><span>kolo {__KOLO_VERSION__} · made by hblabs</span><LegalLinks onOpen={setLegal}/></footer></main>:
           <Shop key={view.sessionId} service={service} view={view} sessionId={view.sessionId} revision={revision} refresh={refresh} onRecoveryKey={(key,sessionId)=>setRecovery({key,sessionId})}
@@ -74,19 +75,19 @@ function Shop({service,view,sessionId,revision,refresh,onRecoveryKey,preferences
         draggable onDragStart={event=>{setDragging(item.id);event.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDragging(undefined)}
         onDragOver={event=>{if(dragging!==undefined){event.preventDefault();event.dataTransfer.dropEffect="move";}}} onDrop={event=>{event.preventDefault();if(dragging!==undefined)preferences.onNavOrder(dropNav(preferences.navOrder,dragging,item.id));setDragging(undefined);}}
         onClick={()=>{setSelected(item.id);if(item.id==="receipts")setReceiptId(undefined);}}><span aria-hidden="true">{item.mark}</span>{t(item.id)}</button>)}</nav>
-      <div className="sidebar-footer"><span className="status-dot"/>{t("offline")}</div>
+      <ConnectionStatus service={service} sessionId={sessionId} revision={revision}/>
     </aside>
     <main id="main-content" tabIndex={-1} className="main-content"><header className="topbar"><span>{view.shopName}</span><div className="topbar-actions"><AlertsButton unread={alerts.data?.unread??0} expanded={alertsOpen} onToggle={()=>setAlertsOpen(!alertsOpen)}/><span className="user-name">{view.actor?.name}</span>{view.actor?.isOwner&&<button className="text-button" onClick={()=>setKeyForm(!keyForm)}>{t("viewKey")}</button>}<button className="secondary" disabled={action.busy} onClick={()=>{void action.run(()=>service.lock()).then(()=>refresh());}}>{t("lock")}</button></div></header>
       <ErrorText message={action.error}/>
       <UpdateBanner updates={preferences.updates} view={preferences.updateView}/>
       {alertsOpen&&<AlertsPanel view={alerts.data} error={alerts.error} permissions={permissions} onOpen={openAlert} onMarkAll={()=>{void alerts.markAll();}} onClose={()=>setAlertsOpen(false)}/>}
-      {keyForm&&<div className="panel recovery-form"><form onSubmit={event=>{event.preventDefault();void action.run(()=>service.recoveryKey({sessionId,secret})).then(value=>{setSecret("");if(value===null)action.setError({code:"keyUnavailable"});else if(value!==undefined){setKeyForm(false);onRecoveryKey(value,sessionId);}});}}><Field id="owner-proof" label={t("secret")} value={secret} onChange={setSecret} secret maxLength={256} disabled={action.busy}/><div className="actions"><button type="submit" className="primary" disabled={action.busy}>{t("showKey")}</button><button type="button" className="secondary" onClick={()=>{setKeyForm(false);setSecret("");}}>{t("cancel")}</button></div></form></div>}
+      {keyForm&&<div className="panel recovery-form"><form onSubmit={event=>{event.preventDefault();void action.run(()=>service.recoveryKey({sessionId,secret})).then(value=>{setSecret("");if(value===null)action.setError({code:"keyUnavailable"});else if(value!==undefined){setKeyForm(false);onRecoveryKey(value,sessionId);}});}}><Field id="owner-proof" label={t("secret")} hint={t("hint.ownerCodeConfirm")} value={secret} onChange={setSecret} secret maxLength={256} disabled={action.busy}/><div className="actions"><button type="submit" className="primary" disabled={action.busy}>{t("showKey")}</button><button type="button" className="secondary" onClick={()=>{setKeyForm(false);setSecret("");}}>{t("cancel")}</button></div></form></div>}
       {canTill&&<div hidden={section!=="till"}><Till service={service} sessionId={sessionId} revision={revision} permissions={permissions} onReceipt={id=>{setReceiptId(id);if(canReceipts)setSelected("receipts");}}/></div>}
       {canProducts&&<div hidden={section!=="products"}><Products service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {canCustomers&&<div hidden={section!=="customers"}><Customers service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {canPurchases&&<div hidden={section!=="purchases"}><Purchases service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
       {canFinance&&<div hidden={section!=="finance"}><Finance service={service} sessionId={sessionId} revision={revision} permissions={permissions}/></div>}
-      {section==="journal"&&<Journal service={service} sessionId={sessionId} revision={revision} canExport={permissions.includes("data.export")}/>}
+      {section==="journal"&&<Journal service={service} sessionId={sessionId} revision={revision} canExport={permissions.includes("data.export")} canReview={view.actor!.isOwner&&permissions.includes("business.settings")&&permissions.includes("users.manage")}/>}
       {section==="analytics"&&<Analytics service={service} sessionId={sessionId} revision={revision} permissions={permissions}/>}
       {section==="reports"&&<Reports service={service} sessionId={sessionId} revision={revision} permissions={permissions}/>}
       {section==="staff"&&<Staff service={service} sessionId={sessionId} revision={revision} isOwner={view.actor?.isOwner===true}/>}

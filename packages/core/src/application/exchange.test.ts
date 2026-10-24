@@ -13,7 +13,7 @@ import type { WorkspacePorts, OperationContext, Installation } from "../identity
 import type { ExchangeCrypto } from "../exchange/types.ts";
 import type { JournalEnvelope, SignedJournalEvent } from "@kolo/contracts/events";
 import { canonicalJson } from "@kolo/contracts/canonical";
-import { registerExchangeDestination, eventSigningMessage, verifyEvent, sealPendingEvents } from "./exchange.ts";
+import { registerExchangeDestination, eventSigningMessage, verifyEvent, sealPendingEvents, setExchangeDeviceActive } from "./exchange.ts";
 import { applyEvent, retryDeferred, reviewQuarantinedEvent } from "./event-application.ts";
 import { createJournalBatch, importJournalBatch, createPeerReceipt, acknowledgeDelivery, eventsForDestination, exchangeStatus } from "./event-delivery.ts";
 import * as commands from "./operations.ts";
@@ -124,12 +124,97 @@ it("SQL failure after sale insertion rolls back fan-out; retry succeeds once",as
  b.db.run(`DROP TRIGGER fail_sale_payment`);assert.equal(retryDeferred(b.context),1);assert.equal(retryDeferred(b.context),0);assert.equal(count(b,"sales"),1);
 });
 
-it("late facts require exact-digest owner review after revocation; device revocation blocks verification",async()=>{
+it("a fact signed under a revision this till never recorded requires exact-digest owner review; unknown keys never verify",async()=>{
  const [a,b]=await replicas() as [Replica,Replica],p=product(a);await send(a,b);sale(a,p);await sealPendingEvents(a.context,crypto);const e=eventsForDestination(a.context,dest(a,b)).find(e=>e.envelope.event_type==="SALE_COMPLETED")!;
  b.db.run(`UPDATE local_memberships SET revision=2 WHERE business_id=? AND user_id=?`,[b.install.businessId,b.install.ownerId]);
+ // As if the revision changed before this till kept revision history (migration 34).
+ b.db.run(`DELETE FROM membership_revisions WHERE business_id=? AND user_id=?`,[b.install.businessId,b.install.ownerId]);
  assert.equal(applyEvent(b.context,await verifyEvent(b.context,e,crypto)),"quarantined");assert.equal(count(b,"sales"),0);
+ assert.equal(b.db.get(`SELECT reason FROM applied_events WHERE event_id=?`,[e.envelope.event_id])!["reason"],"authority_revision");
  assert.throws(()=>reviewQuarantinedEvent(b.context,e.envelope.event_id,"0".repeat(64)));assert.equal(reviewQuarantinedEvent(b.context,e.envelope.event_id,e.digest),"applied");
- b.db.run(`UPDATE trusted_exchange_devices SET active=0,revision=revision+1 WHERE device_id=?`,[a.install.deviceId]);await assert.rejects(verifyEvent(b.context,e,crypto));
+ const stranger=generateKeyPairSync("ed25519",{publicKeyEncoding:{type:"spki",format:"pem"},privateKeyEncoding:{type:"pkcs8",format:"pem"}});
+ const forged={...e.envelope,event_id:randomUUIDv7(),origin_device_id:randomUUIDv7()},message=eventSigningMessage(forged);
+ await assert.rejects(verifyEvent(b.context,{envelope:forged,digest:await crypto.sha256(message),signature:sign(null,Buffer.from(message),stranger.privateKey).toString("hex")},crypto),/untrusted_device/);
+});
+
+it("revoking a till keeps its earlier sales on every till; later ones wait for the owner instead of vanishing",async()=>{
+ const [a,b,c]=await replicas(3) as [Replica,Replica,Replica],p=product(a);await send(a,b);await send(a,c);
+ const early=sale(b,p);await send(b,a);
+ setExchangeDeviceActive(a.context,b.install.deviceId,false);
+ const late=sale(b,p);await sealPendingEvents(a.context,crypto);await sealPendingEvents(b.context,crypto);
+ const fromA=eventsForDestination(a.context,dest(a,c)),of=(type:string)=>fromA.find(e=>e.envelope.event_type===type)!;
+ const cutoff=of("DEVICE_HISTORY_ACCEPTED"),revoked=of("DEVICE_REVOKED");
+ assert.ok(cutoff.envelope.origin_sequence<revoked.envelope.origin_sequence,"the cutoff is signed before the revocation");
+ const held=Number(a.db.get(`SELECT max(origin_sequence) AS s FROM event_journal WHERE origin_device_id=?`,[b.install.deviceId])!["s"]);
+ assert.deepEqual(cutoff.envelope.payload,{device_id:b.install.deviceId,through_sequence:held,revision:Number(revoked.envelope.payload["revision"])});
+ // C, offline overnight, learns of the revocation before B's earlier sale reaches it, and the cutoff last.
+ assert.equal(applyEvent(c.context,await verifyEvent(c.context,revoked,crypto)),"applied");
+ const earlySale=fromA.find(e=>e.envelope.event_type==="SALE_COMPLETED"&&(e.envelope.payload["sale"] as {id:string}).id===early)!;
+ assert.equal(applyEvent(c.context,await verifyEvent(c.context,earlySale,crypto)),"quarantined");
+ assert.equal(c.db.get(`SELECT reason FROM applied_events WHERE event_id=?`,[earlySale.envelope.event_id])!["reason"],"device_revoked");
+ assert.equal(applyEvent(c.context,await verifyEvent(c.context,cutoff,crypto)),"applied");assert.equal(retryDeferred(c.context),1);
+ assert.equal(c.db.get(`SELECT count(*) AS n FROM sales WHERE id=?`,[early])!["n"],1,"the earlier sale is kept");
+ // The sale B made after it was revoked is held for the owner, never applied silently and never lost.
+ const lateSale=eventsForDestination(b.context,dest(b,c)).find(e=>e.envelope.event_type==="SALE_COMPLETED"&&(e.envelope.payload["sale"] as {id:string}).id===late)!;
+ for(const r of [a,c]){
+  assert.equal(applyEvent(r.context,await verifyEvent(r.context,lateSale,crypto)),"quarantined");
+  assert.equal(r.db.get(`SELECT count(*) AS n FROM sales WHERE id=?`,[late])!["n"],0);
+  assert.equal(reviewQuarantinedEvent(r.context,lateSale.envelope.event_id,lateSale.digest),"applied");
+  assert.equal(r.db.get(`SELECT kind FROM event_exception_reviews WHERE event_id=?`,[lateSale.envelope.event_id])!["kind"],"device_revoked");
+ }
+ assert.equal(stockOf(a.db,a.install.businessId,p).onHandThousandths,stockOf(c.db,c.install.businessId,p).onHandThousandths);
+ // Revoking again never widens the cutoff over a later fact that arrived while revoked.
+ const later=sale(b,p);await sealPendingEvents(b.context,crypto);
+ const laterSale=eventsForDestination(b.context,dest(b,a)).find(e=>e.envelope.event_type==="SALE_COMPLETED"&&(e.envelope.payload["sale"] as {id:string}).id===later)!;
+ assert.equal(applyEvent(a.context,await verifyEvent(a.context,laterSale,crypto)),"quarantined");
+ setExchangeDeviceActive(a.context,b.install.deviceId,false);
+ assert.equal(a.db.get(`SELECT accepted_through FROM trusted_exchange_devices WHERE device_id=?`,[b.install.deviceId])!["accepted_through"],held);
+ // Reinstating the till trusts it again, so what it signed meanwhile applies.
+ setExchangeDeviceActive(a.context,b.install.deviceId,true);assert.equal(retryDeferred(a.context),1);
+ assert.equal(a.db.get(`SELECT count(*) AS n FROM sales WHERE id=?`,[later])!["n"],1);
+ assert.throws(()=>a.db.run(`DELETE FROM event_exception_reviews`),/immutable/);
+});
+
+it("a cashier's sales signed before a permission change are judged by the revision they were signed under",async()=>{
+ const [a,b]=await replicas() as [Replica,Replica];
+ const { createLocalMember }=await import("../identity/members.ts");const { grantPermission,revokePermission }=await import("../identity/workspace.ts");
+ const member=await createLocalMember(a.context,{name:"Staff",role:"CASHIER",secret:"654321"});grantPermission(a.context,member,"cash.move");revokePermission(a.context,member,"cash.move");
+ await send(a,b);assert.equal(b.db.get(`SELECT revision FROM local_memberships WHERE user_id=?`,[member])!["revision"],3);
+ assert.deepEqual(b.db.all(`SELECT revision FROM membership_revisions WHERE user_id=? ORDER BY revision`,[member]).map(r=>r["revision"]),[1,2]);
+ let next=800;
+ const cash=async(revision:number)=>{const e:JournalEnvelope={event_id:randomUUIDv7(),business_id:a.install.businessId,origin_device_id:a.install.deviceId,actor_id:member,origin_sequence:++next,event_type:"CASH_MOVED",event_version:2,occurred_at:at,branch_id:null,authority_revision:revision,required_permissions:["cash.move"],payload:{movements:[{id:randomUUIDv7(),account_id:account(a),type:"CASH_IN",amount_minor:100,occurred_at:at}]}};
+  const token=await verifyEvent(b.context,await signed(a,e),crypto);const outcome=applyEvent(b.context,token);return [outcome,b.db.get(`SELECT reason FROM applied_events WHERE event_id=?`,[e.event_id])!["reason"]];};
+ assert.deepEqual(await cash(2),["applied",null],"revision 2 allowed moving cash, though it is revoked now");
+ assert.deepEqual(await cash(1),["quarantined","permission_denied"],"revision 1 never allowed it");
+ assert.deepEqual(await cash(3),["quarantined","permission_denied"]);
+ assert.deepEqual(await cash(4),["deferred","missing_dependency"],"a future revision waits");
+ b.db.run(`UPDATE local_memberships SET active=0,revision=4 WHERE user_id=?`,[member]);
+ assert.deepEqual(await cash(2),["applied",null],"a later suspension keeps work done while active");
+ assert.deepEqual(await cash(4),["quarantined","permission_denied"]);
+});
+
+it("two tills returning the same sale offline both keep their refund once the owner approves, computed as each till did",async()=>{
+ const {returnSale,previewReturn}=await import("./returns.ts");const [a,b]=await replicas() as [Replica,Replica],p=product(a),saleId=randomUUIDv7(),lineId=randomUUIDv7();
+ // Three bags for 1000 after a bill discount: one bag is worth 333, two 667. A till that recomputed the second
+ // return against the first would ask 334 and find the cash refund a franc short.
+ commands.completeSale(a.context,{id:saleId,number:saleId,discountMinor:500,lines:[{id:lineId,movementId:randomUUIDv7(),productId:p,name:"Rice",unitPriceMinor:500,quantity:3000}],payments:[{id:randomUUIDv7(),accountId:account(a),amountMinor:1000}],occurredAt:at,eventId:randomUUIDv7()});await send(a,b);
+ const record=(r:Replica)=>{const preview=previewReturn(r.context,"SALE",saleId,[{originalItemId:lineId,quantity:1000}]);assert.equal(preview.totalMinor,333);
+  returnSale(r.context,{id:randomUUIDv7(),eventId:randomUUIDv7(),originalId:saleId,priorId:preview.source.priorId,reason:"Returned rice",items:[{id:randomUUIDv7(),movementId:randomUUIDv7(),originalItemId:lineId,quantity:1000}],refunds:[{id:randomUUIDv7(),accountId:account(r),amountMinor:preview.totalMinor}]});};
+ record(a);record(b);await sealPendingEvents(a.context,crypto);await sealPendingEvents(b.context,crypto);
+ const returned=(from:Replica,to:Replica)=>eventsForDestination(from.context,dest(from,to)).find(e=>e.envelope.event_type==="SALE_RETURNED"&&e.envelope.origin_device_id===from.install.deviceId)!;
+ for(const [from,to] of [[a,b],[b,a]] as const){
+  const e=returned(from,to);
+  assert.equal(applyEvent(to.context,await verifyEvent(to.context,e,crypto)),"quarantined");
+  assert.equal(to.db.get(`SELECT reason FROM applied_events WHERE event_id=?`,[e.envelope.event_id])!["reason"],"return_conflict");
+  assert.equal(reviewQuarantinedEvent(to.context,e.envelope.event_id,e.digest),"applied");
+ }
+ for(const r of [a,b]){
+  assert.deepEqual(r.db.all(`SELECT total_minor,debt_minor FROM business_returns ORDER BY id`).map(row=>[row["total_minor"],row["debt_minor"]]),[[333,0],[333,0]]);
+  assert.equal(stockOf(r.db,r.install.businessId,p).onHandThousandths,-1000);assert.equal(balanceOfAccount(r.db,r.install.businessId,account(r)).onHandMinor,334);
+  assert.equal(count(r,"return_fork_links"),1);
+  // A new return could count only one side of the split, so the sale takes no more.
+  assert.throws(()=>record(r),/return_conflict/);
+ }
 });
 
 it("future formats stay signed and unapplied; lock during async verification discards capability",async()=>{

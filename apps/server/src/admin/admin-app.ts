@@ -7,7 +7,7 @@ import type { Kysely } from "kysely";
 import type { ServerDatabase } from "../database.js";
 import type { ServerKey } from "../identity.js";
 import { AdminError, ADMIN_IDLE_MINUTES, sessionAdmin, signIn, signOut, type Admin } from "./accounts.js";
-import { cancelCode, issueCode, listAudit, listCodes, listShops, recordShopPayment, serverHealth, setShopStatus, shopDetail, type Actor, type Metrics } from "./operations.js";
+import { cancelCode, issueCode, listAudit, listCodes, listShops, recordShopPayment, serverHealth, setShopStatus, setTillLimit, shopDetail, type Actor, type Metrics } from "./operations.js";
 import { PAYMENT_METHODS, type Edition, type PaymentMethod } from "../billing.js";
 
 /** Everything the operator dashboard needs; it shares the sync server's database, identity and counters. */
@@ -101,10 +101,13 @@ export async function createAdminApplication(options: AdminOptions): Promise<Fas
   app.post("/admin/api/codes", async request => {
     const { actor } = await signedIn(request, "admin");
     if (options.publicUrl === undefined) throw new AdminError(409, "public_url_missing");
-    const input = body(request), recovery = input["recoveryShopId"];
+    const input = body(request), recovery = input["recoveryShopId"], hosted = edition.edition === "hosted" && recovery === undefined;
     if (recovery !== undefined && typeof recovery !== "string") throw new AdminError(400, "invalid_request");
+    // A hosted code names its till limit or says unlimited: nothing picks a commercial default (ADR-039).
+    if (hosted && !Object.hasOwn(input, "maxTills")) throw new AdminError(400, "till_limit_required");
     const issued = await issueCode(db, options.key, options.publicUrl, actor, { label: String(input["label"] ?? ""), days: Number(input["days"] ?? 7), now: now(),
-      includedMonths: edition.edition === "hosted" && recovery === undefined ? Number(input["includedMonths"] ?? 0) : 0, ...(recovery === undefined ? {} : { recoveryShopId: recovery }) });
+      includedMonths: hosted ? Number(input["includedMonths"] ?? 0) : 0, includedDays: hosted ? Number(input["includedDays"] ?? 0) : 0,
+      ...(recovery === undefined ? { maxTills: tillLimit(input["maxTills"]) } : { recoveryShopId: recovery }) });
     return { ...issued, qr: await QRCode.toString(issued.code, { type: "svg", errorCorrectionLevel: "M", margin: 1 }) };
   });
   app.post("/admin/api/codes/:id/cancel", async (request, reply) => { const { actor } = await signedIn(request, "admin"); await cancelCode(db, actor, idParam(request), now()); return reply.code(204).send(); });
@@ -119,6 +122,10 @@ export async function createAdminApplication(options: AdminOptions): Promise<Fas
     const reference = typeof input["reference"] === "string" ? input["reference"] : undefined;
     return recordShopPayment(db, actor, { shopId: idParam(request), months: Number(input["months"]), amountMinor: Number(input["amountMinor"]), method, ...(reference === undefined ? {} : { reference }) }, now());
   });
+  app.post("/admin/api/shops/:id/till-limit", async request => {
+    const { actor } = await signedIn(request, "admin");
+    return { released: (await setTillLimit(db, actor, idParam(request), tillLimit(body(request)["maxTills"]))).length };
+  });
   app.post("/admin/api/shops/:id/:action", async (request, reply) => {
     const { actor } = await signedIn(request, "admin"), action = (request.params as { action?: string }).action;
     if (action !== "suspend" && action !== "resume" && action !== "remove" && action !== "restore") throw new AdminError(404, "not_found");
@@ -131,7 +138,7 @@ export async function createAdminApplication(options: AdminOptions): Promise<Fas
   app.get("/admin/api/audit", async request => { await signedIn(request); const before = (request.query as { before?: unknown }).before; return { entries: await listAudit(db, typeof before === "string" ? before : undefined) }; });
   app.get("/admin/api/audit.csv", async (request, reply) => {
     await signedIn(request);
-    const quote = (value: unknown): string => { const text = value === null || value === undefined ? "" : typeof value === "string" ? value : JSON.stringify(value); return `"${text.replace(/"/g, '""').replace(/^([=+\-@])/, "'$1")}"`; };
+    const quote = (value: unknown): string => { const text = value === null || value === undefined ? "" : typeof value === "string" ? value : JSON.stringify(value); return `"${text.replace(/"/g, '""').replace(/^([=+\-@\t\r])/, "'$1")}"`; };
     const rows = await listAudit(db, undefined, 500);
     reply.header("content-type", "text/csv; charset=utf-8").header("content-disposition", 'attachment; filename="kolo-admin-audit.csv"');
     return ["id,at,username,action,target,address,detail", ...rows.map(row => [row.id, row.at, row.username, row.action, row.target, row.address, row.detail].map(quote).join(","))].join("\n");
@@ -164,4 +171,11 @@ export async function createAdminApplication(options: AdminOptions): Promise<Fas
     return serve(reply, path);
   });
   return app;
+}
+
+/** A till limit from a request body: a whole number, or null/absent for unlimited. */
+function tillLimit(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "number" || !Number.isInteger(value)) throw new AdminError(400, "invalid_till_limit");
+  return value;
 }

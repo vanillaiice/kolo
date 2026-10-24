@@ -30,11 +30,16 @@ export const saleApplier: EventApplier = {
 
     const saleId = required(sale, "id");
 
+    // Every figure is checked before anything is written: what is owed, and that each stock movement is exactly
+    // its line's, so a payload cannot move stock the sale did not sell.
+    const writeOwed = creditFor(tx, event, body, sale, saleId);
+    checkMovements(listOf(sale["items"], "a sale's items"), listOf(body["movements"], "a sale's movements"), saleId);
+
     // A sale this device already holds is left exactly as it is. It can arrive
     // twice — a pull retried after a lost response — and financial history is
-    // never rewritten (§41). INSERT OR IGNORE is the whole idempotency story
-    // here, and it also covers a device receiving back the sale it sent.
-    tx.run(
+    // never rewritten (§41). The sale row's INSERT OR IGNORE decides for the
+    // whole sale, including a device receiving back the sale it sent.
+    const inserted = tx.run(
       `INSERT OR IGNORE INTO sales
          (id, business_id, branch_id, customer_id, number, discount_minor, currency,
           note, user_id, device_id, occurred_at, recorded_at)
@@ -56,6 +61,8 @@ export const saleApplier: EventApplier = {
         new Date().toISOString(),
       ],
     );
+    // Already held: its lines, payments, debt and movements were written with it and are never written again.
+    if (inserted.changes !== 1) return;
 
     for (const line of listOf(sale["items"], "a sale's items")) {
       const item = objectOf(line, "a sale item");
@@ -104,7 +111,7 @@ export const saleApplier: EventApplier = {
       );
     }
 
-    applyCredit(tx, event, body, sale, saleId);
+    writeOwed();
 
     for (const line of listOf(body["movements"], "a sale's movements")) {
       const movement = objectOf(line, "a movement");
@@ -142,17 +149,17 @@ export const saleApplier: EventApplier = {
  * let a device with a rounding bug — or a garbled resend — put a different
  * number on the customer's account than the receipt in their hand says.
  *
- * INSERT OR IGNORE, as everywhere in this applier: the entry's own identifier
- * came from the device that made the sale, so a sale arriving twice leaves one
- * debt (§27).
+ * Checks run now and the entry is written by the returned function, once the
+ * sale row is known to be new; its identifier came from the device that made the
+ * sale, so a sale arriving twice leaves one debt (§27).
  */
-function applyCredit(
+function creditFor(
   tx: Queryable,
   event: InboxEvent,
   body: Wire,
   sale: Wire,
   saleId: string,
-): void {
+): () => void {
   const lines = listOf(sale["items"], "a sale's items").map((line) => {
     const item = objectOf(line, "a sale item");
     return {
@@ -178,7 +185,7 @@ function applyCredit(
     if (transactionId !== null) {
       throw new UnusableEvent("a settled sale carries a ledger entry for a debt it does not leave");
     }
-    return;
+    return () => {};
   }
   if (transactionId === null) {
     throw new UnusableEvent(`${outstandingMinor} is left owing with no ledger entry to carry it`);
@@ -188,24 +195,39 @@ function applyCredit(
     throw new UnusableEvent(`${outstandingMinor} is left owing with no customer to owe it`);
   }
 
-  tx.run(
-    `INSERT OR IGNORE INTO customer_transactions
-       (id, customer_id, business_id, branch_id, type, amount_minor, currency,
-        reference_kind, reference_id, reason, user_id, device_id, occurred_at, recorded_at)
-     VALUES (?, ?, ?, NULL, 'CREDIT_SALE', ?, ?, 'SALE', ?, NULL, ?, ?, ?, ?)`,
-    [
-      transactionId,
-      customerId,
-      event.businessId,
-      outstandingMinor,
-      CURRENCY,
-      saleId,
-      event.userId,
-      event.deviceId,
-      optional(sale, "occurred_at") ?? event.occurredAt,
-      new Date().toISOString(),
-    ],
-  );
+  return () => {
+    tx.run(
+      `INSERT OR IGNORE INTO customer_transactions
+         (id, customer_id, business_id, branch_id, type, amount_minor, currency,
+          reference_kind, reference_id, reason, user_id, device_id, occurred_at, recorded_at)
+       VALUES (?, ?, ?, NULL, 'CREDIT_SALE', ?, ?, 'SALE', ?, NULL, ?, ?, ?, ?)`,
+      [
+        transactionId,
+        customerId,
+        event.businessId,
+        outstandingMinor,
+        CURRENCY,
+        saleId,
+        event.userId,
+        event.deviceId,
+        optional(sale, "occurred_at") ?? event.occurredAt,
+        new Date().toISOString(),
+      ],
+    );
+  };
+}
+
+/** The stock movements of a sale are its lines, one each in order: same product, signed quantity and cost, referencing it. */
+function checkMovements(items: readonly unknown[], movements: readonly unknown[], saleId: string): void {
+  if (movements.length !== items.length) throw new UnusableEvent("a sale's movements do not match its lines");
+  for (const [index, line] of items.entries()) {
+    const item = objectOf(line, "a sale item"), movement = objectOf(movements[index], "a movement");
+    if (required(movement, "type") !== "SALE" || required(movement, "product_id") !== required(item, "product_id")
+      || wholeNumber(movement, "quantity") !== -(wholeNumber(item, "quantity") ?? 0) || optional(movement, "reference_kind") !== "SALE"
+      || optional(movement, "reference_id") !== saleId || wholeNumber(movement, "unit_cost_minor") !== wholeNumber(item, "unit_cost_minor")) {
+      throw new UnusableEvent("a sale's movements do not match its lines");
+    }
+  }
 }
 
 type Wire = Record<string, unknown>;

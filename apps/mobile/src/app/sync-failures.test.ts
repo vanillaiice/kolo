@@ -14,6 +14,7 @@ it("sync failures keep the server's meaning, never its details, and every key ha
     [new SyncTransportError("shop_suspended", 403, false), "shopSuspended"],
     [new SyncTransportError("shop_removed", 403, false), "shopRemoved"],
     [new SyncTransportError("hosted_service_inactive", 403, false), "hostedServiceInactive"],
+    [new SyncTransportError("till_limit_reached", 403, false), "tillLimitReached"],
     [new SyncTransportError("network_unavailable", 0, true), "serverUnreachable"],
     [new SyncTransportError("rate_limited", 429, true), "serverUnreachable"],
     [new SyncTransportError("invalid_session", 401, false), "serverRefused"],

@@ -2,6 +2,8 @@
 
 Date: 2026-10-11. Status: accepted by the user and implemented for the owner's side on desktop and phone and the new
 till's side on the phone; a computer joining by code is not built yet. Extends ADR-022 (pairing) and ADR-030.
+Amended by [ADR-044](ADR-044-join-code-key-stretching.md): the code is stretched with Argon2id before the mailbox
+handle and MAC key are derived; older tills cannot join across the change.
 
 ## Context
 

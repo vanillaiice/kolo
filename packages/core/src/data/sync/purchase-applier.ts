@@ -31,12 +31,16 @@ export const purchaseApplier: EventApplier = {
 
     const purchaseId = required(purchase, "id");
 
+    // Every figure is checked before anything is written: what is owed, and that each stock movement is exactly
+    // its line's, so a payload cannot move stock the delivery did not bring.
+    const writeOwed = owedFor(tx, event, body, purchase, purchaseId);
+    checkMovements(listOf(purchase["items"], "a delivery's items"), listOf(body["movements"], "a delivery's movements"), purchaseId);
+
     // A delivery this device already holds is left exactly as it is. It can
     // arrive twice — a pull retried after a lost response — and what the shop
-    // paid for its stock is never rewritten (§41). INSERT OR IGNORE is the
-    // whole idempotency story here, and it also covers a device receiving back
-    // the delivery it sent.
-    tx.run(
+    // paid for its stock is never rewritten (§41). The delivery row's INSERT OR
+    // IGNORE decides for the whole delivery, including one received back.
+    const inserted = tx.run(
       `INSERT OR IGNORE INTO purchases
          (id, business_id, branch_id, supplier_id, reference, note,
           user_id, device_id, occurred_at, recorded_at)
@@ -56,6 +60,8 @@ export const purchaseApplier: EventApplier = {
         new Date().toISOString(),
       ],
     );
+    // Already held: its lines, payments, debt and movements were written with it and are never written again.
+    if (inserted.changes !== 1) return;
 
     for (const line of listOf(purchase["items"], "a delivery's items")) {
       const item = objectOf(line, "a delivery item");
@@ -108,7 +114,7 @@ export const purchaseApplier: EventApplier = {
       );
     }
 
-    applyOwed(tx, event, body, purchase, purchaseId);
+    writeOwed();
 
     for (const line of listOf(body["movements"], "a delivery's movements")) {
       const movement = objectOf(line, "a movement");
@@ -146,17 +152,17 @@ export const purchaseApplier: EventApplier = {
  * would let a device with a rounding bug — or a garbled resend — put a different
  * number on a wholesaler's account than the delivery note says.
  *
- * INSERT OR IGNORE, as everywhere in this applier: the entry's own identifier
- * came from the device that recorded the delivery, so one arriving twice leaves
- * one debt (§27).
+ * Checks run now and the entry is written by the returned function, once the
+ * delivery row is known to be new; its identifier came from the device that
+ * recorded the delivery, so one arriving twice leaves one debt (§27).
  */
-function applyOwed(
+function owedFor(
   tx: Queryable,
   event: InboxEvent,
   body: Wire,
   purchase: Wire,
   purchaseId: string,
-): void {
+): () => void {
   // The shared rule, so paying more at the door than the delivery came to is
   // refused here exactly as the device that received it would have refused it.
   let outstandingMinor: number;
@@ -180,7 +186,7 @@ function applyOwed(
         "a delivery paid for carries a ledger entry for a debt it does not leave",
       );
     }
-    return;
+    return () => {};
   }
   if (transactionId === null) {
     throw new UnusableEvent(`${outstandingMinor} is left owing with no ledger entry to carry it`);
@@ -190,24 +196,39 @@ function applyOwed(
     throw new UnusableEvent(`${outstandingMinor} is left owing with no supplier to owe it`);
   }
 
-  tx.run(
-    `INSERT OR IGNORE INTO supplier_transactions
-       (id, supplier_id, business_id, branch_id, type, amount_minor, currency, account_id,
-        reference_kind, reference_id, reason, user_id, device_id, occurred_at, recorded_at)
-     VALUES (?, ?, ?, NULL, 'PURCHASE', ?, ?, NULL, 'PURCHASE', ?, NULL, ?, ?, ?, ?)`,
-    [
-      transactionId,
-      supplierId,
-      event.businessId,
-      outstandingMinor,
-      CURRENCY,
-      purchaseId,
-      event.userId,
-      event.deviceId,
-      optional(purchase, "occurred_at") ?? event.occurredAt,
-      new Date().toISOString(),
-    ],
-  );
+  return () => {
+    tx.run(
+      `INSERT OR IGNORE INTO supplier_transactions
+         (id, supplier_id, business_id, branch_id, type, amount_minor, currency, account_id,
+          reference_kind, reference_id, reason, user_id, device_id, occurred_at, recorded_at)
+       VALUES (?, ?, ?, NULL, 'PURCHASE', ?, ?, NULL, 'PURCHASE', ?, NULL, ?, ?, ?, ?)`,
+      [
+        transactionId,
+        supplierId,
+        event.businessId,
+        outstandingMinor,
+        CURRENCY,
+        purchaseId,
+        event.userId,
+        event.deviceId,
+        optional(purchase, "occurred_at") ?? event.occurredAt,
+        new Date().toISOString(),
+      ],
+    );
+  };
+}
+
+/** The stock movements of a delivery are its lines, one each in order: same product, signed quantity and cost, referencing it. */
+function checkMovements(items: readonly unknown[], movements: readonly unknown[], purchaseId: string): void {
+  if (movements.length !== items.length) throw new UnusableEvent("a delivery's movements do not match its lines");
+  for (const [index, line] of items.entries()) {
+    const item = objectOf(line, "a delivery item"), movement = objectOf(movements[index], "a movement");
+    if (required(movement, "type") !== "PURCHASE" || required(movement, "product_id") !== required(item, "product_id")
+      || wholeNumber(movement, "quantity") !== (wholeNumber(item, "quantity") ?? 0) || optional(movement, "reference_kind") !== "PURCHASE"
+      || optional(movement, "reference_id") !== purchaseId || wholeNumber(movement, "unit_cost_minor") !== wholeNumber(item, "unit_cost_minor")) {
+      throw new UnusableEvent("a delivery's movements do not match its lines");
+    }
+  }
 }
 
 type Wire = Record<string, unknown>;

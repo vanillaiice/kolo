@@ -78,3 +78,42 @@ describe("a sale from another device whose numbers do not add up", () => {
     assert.throws(() => apply(database, payload), /no customer to owe it/);
   });
 });
+
+describe("a legacy sale whose stock movements or second arrival disagree with it", () => {
+  type Payload = ReturnType<typeof queued> & { movements: Record<string, unknown>[] };
+  const count = (database: Database, table: string): number => Number(database.get(`SELECT count(*) AS n FROM ${table}`)!["n"]);
+
+  it("is refused when a movement moves stock its line did not sell", () => {
+    for (const change of [{ quantity: -20_000 }, { quantity: 2000 }, { type: "ADJUSTMENT" }, { product_id: ACCOUNT }, { reference_id: "another-sale" }]) {
+      const database = fresh(), payload = queued() as Payload;
+      Object.assign(payload.movements[0]!, change);
+      assert.throws(() => apply(database, payload), /movements do not match/, JSON.stringify(change));
+      assert.equal(count(database, "sales"), 0);
+    }
+    const database = fresh(), extra = queued() as Payload;
+    extra.movements.push({ ...extra.movements[0]!, id: "movement-2" });
+    assert.throws(() => apply(database, extra), /movements do not match/);
+  });
+
+  it("arriving again with other lines or payments leaves the sale exactly as first held", () => {
+    const database = fresh();
+    apply(database, queued());
+    const again = queued() as Payload & { sale: { items: Record<string, unknown>[] } };
+    again.sale.items.push({ ...again.sale.items[0]!, id: "line-2" });
+    again.movements.push({ ...again.movements[0]!, id: "movement-2" });
+    again.payments.push({ ...again.payments[0]!, id: "payment-2" } as { amount_minor: number });
+    apply(database, again);
+    assert.equal(count(database, "sale_items"), 1); assert.equal(count(database, "sale_payments"), 1); assert.equal(count(database, "inventory_movements"), 1);
+    assert.equal(stockOf(database, BUSINESS, PRODUCT).onHandThousandths, -2000);
+  });
+
+  it("cannot hold a line whose total would overflow report arithmetic, whichever writer tries", () => {
+    const database = fresh();
+    apply(database, queued());
+    const line = (price: number, quantity: number) => database.run(`INSERT INTO sale_items (id, sale_id, business_id, product_id, name, unit_price_minor, quantity, currency) VALUES (?, 'sale-1', ?, ?, 'Riz', ?, ?, 'XAF')`,
+      [`line-${price}-${quantity}`, BUSINESS, PRODUCT, price, quantity]);
+    assert.throws(() => line(Number.MAX_SAFE_INTEGER, 2000), /line total out of range/);
+    assert.throws(() => line(9_007_199_254_741, 1_000_001), /line total out of range/);
+    line(Number.MAX_SAFE_INTEGER, 1000); line(9_007_199_254_740, 1_000_000);
+  });
+});

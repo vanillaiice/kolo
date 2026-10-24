@@ -8,7 +8,7 @@ export interface AuthorityFact { readonly eventId: string; readonly businessId: 
 
 /** @internal Captures new authority changes only, never retroactively signs historical audit rows. */
 export function captureAuthorityFact(tx: Queryable, fact: AuthorityFact): void {
-  const actions = ["WORKSPACE_CREATED", "LEGACY_WORKSPACE_ADOPTED", "MEMBER_CREATED", "PERMISSION_GRANTED", "PERMISSION_REVOKED", "PERMISSION_OVERRIDE_CLEARED", "MEMBER_ROLE_CHANGED", "ROLE_PERMISSIONS_SET", "CUSTOM_ROLE_SET", "MEMBER_SUSPENDED", "MEMBER_REINSTATED", "MEMBER_ACCESS_RESET", "OWNER_ACCESS_RECOVERED", "DEVICE_TRUSTED", "DEVICE_REVOKED",
+  const actions = ["WORKSPACE_CREATED", "LEGACY_WORKSPACE_ADOPTED", "MEMBER_CREATED", "PERMISSION_GRANTED", "PERMISSION_REVOKED", "PERMISSION_OVERRIDE_CLEARED", "MEMBER_ROLE_CHANGED", "ROLE_PERMISSIONS_SET", "CUSTOM_ROLE_SET", "MEMBER_SUSPENDED", "MEMBER_REINSTATED", "MEMBER_ACCESS_RESET", "OWNER_ACCESS_RECOVERED", "DEVICE_TRUSTED", "DEVICE_REVOKED", "DEVICE_HISTORY_ACCEPTED",
     "DEVICE_ENCRYPTION_KEY", "SHOP_KEY_GRANTED", "SERVER_ENDPOINT_SET", "SERVER_ENDPOINT_CLEARED", "SHOP_BACKUP_KEY"];
   if (!actions.includes(fact.action)) return;
   const installation = tx.get(`SELECT * FROM local_installation WHERE id = 1`);
@@ -28,7 +28,7 @@ export function captureAuthorityFact(tx: Queryable, fact: AuthorityFact): void {
     archiveLegacyHistory(tx,fact.businessId);
     payload = { business_id: fact.businessId, owner_id: fact.userId, device_id: fact.deviceId,
       public_key: installation["public_key"], provenance: "unsigned_v1_snapshot" };
-  } else if (["DEVICE_TRUSTED", "DEVICE_REVOKED", "DEVICE_ENCRYPTION_KEY", "SHOP_KEY_GRANTED", "SERVER_ENDPOINT_SET", "SERVER_ENDPOINT_CLEARED", "SHOP_BACKUP_KEY", "ROLE_PERMISSIONS_SET", "CUSTOM_ROLE_SET"].includes(fact.action)) {
+  } else if (["DEVICE_TRUSTED", "DEVICE_REVOKED", "DEVICE_HISTORY_ACCEPTED", "DEVICE_ENCRYPTION_KEY", "SHOP_KEY_GRANTED", "SERVER_ENDPOINT_SET", "SERVER_ENDPOINT_CLEARED", "SHOP_BACKUP_KEY", "ROLE_PERMISSIONS_SET", "CUSTOM_ROLE_SET"].includes(fact.action)) {
     payload = { ...fact.payload }; // Shaped by the operation that records it (trust, encryption keys, server address, role matrix).
   } else {
     const target = tx.get(`SELECT m.revision,m.role,m.custom_role_id,u.name FROM local_memberships m JOIN users u ON u.id=m.user_id AND u.business_id=m.business_id
