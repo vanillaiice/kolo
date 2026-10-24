@@ -9,6 +9,41 @@ GitHub release, and installed desktop apps show it before updating, so write it 
 - Say what someone will notice: new things they can do, fixes, and anything that works differently. Leave out
   internal changes. Do not use a `---` line inside a section: it ends the notes shown in the app.
 
+## 0.11.0
+
+### Français
+
+- Une caisse verrouillée dont on a oublié le code et la clé de récupération peut démarrer une nouvelle boutique.
+  L’ancienne est mise de côté, jamais effacée, et peut être rouverte plus tard avec son propre code.
+- Le propriétaire voit « En attente de votre accord » dans le journal : les opérations venues d’autres caisses et
+  mises de côté (par exemple d’une caisse retirée, ou deux retours de la même vente faits en même temps) peuvent être
+  vérifiées puis acceptées une par une.
+- Retirer une caisse ne fait plus perdre les ventes qu’elle avait déjà envoyées : les autres caisses les reçoivent
+  toujours.
+- Changer le code ou les droits d’un employé ne bloque plus ses ventes encore en route vers les autres caisses.
+- Avec un serveur, l’abonnement peut limiter le nombre de caisses ; l’écran de synchronisation indique combien sont
+  autorisées et utilisées.
+- Sur téléphone et ordinateur, chaque champ a maintenant une courte description, le clavier ne cache plus les champs
+  et les écrans s’animent légèrement. Dans Plus, chaque entrée a une description.
+- Important : mettez à jour toutes les caisses. Une caisse d’une version plus ancienne ne peut plus rejoindre une
+  boutique avec le code à 10 caractères d’un propriétaire en 0.11.0, ni l’inverse.
+
+### English
+
+- A locked till whose code and recovery key are both forgotten can start a new shop. The old one is set aside,
+  never erased, and can be reopened later with its own code.
+- The owner sees "Waiting for your approval" in the journal: operations from other tills that were held back (for
+  example from a removed till, or two returns of the same sale made at the same time) can be checked and accepted
+  one by one.
+- Removing a till no longer loses the sales it had already sent: the other tills still receive them.
+- Changing a staff member's code or permissions no longer blocks their sales still on their way to other tills.
+- With a server, the plan can limit how many tills a shop has; the sync screen shows how many are allowed and in
+  use.
+- On phone and computer, every field now has a short description, the keyboard no longer hides fields, and screens
+  move a little. In More, every item has a description.
+- Important: update every till. A till on an older version can no longer join a shop with the 10-character code of
+  an owner on 0.11.0, or the other way round.
+
 ## 0.10.0
 
 ### Français
