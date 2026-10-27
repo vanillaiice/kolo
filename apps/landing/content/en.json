@@ -205,7 +205,7 @@
     "privacyLink": "Privacy policy",
     "cookiesLink": "Cookie policy",
     "home": "Back to KOLO",
-    "updated": "Last updated: 19 October 2026",
+    "updated": "Last updated: 27 October 2026",
     "contactHeading": "Privacy contact",
     "contactFallback": "For privacy questions, contact hblabs through the channel from which you received KOLO. Do not share shop records, backups, passwords or other private information in public GitHub issues.",
     "contactLabel": "Contact",
@@ -238,7 +238,7 @@
         {
           "title": "What this website does",
           "paragraphs": [
-            "You can read about KOLO, view demo screenshots and download promotional assets without an account. This website has no signup, contact form, payment form, advertising, analytics scripts or tracking pixels. It does not read or upload your shop’s sales, stock, customer records or backups.",
+            "You can read about KOLO, view demo screenshots and download promotional assets without an account. This website has no signup, contact form, payment form, advertising, tracking pixels or third-party analytics. It does not read or upload your shop’s sales, stock, customer records or backups.",
             "To suggest a download, the page’s JavaScript reads the device type your browser reports (for example Android or Windows). It is used only in your browser, never stored, and not sent anywhere."
           ]
         },
@@ -247,6 +247,14 @@
           "paragraphs": [
             "To deliver a page or file, the server receives technical information such as your IP address, the requested URL, the request time and browser information sent with the request. The host may keep access or security logs for delivering the website, diagnosing problems and protecting it from abuse.",
             "This website is self-hosted on a server operated by hblabs. Any access or security logs remain on that hosting infrastructure. The retention period is determined by the server configuration; contact us for details about hosting logs."
+          ]
+        },
+        {
+          "title": "Visit statistics",
+          "paragraphs": [
+            "To understand which pages are read and which downloads are useful, this website uses Umami, an open-source statistics tool that hblabs runs on its own server (stats.hblabs.xyz). No third-party analytics company receives this data.",
+            "When a page loads, the script sends the page address, the referring page, your browser, operating system, device type, screen size, language and the country derived from your IP address. Umami sets no cookies and stores nothing in your browser. It counts visits using a value derived from your IP address and browser that changes regularly and cannot be used to recognise you over time; your IP address itself is not stored.",
+            "These statistics are only viewed as totals and are not used for advertising or profiling. You can block stats.hblabs.xyz with a content blocker; the website works the same without it."
           ]
         },
         {
@@ -283,9 +291,9 @@
       "intro": "The KOLO website itself sets no HTTP cookies. It uses browser local storage for your selected language. This page explains that storage so you can manage it.",
       "sections": [
         {
-          "title": "No advertising or analytics trackers",
+          "title": "No cookies or advertising trackers",
           "paragraphs": [
-            "The current website includes no advertising cookies, analytics tools, tracking pixels, fingerprinting or third-party embedded players. A hosting provider may add its own security mechanisms; any provider-added storage must be documented when hosting is configured."
+            "The website includes no advertising cookies, tracking pixels, fingerprinting or third-party embedded players. Visit statistics use Umami, hosted by hblabs, which sets no cookies and stores nothing in your browser; the privacy policy describes what it collects. A hosting provider may add its own security mechanisms; any provider-added storage must be documented when hosting is configured."
           ]
         },
         {

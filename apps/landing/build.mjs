@@ -52,6 +52,7 @@ const icon = (name) => {
   };
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 };
+const analytics = '<script defer src="https://stats.hblabs.xyz/script.js" data-website-id="9e1c1208-ee0e-4ac5-83db-2631a1db803d"></script>';
 const brand = '<a class="brand" href="#top" aria-label="KOLO"><img src="../assets/kolo-icon.svg" width="34" height="34" alt=""><span>KOLO<span class="brand-dot">.</span></span></a>';
 function head(lang, title, description, slug = '', prefix = '../') {
   const route = `${lang}/${slug}`;
@@ -63,7 +64,7 @@ function head(lang, title, description, slug = '', prefix = '../') {
 <meta property="og:locale" content="${lang === 'fr' ? 'fr_FR' : 'en_GB'}"><meta property="og:locale:alternate" content="${lang === 'fr' ? 'en_GB' : 'fr_FR'}"><meta name="twitter:card" content="summary_large_image">
 ${siteURL ? `<link rel="canonical" href="${absolute(route)}"><meta property="og:url" content="${absolute(route)}"><meta property="og:image" content="${absolute('assets/share.png')}">` : ''}
 <link rel="alternate" hreflang="en" href="${absolute(`en/${slug}`)}"><link rel="alternate" hreflang="fr" href="${absolute(`fr/${slug}`)}"><link rel="alternate" hreflang="x-default" href="${absolute(slug ? `en/${slug}` : '')}">
-<link rel="icon" href="${prefix}assets/kolo-icon.svg" type="image/svg+xml"><link rel="stylesheet" href="${prefix}assets/styles.css"><script src="${prefix}assets/site.js" defer></script></head>`;
+<link rel="icon" href="${prefix}assets/kolo-icon.svg" type="image/svg+xml"><link rel="stylesheet" href="${prefix}assets/styles.css"><script src="${prefix}assets/site.js" defer></script>${analytics}</head>`;
 }
 
 function footerCredit(t) {
@@ -134,7 +135,7 @@ for (const [lang, t] of Object.entries(translations)) {
     await writeFile(new URL(`${lang}/${kind}/index.html`, dist), renderPolicy(lang,t,kind));
   }
 }
-await writeFile(new URL('index.html', dist), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>KOLO: English / Français</title><meta name="description" content="KOLO: offline shop management / Gestion de boutique hors ligne"><link rel="icon" href="assets/kolo-icon.svg"><link rel="stylesheet" href="assets/styles.css"><script src="assets/site.js" defer></script></head><body class="language-page" data-language-entry><main><img src="assets/kolo-icon.svg" width="80" height="80" alt="KOLO"><h1>KOLO<span class="brand-dot">.</span></h1><p>Choose your language / <span lang="fr">Choisissez votre langue</span></p><div class="actions"><a class="button primary" href="en/" lang="en">English</a><a class="button secondary" href="fr/" lang="fr">Français</a></div></main></body></html>`);
+await writeFile(new URL('index.html', dist), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>KOLO: English / Français</title><meta name="description" content="KOLO: offline shop management / Gestion de boutique hors ligne"><link rel="icon" href="assets/kolo-icon.svg"><link rel="stylesheet" href="assets/styles.css"><script src="assets/site.js" defer></script>${analytics}</head><body class="language-page" data-language-entry><main><img src="assets/kolo-icon.svg" width="80" height="80" alt="KOLO"><h1>KOLO<span class="brand-dot">.</span></h1><p>Choose your language / <span lang="fr">Choisissez votre langue</span></p><div class="actions"><a class="button primary" href="en/" lang="en">English</a><a class="button secondary" href="fr/" lang="fr">Français</a></div></main></body></html>`);
 const crawlBase = siteURL ?? 'http://localhost:4173/';
 const routes = ['', ...['en','fr'].flatMap(lang => [`${lang}/`, `${lang}/privacy/`, `${lang}/cookies/`])];
 const sitemap = routes.map(route => {

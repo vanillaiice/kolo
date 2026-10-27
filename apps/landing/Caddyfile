@@ -14,7 +14,7 @@
 		Referrer-Policy "strict-origin-when-cross-origin"
 		X-Frame-Options "DENY"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
-		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'none'"
+		Content-Security-Policy "default-src 'self'; script-src 'self' https://stats.hblabs.xyz; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; connect-src https://stats.hblabs.xyz; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'none'"
 	}
 	file_server
 }

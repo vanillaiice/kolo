@@ -205,7 +205,7 @@
     "privacyLink": "Confidentialité",
     "cookiesLink": "Cookies",
     "home": "Retour à KOLO",
-    "updated": "Dernière mise à jour : 19 octobre 2026",
+    "updated": "Dernière mise à jour : 27 octobre 2026",
     "contactHeading": "Contact pour la confidentialité",
     "contactFallback": "Pour toute question sur la confidentialité, contactez hblabs par le canal grâce auquel vous avez obtenu KOLO. Ne publiez pas de données de boutique, sauvegardes, mots de passe ou autres informations privées dans les tickets publics GitHub.",
     "contactLabel": "Contact",
@@ -238,7 +238,7 @@
         {
           "title": "Ce que fait ce site",
           "paragraphs": [
-            "Vous pouvez découvrir KOLO, consulter les captures de démonstration et télécharger les supports de présentation sans compte. Ce site ne comporte ni inscription, ni formulaire de contact ou de paiement, ni publicité, ni script de mesure d’audience, ni pixel de suivi. Il ne lit ni ne transmet les ventes, stocks, fiches clients ou sauvegardes de votre boutique.",
+            "Vous pouvez découvrir KOLO, consulter les captures de démonstration et télécharger les supports de présentation sans compte. Ce site ne comporte ni inscription, ni formulaire de contact ou de paiement, ni publicité, ni pixel de suivi, ni outil de mesure d’audience tiers. Il ne lit ni ne transmet les ventes, stocks, fiches clients ou sauvegardes de votre boutique.",
             "Pour suggérer un téléchargement, le JavaScript de la page lit le type d’appareil indiqué par votre navigateur (par exemple Android ou Windows). Cette information reste dans votre navigateur : elle n’est ni enregistrée ni transmise."
           ]
         },
@@ -247,6 +247,14 @@
           "paragraphs": [
             "Pour fournir une page ou un fichier, le serveur reçoit des informations techniques telles que votre adresse IP, l’URL demandée, l’heure de la requête et les informations du navigateur jointes à cette requête. L’hébergeur peut conserver des journaux d’accès ou de sécurité pour fournir le site, diagnostiquer les problèmes et prévenir les abus.",
             "Ce site est auto-hébergé sur un serveur exploité par hblabs. Les éventuels journaux d’accès ou de sécurité restent sur cette infrastructure. Leur durée de conservation dépend de la configuration du serveur ; contactez-nous pour obtenir des précisions sur ces journaux."
+          ]
+        },
+        {
+          "title": "Statistiques de visite",
+          "paragraphs": [
+            "Pour savoir quelles pages sont lues et quels téléchargements sont utiles, ce site utilise Umami, un outil de statistiques open source que hblabs exploite sur son propre serveur (stats.hblabs.xyz). Aucune société tierce de mesure d’audience ne reçoit ces données.",
+            "Au chargement d’une page, le script envoie l’adresse de la page, la page d’origine, votre navigateur, votre système d’exploitation, le type d’appareil, la taille de l’écran, la langue et le pays déduit de votre adresse IP. Umami ne dépose aucun cookie et n’enregistre rien dans votre navigateur. Il compte les visites à l’aide d’une valeur dérivée de votre adresse IP et de votre navigateur, renouvelée régulièrement, qui ne permet pas de vous reconnaître dans la durée ; votre adresse IP elle-même n’est pas conservée.",
+            "Ces statistiques ne sont consultées que sous forme de totaux et ne servent ni à la publicité ni au profilage. Vous pouvez bloquer stats.hblabs.xyz avec un bloqueur de contenu ; le site fonctionne de la même façon sans lui."
           ]
         },
         {
@@ -283,9 +291,9 @@
       "intro": "Le site KOLO lui-même ne dépose aucun cookie HTTP. Il utilise le stockage local du navigateur pour la langue que vous choisissez. Cette page explique ce stockage et comment le gérer.",
       "sections": [
         {
-          "title": "Aucun traceur publicitaire ou de mesure d’audience",
+          "title": "Aucun cookie ni traceur publicitaire",
           "paragraphs": [
-            "Le site actuel ne comporte ni cookie publicitaire, ni outil de mesure d’audience, ni pixel de suivi, ni empreinte de navigateur, ni lecteur tiers intégré. Un hébergeur peut ajouter ses propres mécanismes de sécurité ; tout stockage ajouté par cet hébergeur doit être documenté lors de la configuration de l’hébergement."
+            "Le site ne comporte ni cookie publicitaire, ni pixel de suivi, ni empreinte de navigateur, ni lecteur tiers intégré. Les statistiques de visite utilisent Umami, hébergé par hblabs, qui ne dépose aucun cookie et n’enregistre rien dans votre navigateur ; la politique de confidentialité décrit les données collectées. Un hébergeur peut ajouter ses propres mécanismes de sécurité ; tout stockage ajouté par cet hébergeur doit être documenté lors de la configuration de l’hébergement."
           ]
         },
         {
