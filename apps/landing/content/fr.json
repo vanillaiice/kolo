@@ -196,11 +196,26 @@
   ],
   "footerLine": "Pensé pour le quotidien de votre boutique.",
   "footerDocs": "Documentation",
+  "githubLabel": "Code source de KOLO sur GitHub",
   "footerLicense": "Licence",
   "top": "Retour en haut",
   "videoTitle": "Découvrez une journée en boutique",
   "videoFallback": "Télécharger la vidéo de démonstration",
   "promoDescription": "KOLO aide les boutiques à vendre, gérer le stock et suivre les crédits clients, les fournisseurs, les dépenses et les rapports. L’application fonctionne hors ligne sur Windows, Linux et Android, en français et en anglais, avec des montants en FCFA (XAF). La synchronisation chiffrée facultative relie les appareils sur le même Wi-Fi ou point d’accès sans Internet, ou via un serveur hébergé ou auto-hébergé. KOLO est en bêta publique. iOS et la distribution sur Google Play et F-Droid sont prévus plus tard.",
+  "blog": {
+    "nav": "Blog",
+    "title": "Blog KOLO",
+    "description": "Actualités, guides et récits sur la gestion d’une boutique avec KOLO.",
+    "lead": "Actualités de KOLO, guides pratiques et récits du comptoir.",
+    "empty": "Aucun article pour l’instant. Revenez bientôt.",
+    "otherLanguage": "Seulement en anglais",
+    "published": "Publié le",
+    "updated": "Mis à jour le",
+    "translation": "Read in English",
+    "back": "Tous les articles",
+    "rss": "Flux RSS",
+    "readMore": "Lire l’article"
+  },
   "policies": {
     "privacyLink": "Confidentialité",
     "cookiesLink": "Cookies",
@@ -230,6 +245,8 @@
       "Mémoriser la langue que vous choisissez",
       "Jusqu’à l’effacement des données du site ou à leur suppression avec le bouton ci-dessous"
     ],
+    "mediaHeading": "Vidéos",
+    "mediaBody": "Les vidéos, leurs images d’aperçu et leurs sous-titres sont servis depuis {origin}. Votre navigateur contacte cet hébergeur lorsqu’une page affiche un aperçu de vidéo, puis lorsque vous en lancez une ; l’hébergeur reçoit donc votre adresse IP, des informations sur votre navigateur et la page d’origine, comme pour toute requête web. Les vidéos ne commencent à se charger que lorsque vous appuyez sur lecture.",
     "privacy": {
       "title": "Politique de confidentialité",
       "description": "Comment le site KOLO traite les préférences du navigateur, les requêtes d’hébergement et les liens externes.",

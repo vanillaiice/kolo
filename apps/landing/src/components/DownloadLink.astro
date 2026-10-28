@@ -1,0 +1,9 @@
+---
+/** A release asset link, or the releases page with an "unavailable" label when the asset is missing. */
+import Icon from './Icon.astro';
+import { release, releasesURL, translations, type Lang } from '../lib/content';
+interface Props { lang: Lang; asset: string; label: string; class?: string }
+const { lang, asset, label, class: className } = Astro.props;
+const found = release?.assets[asset];
+---
+<a class={className} href={found?.url ?? releasesURL}>{found ? label : translations[lang].unavailable}{className?.includes('button') && <Icon name="arrow" />}</a>

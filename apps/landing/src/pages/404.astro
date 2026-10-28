@@ -1,0 +1,8 @@
+---
+/** Missing pages, served by Caddy for any unknown path; bilingual because the path may not say the language. */
+import Base from '../layouts/Base.astro';
+import { href } from '../lib/content';
+---
+<Base title="404 | KOLO" description="This page does not exist. / Cette page n’existe pas." bodyClass="language-page" noindex>
+<main><img src={href('assets/kolo-icon.svg')} width="80" height="80" alt="KOLO"><h1>404<span class="brand-dot">.</span></h1><p>This page does not exist. / <span lang="fr">Cette page n’existe pas.</span></p><div class="actions"><a class="button primary" href={href('en/')} lang="en">English</a><a class="button secondary" href={href('fr/')} lang="fr">Français</a><a class="button secondary" href={href('en/blog/')} lang="en">Blog</a></div></main>
+</Base>

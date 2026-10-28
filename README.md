@@ -56,7 +56,7 @@ builds appear on the [Releases](https://github.com/vanillaiice/kolo/releases) pa
 
 ## Landing page
 
-The bilingual static website lives in [apps/landing](apps/landing/README.md). Run
+The bilingual static website (Astro) lives in [apps/landing](apps/landing/README.md). Run
 `npm run dev:landing` to preview it or `npm run check:landing` to build and validate
 it. It includes downloads, demo screenshots, self-hosting links and promotional assets.
 

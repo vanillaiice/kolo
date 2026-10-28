@@ -1,0 +1,10 @@
+---
+import Icon from './Icon.astro';
+import ScreenshotLink from './ScreenshotLink.astro';
+import { translations, type Lang } from '../lib/content';
+interface Props { lang: Lang }
+const t = translations[Astro.props.lang];
+const lines = t.headline.split('\n');
+---
+<section class="hero wrap" aria-labelledby="hero-title"><div class="hero-copy"><span class="eyebrow">{t.eyebrow}</span><h1 id="hero-title">{lines.map((line, i) => <>{i > 0 && <br>}{line}</>)}</h1><p class="lead">{t.lead}</p><div class="actions"><a class="button primary" href="#downloads" data-download-for={t.downloadFor}>{t.download}<Icon name="arrow" /></a><a class="button secondary" href="#features">{t.explore}</a></div><p class="hero-note"><span class="status-dot"></span>{t.beta}<span class="note-divider">/</span>{t.heroNote}</p></div><div class="hero-visual"><div class="desktop-frame"><div class="frame-bar"><span></span><span></span><span></span><b>KOLO · {t.desktop}</b></div><ScreenshotLink name="desktop-till" alt={t.gallery[0][1]} caption={t.gallery[0][1]} sizes="(max-width: 760px) calc(100vw - 48px), 660px" eager /></div><div class="phone-frame"><ScreenshotLink name="mobile-sell-cart" alt={t.gallery[3][1]} caption={t.gallery[3][1]} sizes="155px" eager /></div><p class="demo-note">{t.demo}</p></div></section>
+<div class="benefit-strip"><div class="wrap">{t.strip.map(item => <span><span class="check" aria-hidden="true">✓</span>{item}</span>)}</div></div>

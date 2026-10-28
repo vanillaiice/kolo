@@ -1,0 +1,24 @@
+---
+/** Privacy and cookie notices, one per language. */
+import Base from '../../layouts/Base.astro';
+import Header from '../../components/Header.astro';
+import Footer from '../../components/Footer.astro';
+import { href, languages, mediaOrigin, site, translations, type Lang } from '../../lib/content';
+
+export const getStaticPaths = () => languages.flatMap(lang => (['privacy', 'cookies'] as const).map(policy => ({ params: { lang, policy } })));
+const lang = Astro.params.lang as Lang;
+const kind = Astro.params.policy as 'privacy' | 'cookies';
+const t = translations[lang];
+const p = t.policies;
+const policy = p[kind];
+const home = href(`${lang}/`);
+const retention = site.hostingLogRetention[lang];
+---
+<Base lang={lang} title={`${policy.title} | KOLO`} description={policy.description} slug={`${kind}/`}>
+<a class="skip-link" href="#main">{t.skip}</a>
+<Header lang={lang} brandHref={home} links={[{ href: home, label: p.home }]} slug={`${kind}/`} />
+<main id="main" class="section wrap policy-page"><div class="section-heading"><span class="eyebrow">{p.updated}</span><h1>{policy.title}</h1><p>{policy.intro}</p></div>
+{policy.sections.map((section, i) => <><section><h2>{section.title}</h2>{section.paragraphs.map(text => <p>{text}</p>)}</section>{kind === 'cookies' && i === 1 && <section><h2>{p.storageHeading}</h2><dl class="storage-details">{p.storageColumns.map((label, j) => <div><dt>{label}</dt><dd>{p.storageValues[j]}</dd></div>)}</dl><button class="button secondary" type="button" data-reset-language data-success={p.resetDone} data-error={p.resetFailed} hidden>{p.reset}</button><p class="hint" data-storage-status role="status"></p></section>}</>)}
+{kind === 'privacy' && mediaOrigin && <section><h2>{p.mediaHeading}</h2><p>{p.mediaBody.replace('{origin}', new URL(mediaOrigin).host)}</p></section>}{kind === 'privacy' && retention && <section><h2>{p.hostingHeading}</h2><p>{p.hostingProvider} · {p.hostingRetention}: {retention}</p></section>}<section><h2>{p.contactHeading}</h2>{site.privacyEmail ? <p>{site.operator} · <a href={`mailto:${site.privacyEmail}`}>{site.privacyEmail}</a></p> : <p>{p.contactFallback}</p>}</section></main>
+<Footer lang={lang} policiesFirst><a slot="lead" href={home}>{p.home}</a><a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub {p.privacyLink}</a></Footer>
+</Base>

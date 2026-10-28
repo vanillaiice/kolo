@@ -1,0 +1,14 @@
+---
+/** Site footer: page-specific lead and links, the repository and policies, and the maker credit. */
+import Icon from './Icon.astro';
+import { href, repoURL, translations, type Lang } from '../lib/content';
+interface Props {
+  lang: Lang;
+  /** Policy links come after the default slot's links on the home page and before them elsewhere. */
+  policiesFirst?: boolean;
+}
+const { lang, policiesFirst = false } = Astro.props;
+const t = translations[lang];
+const policies = [['privacy/', t.policies.privacyLink], ['cookies/', t.policies.cookiesLink]];
+---
+<footer class="footer"><div class="wrap"><slot name="lead" /><nav aria-label={t.footerDocs}>{policiesFirst && policies.map(([slug, label]) => <a href={href(`${lang}/${slug}`)}>{label}</a>)}<a class="repo-footer-link" href={repoURL}><Icon name="github" />GitHub</a><slot />{!policiesFirst && policies.map(([slug, label]) => <a href={href(`${lang}/${slug}`)}>{label}</a>)}</nav><p class="footer-credit">{t.footerMadeBy} <a href="https://hblabs.xyz">hblabs</a></p></div></footer>

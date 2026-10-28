@@ -1,6 +1,6 @@
 /** Explicitly refresh the public release snapshot; ordinary builds need no network. */
 import { writeFile } from 'node:fs/promises';
-import { selectRelease } from './releases.mjs';
+import { selectRelease } from './src/lib/releases.mjs';
 const response = await fetch('https://api.github.com/repos/vanillaiice/kolo/releases?per_page=100', {
   headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'kolo-landing' },
   signal: AbortSignal.timeout(20000),

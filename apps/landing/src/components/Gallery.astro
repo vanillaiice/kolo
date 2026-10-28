@@ -1,0 +1,10 @@
+---
+import ScreenshotLink from './ScreenshotLink.astro';
+import Video from './Video.astro';
+import { media, translations, type Lang } from '../lib/content';
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const t = translations[lang];
+const video = media.video;
+---
+<section class="gallery-section" id="screenshots"><div class="wrap section"><div class="section-heading"><span class="eyebrow">{t.galleryEyebrow}</span><h2>{t.galleryTitle}</h2><p>{t.galleryLead}</p></div><div class="gallery">{t.gallery.map(([name, title, caption], i) => <figure class:list={['shot', { 'mobile-shot': name.startsWith('mobile') }]}><ScreenshotLink name={name} alt={title} caption={`${title}: ${caption}`} sizes={name.startsWith('mobile') ? '155px' : '(max-width: 760px) calc(50vw - 30px), 400px'} /><figcaption><span class="eyebrow">{i < 3 ? t.desktop : t.android}</span><h3>{title}</h3><p>{caption}</p></figcaption></figure>)}</div><p class="demo-note">{t.demo}</p>{video && <Video src={video.src} poster={video.poster} captions={{ en: video.captionsEn, fr: video.captionsFr }} title={t.videoTitle} lang={lang} />}</div></section>

@@ -1,0 +1,6 @@
+---
+import { translations, type Lang } from '../lib/content';
+interface Props { lang: Lang }
+const t = translations[Astro.props.lang];
+---
+<section class="section wrap faq"><h2>{t.faqTitle}</h2><div>{t.faq.map(([question, answer]) => <details><summary>{question}</summary><p>{answer}</p></details>)}</div></section>

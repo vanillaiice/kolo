@@ -1,0 +1,24 @@
+---
+/**
+ * A captioned video from `public/media` or the external host in `site.json` `mediaBase`.
+ * Nothing loads until play (`preload="none"`) except the poster. Usable in MDX posts as `<Video … />`.
+ */
+import { languages, mediaURL, translations, type Lang } from '../lib/content';
+interface Props {
+  /** `media/…` path or absolute URL under `mediaBase`; MP4 or WebM. */
+  src: string;
+  poster?: string;
+  /** WebVTT captions per language; the page language is the default track. */
+  captions?: Partial<Record<Lang, string>>;
+  /** Visible heading above the video. */
+  title?: string;
+  /** Page language; defaults to the route's `lang` parameter. */
+  lang?: Lang;
+}
+const { src, poster, captions = {}, title } = Astro.props;
+const lang = (Astro.props.lang ?? Astro.params.lang ?? 'en') as Lang;
+const t = translations[lang];
+const type = src.endsWith('.webm') ? 'video/webm' : 'video/mp4';
+const labels: Record<Lang, string> = { en: 'English', fr: 'Français' };
+---
+<figure class="video">{title && <h3>{title}</h3>}<video controls preload="none" playsinline poster={poster && mediaURL(poster)}><source src={mediaURL(src)} type={type}>{languages.filter(code => captions[code]).map(code => <track kind="captions" src={mediaURL(captions[code]!)} srclang={code} label={labels[code]} default={code === lang}>)}<a href={mediaURL(src)}>{t.videoFallback}</a></video></figure>

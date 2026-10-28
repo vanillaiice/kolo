@@ -1,0 +1,15 @@
+---
+/** A screenshot that opens full size: in the lightbox with JavaScript, as a plain image link without. */
+import Screenshot from './Screenshot.astro';
+import { screenshot } from '../lib/screenshots';
+interface Props {
+  name: string;
+  alt: string;
+  caption: string;
+  eager?: boolean;
+  sizes: string;
+}
+const { name, alt, caption, eager, sizes } = Astro.props;
+const { full } = await screenshot(name);
+---
+<a class="screenshot-link" href={full} data-caption={caption}><Screenshot name={name} alt={alt} eager={eager} sizes={sizes} /></a>

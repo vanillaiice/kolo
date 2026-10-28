@@ -1,0 +1,28 @@
+---
+/** A blog post. The language switch opens its translation, or the other language's blog when there is none. */
+import { render } from 'astro:content';
+import Base from '../../../layouts/Base.astro';
+import Header from '../../../components/Header.astro';
+import Footer from '../../../components/Footer.astro';
+import Video from '../../../components/Video.astro';
+import { getPosts, formatDate, type Post } from '../../../lib/blog';
+import { href, languages, other, translations } from '../../../lib/content';
+import { postSchema } from '../../../lib/seo';
+
+export const getStaticPaths = async () => (await getPosts()).map(post => ({ params: { lang: post.lang, slug: post.slug }, props: { post } }));
+const { post } = Astro.props as { post: Post };
+const { lang, slug, entry, translations: available } = post;
+const t = translations[lang];
+const blog = href(`${lang}/blog/`);
+const { Content } = await render(entry);
+const switchHrefs = Object.fromEntries(languages.filter(code => !available.includes(code)).map(code => [code, href(`${code}/blog/`)]));
+const translated = available.includes(other(lang));
+const { title, description, date, updated, draft } = entry.data;
+---
+<Base lang={lang} title={`${title} | KOLO`} description={description} slug={`blog/${slug}/`} alternates={available} article={{ published: date, modified: updated }} schema={absolute => postSchema(lang, slug, entry.data, absolute)}>
+<a class="skip-link" href="#main">{t.skip}</a>
+<Header lang={lang} brandHref={href(`${lang}/`)} links={[{ href: blog, label: t.blog.back }]} slug={`blog/${slug}/`} switchHrefs={switchHrefs} />
+<main id="main" class="section wrap blog-page"><article class="post"><header class="section-heading"><a class="eyebrow" href={blog}>{t.blog.nav}</a><h1>{title}</h1><p>{description}</p><p class="post-meta">{t.blog.published} <time datetime={date.toISOString()}>{formatDate(date, lang)}</time>{updated && <> · {t.blog.updated} <time datetime={updated.toISOString()}>{formatDate(updated, lang)}</time></>}{translated && <> · <a href={href(`${other(lang)}/blog/${slug}/`)} hreflang={other(lang)} lang={other(lang)}>{t.blog.translation}</a></>}{draft && <span class="draft-badge">draft</span>}</p></header>
+<div class="prose"><Content components={{ Video }} /></div></article></main>
+<Footer lang={lang} policiesFirst><a slot="lead" href={blog}>{t.blog.back}</a><a href={href(`${lang}/blog/rss.xml`)}>{t.blog.rss}</a></Footer>
+</Base>

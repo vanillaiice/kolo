@@ -1,0 +1,6 @@
+---
+import { href, translations, type Lang } from '../lib/content';
+interface Props { lang: Lang }
+const t = translations[Astro.props.lang];
+---
+<section class="section wrap promoters" id="promoters"><div><span class="eyebrow">{t.promotersEyebrow}</span><h2>{t.promotersTitle}</h2><p>{t.promotersBody}</p><p class="hint">{t.promotersNote}</p></div><div class="kit"><img src={href('assets/kolo-icon.svg')} alt="KOLO" width="80" height="80"><a href={href('kit/logos/kolo-icon.svg')} download>{t.logos} ↓</a><a href={href('kit/descriptions.txt')} download>{t.copy} ↓</a><details><summary>{t.screenshots}</summary><ul>{t.gallery.map(([name, title]) => <li><a href={href(`kit/screenshots/${name}.png`)} download>{title} ↓</a></li>)}</ul></details></div></section>

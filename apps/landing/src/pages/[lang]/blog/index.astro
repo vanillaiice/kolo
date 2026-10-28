@@ -1,0 +1,26 @@
+---
+/** Blog index per language: posts in this language, then posts only published in the other one. */
+import Base from '../../../layouts/Base.astro';
+import Header from '../../../components/Header.astro';
+import Footer from '../../../components/Footer.astro';
+import { getPosts, formatDate } from '../../../lib/blog';
+import { href, languages, other, translations, type Lang } from '../../../lib/content';
+import { blogSchema } from '../../../lib/seo';
+
+export const getStaticPaths = () => languages.map(lang => ({ params: { lang } }));
+const lang = Astro.params.lang as Lang;
+const t = translations[lang];
+const home = href(`${lang}/`);
+const posts = await getPosts();
+const own = posts.filter(post => post.lang === lang);
+const elsewhere = posts.filter(post => post.lang === other(lang) && !post.translations.includes(lang));
+---
+<Base lang={lang} title={`${t.blog.title} | KOLO`} description={t.blog.description} slug="blog/" schema={absolute => blogSchema(lang, absolute)}>
+<a class="skip-link" href="#main">{t.skip}</a>
+<Header lang={lang} brandHref={home} links={[{ href: home, label: t.policies.home }]} slug="blog/" />
+<main id="main" class="section wrap blog-page"><div class="section-heading"><span class="eyebrow">{t.blog.nav}</span><h1>{t.blog.title}</h1><p>{t.blog.lead}</p><p><a class="feed-link" href={href(`${lang}/blog/rss.xml`)}>{t.blog.rss}</a></p></div>
+{own.length ? <ol class="post-list">{own.map(post => <li><article><time datetime={post.entry.data.date.toISOString()}>{formatDate(post.entry.data.date, lang)}</time><h2><a href={href(`${lang}/blog/${post.slug}/`)}>{post.entry.data.title}</a></h2><p>{post.entry.data.description}</p>{post.entry.data.draft && <span class="draft-badge">draft</span>}</article></li>)}</ol> : <p class="hint">{t.blog.empty}</p>}
+{elsewhere.length > 0 && <section class="post-list-other" lang={other(lang)}><h2 lang={lang}>{t.blog.otherLanguage}</h2><ol class="post-list">{elsewhere.map(post => <li><article><time datetime={post.entry.data.date.toISOString()}>{formatDate(post.entry.data.date, post.lang)}</time><h3><a href={href(`${post.lang}/blog/${post.slug}/`)} hreflang={post.lang}>{post.entry.data.title}</a></h3><p>{post.entry.data.description}</p></article></li>)}</ol></section>}
+</main>
+<Footer lang={lang} policiesFirst><a slot="lead" href={home}>{t.policies.home}</a></Footer>
+</Base>

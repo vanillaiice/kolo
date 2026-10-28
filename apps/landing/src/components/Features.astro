@@ -1,0 +1,8 @@
+---
+import Icon from './Icon.astro';
+import { translations, type Lang } from '../lib/content';
+interface Props { lang: Lang }
+const t = translations[Astro.props.lang];
+const icons = ['sell', 'stock', 'report'] as const;
+---
+<section class="section wrap" id="features"><div class="section-heading"><span class="eyebrow">{t.featuresEyebrow}</span><h2>{t.featuresTitle}</h2><p>{t.featuresLead}</p></div><div class="features">{t.features.map((f, i) => <article><div class="feature-top"><Icon name={icons[i]} /><span>{f.number}</span></div><h3>{f.title}</h3><p>{f.body}</p><p class="feature-detail">{f.detail}</p></article>)}</div></section>

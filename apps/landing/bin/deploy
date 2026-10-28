@@ -7,9 +7,7 @@ kamal_bin="${KAMAL_BIN:-kamal}"
 [ $# -gt 0 ] || set -- deploy
 case "$1" in
   setup|deploy|redeploy)
-    node build.mjs
-    node check.mjs
-    node --test releases.test.mjs
+    npm run check
     ;;
 esac
 exec "$kamal_bin" "$@"

@@ -1,0 +1,16 @@
+---
+import DownloadLink from './DownloadLink.astro';
+import Icon from './Icon.astro';
+import { release, releasesURL, translations, type Lang } from '../lib/content';
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const t = translations[lang];
+const platforms = [
+  { id: 'windows', name: 'Windows', secondary: 'portable' },
+  { id: 'linux', name: 'Linux', secondary: 'deb' },
+  { id: 'android', name: 'Android' },
+] as const;
+---
+<section class="section wrap" id="downloads"><div class="section-heading"><span class="eyebrow">{t.downloadsEyebrow}</span><h2>{t.downloadsTitle}</h2><p>{t.downloadsLead}</p><p class="release-line">{release ? <>{t.release} <strong>{release.tag}</strong> · {release.beta ? t.beta : ''}</> : t.releaseFallback} <a href={release?.url ?? releasesURL}>{t.releaseNotes} ↗</a></p></div>{(['ios', 'mac'] as const).map(platform => <p class="platform-note" data-platform-note={platform} role="status" hidden>{t[`${platform}Note`]}</p>)}<div class="download-grid" data-suggested={t.suggestedBadge}>{platforms.map(p => <article class="download-card" data-platform={p.id}><Icon name={p.id} /><h3>{p.name}</h3><p>{t[`${p.id}Body`]}</p><small>{t.version} {release?.assets[p.id]?.version ?? 'N/A'}</small><DownloadLink lang={lang} asset={p.id} label={t[`${p.id}Primary`]} class="button primary" />{p.id === 'android'
+  ? <details class="apk-options"><summary>{t.androidSecondary}</summary><p>{t.androidHelp}</p><div class="inline-links"><DownloadLink lang={lang} asset="arm64" label="ARM64" /> <DownloadLink lang={lang} asset="armv7" label="ARMv7" /></div></details>
+  : <DownloadLink lang={lang} asset={p.secondary} label={t[`${p.id}Secondary`]} class="secondary-download" />}</article>)}</div><p class="install-note">{t.installerNote}</p><div class="coming-soon">{t.stores.map(store => <span><strong>{store}</strong><span>{t.coming}</span></span>)}</div></section>

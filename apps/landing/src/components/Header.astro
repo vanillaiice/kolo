@@ -1,0 +1,18 @@
+---
+/** Site header: brand, section links, the source repository and the language switch. */
+import Brand from './Brand.astro';
+import Icon from './Icon.astro';
+import { href, languages, repoURL, translations, type Lang } from '../lib/content';
+interface Props {
+  lang: Lang;
+  brandHref: string;
+  links: { href: string; label: string }[];
+  /** Route below the language folder that the language switch keeps, such as `privacy/`. */
+  slug?: string;
+  /** Language switch targets that differ from `<lang>/<slug>`, such as the blog for an untranslated post. */
+  switchHrefs?: Partial<Record<Lang, string>>;
+}
+const { lang, brandHref, links, slug = '', switchHrefs = {} } = Astro.props;
+const t = translations[lang];
+---
+<header class="header wrap"><Brand href={brandHref} /><nav aria-label={t.menu}>{links.map(link => <a href={link.href}>{link.label}</a>)}</nav><a class="repo-link" href={repoURL} aria-label={t.githubLabel} title={t.githubLabel}><Icon name="github" /></a><div class="languages" aria-label={t.language}>{languages.map(code => <a href={switchHrefs[code] ?? href(`${code}/${slug}`)} lang={code} hreflang={code} aria-current={code === lang ? 'page' : undefined}>{code.toUpperCase()}</a>)}</div></header>

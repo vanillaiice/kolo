@@ -1,0 +1,8 @@
+---
+/** Language entry: the page script sends visitors to their saved or browser language. */
+import Base from '../layouts/Base.astro';
+import { href } from '../lib/content';
+---
+<Base title="KOLO: English / Français" description="KOLO: offline shop management / Gestion de boutique hors ligne" bodyClass="language-page" languageEntry>
+<main><img src={href('assets/kolo-icon.svg')} width="80" height="80" alt="KOLO"><h1>KOLO<span class="brand-dot">.</span></h1><p>Choose your language / <span lang="fr">Choisissez votre langue</span></p><div class="actions"><a class="button primary" href={href('en/')} lang="en">English</a><a class="button secondary" href={href('fr/')} lang="fr">Français</a></div></main>
+</Base>

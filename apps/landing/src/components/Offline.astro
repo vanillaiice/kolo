@@ -1,0 +1,6 @@
+---
+import { translations, type Lang } from '../lib/content';
+interface Props { lang: Lang }
+const t = translations[Astro.props.lang];
+---
+<section class="offline-section"><div class="wrap section offline-layout"><div><span class="eyebrow">{t.offlineEyebrow}</span><h2>{t.offlineTitle}</h2><p class="lead">{t.offlineBody}</p><span class="offline-mark" aria-hidden="true">KOLO<span>.</span></span></div><div class="offline-items">{t.offlineItems.map(([title, body], i) => <article><span class="offline-number">0{i + 1}</span><div><h3>{title}</h3><p>{body}</p></div></article>)}</div></div></section>

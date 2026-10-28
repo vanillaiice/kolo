@@ -1,6 +1,6 @@
 /**
- * Suggest a download from what the browser reports. Inlined into site.js at build
- * time (without `export`), so it must stay a plain, dependency-free function.
+ * Suggest a download from what the browser reports. Bundled into the page script,
+ * so it must stay a plain, dependency-free function.
  * @param {{ userAgent?: string, userAgentData?: { platform?: string } | null, maxTouchPoints?: number }} browser
  * @returns {'android'|'windows'|'linux'|'ios'|'mac'|null} A download card, an unsupported device, or null.
  */

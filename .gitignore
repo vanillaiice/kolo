@@ -46,3 +46,10 @@ release/
 
 # Private business plans, financial projections and generated PDFs
 /business/
+
+# Landing build output and files copied from the repository at build time
+apps/landing/dist/
+apps/landing/.astro/
+apps/landing/public/kit/
+apps/landing/public/assets/kolo-icon.svg
+apps/landing/public/assets/inter-LICENSE.txt

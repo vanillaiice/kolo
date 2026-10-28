@@ -1,0 +1,14 @@
+---
+/** A product screenshot in AVIF/WebP at several widths, sized by its phone or desktop frame. */
+import { screenshot } from '../lib/screenshots';
+interface Props {
+  name: string;
+  alt: string;
+  eager?: boolean;
+  /** Rendered width hint for the browser's choice of file. */
+  sizes: string;
+}
+const { name, alt, eager = false, sizes } = Astro.props;
+const image = await screenshot(name);
+---
+<picture>{image.sources.map(source => <source type={source.type} srcset={source.srcset} sizes={sizes}>)}<img src={image.fallback} alt={alt} width={image.width} height={image.height} fetchpriority={eager ? 'high' : undefined} loading={eager ? undefined : 'lazy'} decoding="async"></picture>

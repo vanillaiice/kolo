@@ -1,0 +1,7 @@
+---
+/** The KOLO wordmark, linking to the top of the page or the language home. */
+import { href as path } from '../lib/content';
+interface Props { href: string }
+const { href } = Astro.props;
+---
+<a class="brand" href={href} aria-label="KOLO"><img src={path('assets/kolo-icon.svg')} width="34" height="34" alt=""><span>KOLO<span class="brand-dot">.</span></span></a>

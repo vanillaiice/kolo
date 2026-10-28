@@ -196,11 +196,26 @@
   ],
   "footerLine": "Made for the everyday shop.",
   "footerDocs": "Documentation",
+  "githubLabel": "KOLO source code on GitHub",
   "footerLicense": "License",
   "top": "Back to top",
   "videoTitle": "Watch a shop workflow",
   "videoFallback": "Download the demonstration video",
   "promoDescription": "KOLO helps shops sell, manage stock, follow customer credit, suppliers, expenses and reports. It works offline on Windows, Linux and Android, with English and French interfaces and amounts in FCFA (XAF). Optional encrypted sync connects devices on the same Wi-Fi or hotspot without internet, or through a hosted or self-hosted server. KOLO is in public beta. iOS and distribution through Google Play and F-Droid are coming later.",
+  "blog": {
+    "nav": "Blog",
+    "title": "KOLO blog",
+    "description": "News, guides and stories about running a shop with KOLO.",
+    "lead": "News about KOLO, practical guides and stories from the counter.",
+    "empty": "No posts yet. Check back soon.",
+    "otherLanguage": "Only in French",
+    "published": "Published",
+    "updated": "Updated",
+    "translation": "Lire en français",
+    "back": "All posts",
+    "rss": "RSS feed",
+    "readMore": "Read the post"
+  },
   "policies": {
     "privacyLink": "Privacy policy",
     "cookiesLink": "Cookie policy",
@@ -230,6 +245,8 @@
       "Remember the language you select",
       "Until you clear site data or remove it using the button below"
     ],
+    "mediaHeading": "Videos",
+    "mediaBody": "Videos, their preview images and captions are served from {origin}. Your browser contacts that host when a page shows a video preview, and again when you play one, so the host receives your IP address, browser details and the page you came from, like any website request. Videos never start loading until you press play.",
     "privacy": {
       "title": "Privacy policy",
       "description": "How the KOLO website handles browser preferences, hosting requests and external links.",

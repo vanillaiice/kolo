@@ -1,7 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
 import { detectPlatform } from './platform.mjs';
 const agents = {
   android: [
@@ -58,10 +56,4 @@ test('unknown, empty and odd inputs suggest nothing and never throw', () => {
     assert.equal(detectPlatform(browser), null, JSON.stringify(browser));
   }
   assert.equal(detectPlatform({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Microsoft; Lumia 950)' }), 'windows', '"microsoft" must not read as CrOS');
-});
-test('the built script defines the same detector for the browser', async () => {
-  const context = {};
-  const built = await readFile(new URL('dist/assets/site.js', import.meta.url), 'utf8');
-  vm.runInNewContext(built.slice(0, built.indexOf('/* Enhancement only')), context);
-  for (const [expected, list] of Object.entries(agents)) assert.equal(context.detectPlatform({ userAgent: list[0] }), expected);
 });

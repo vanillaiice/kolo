@@ -1,0 +1,74 @@
+---
+/** Document shell: metadata, alternates, the shared stylesheet, the page script and analytics. */
+import '@fontsource-variable/inter/wght.css';
+import '../styles/global.css';
+import { analyticsID, analyticsScript, href, languages, translations, type Lang } from '../lib/content';
+
+interface Props {
+  /** Page language; the language entry page has none and gets only basic metadata. */
+  lang?: Lang;
+  title: string;
+  description: string;
+  /** Route below the language folder, such as `privacy/`. */
+  slug?: string;
+  bodyClass?: string;
+  languageEntry?: boolean;
+  /** Languages this page exists in, for hreflang alternates; posts may have only one. */
+  alternates?: readonly Lang[];
+  /** Blog posts are articles with publication dates. */
+  article?: { published: Date; modified?: Date };
+  /** schema.org objects built from the page's absolute URL helper, emitted as JSON-LD. */
+  schema?: (absolute: (path: string) => string) => object[];
+  /** Keep the page out of search results (the 404 page). */
+  noindex?: boolean;
+}
+const { lang, title, description, slug = '', bodyClass, languageEntry = false, alternates = languages, article, schema, noindex = false } = Astro.props;
+const site = Astro.site?.href;
+const absolute = (path: string) => (site ? `${site}${path}` : href(path));
+// JSON-LD is data, not script, so the CSP does not apply; `<` is escaped so no text can close the element.
+const jsonLD = schema?.(absolute).map(item => JSON.stringify(item).replace(/</g, '\\u003c'));
+---
+<!doctype html>
+<html lang={lang ?? 'en'}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<meta name="description" content={description}>
+{noindex && <meta name="robots" content="noindex">}
+{lang && (
+  <>
+    <meta name="theme-color" content="#0c3426">
+    <meta property="og:site_name" content="KOLO">
+    <meta property="og:type" content={article ? 'article' : 'website'}>
+    {article && <meta property="article:published_time" content={article.published.toISOString()}>}
+    {article?.modified && <meta property="article:modified_time" content={article.modified.toISOString()}>}
+    <meta property="og:title" content={title}>
+    <meta property="og:description" content={description}>
+    <meta property="og:locale" content={lang === 'fr' ? 'fr_FR' : 'en_GB'}>
+    {alternates.length > 1 && <meta property="og:locale:alternate" content={lang === 'fr' ? 'en_GB' : 'fr_FR'}>}
+    <meta name="twitter:card" content="summary_large_image">
+    {site && (
+      <>
+        <link rel="canonical" href={absolute(`${lang}/${slug}`)}>
+        <meta property="og:url" content={absolute(`${lang}/${slug}`)}>
+        <meta property="og:image" content={absolute('assets/share.png')}>
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta property="og:image:alt" content={translations[lang].title}>
+      </>
+    )}
+    {alternates.map(code => <link rel="alternate" hreflang={code} href={absolute(`${code}/${slug}`)}>)}
+    <link rel="alternate" hreflang="x-default" href={absolute(slug ? `${alternates[0]}/${slug}` : '')}>
+    <link rel="alternate" type="application/rss+xml" title={translations[lang].blog.title} href={absolute(`${lang}/blog/rss.xml`)}>
+  </>
+)}
+<link rel="icon" href={href('assets/kolo-icon.svg')} type="image/svg+xml">
+{jsonLD?.map(json => <script is:inline type="application/ld+json" set:html={json} />)}
+<script src="../scripts/site.js"></script>
+<script is:inline defer src={analyticsScript} data-website-id={analyticsID}></script>
+</head>
+<body id={lang ? 'top' : undefined} class={bodyClass} data-language-entry={languageEntry ? '' : undefined}>
+<slot />
+</body>
+</html>

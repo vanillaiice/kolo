@@ -1964,7 +1964,7 @@ Exporting shop data now needs its own permission, so staff who can see figures c
 
 The landing page now suggests the download for the visitor's device. Without JavaScript the page is unchanged.
 
-- **Detection.** `apps/landing/platform.mjs` reads `navigator.userAgentData.platform` first, then the user agent.
+- **Detection.** `apps/landing/platform.mjs` (now `src/lib/platform.mjs`) reads `navigator.userAgentData.platform` first, then the user agent.
   Android is checked before Linux; ChromeOS gets Linux; iPadOS asking for the desktop site is told apart from a Mac by
   its touch screen. The build inlines the function into `assets/site.js`, because the CSP allows only same-origin
   scripts.
@@ -2298,3 +2298,62 @@ passed), `npm run smoke:desktop:workflow`; after the last changes, full `npm run
 `npm run docs:api` and `npm run verify:desktop:linux` (packaged, with the review panel) pass. Android: the 0.10.0
 arm64 APK built from this tree passes `npm run verify:android` on a Galaxy A04e and opens an existing shop after
 migration 34. Not verified: the mobile review list with a real held-back fact, and Windows.
+
+## 2026-10-28: Landing page on Astro
+
+The landing page moved from a hand-written generator (`build.mjs`) to Astro 7.3.8 (static output, no UI framework)
+as the `@kolo/landing` workspace, ahead of blog posts and videos. Same URLs (`/en/`, `/fr/`, policy pages, sitemap,
+robots), copy, styles and behavior; the Kamal/Caddy deployment is unchanged. Header and footer now link the GitHub
+repository.
+- Sections are components; `content/*.json` stays the only copy source. Release selection and device detection are
+  unchanged modules with their tests; the page script now imports the detector instead of inlining its text.
+- CSP-safe output: no inline scripts or styles; `check.mjs` enforces it, also checks the language entry page, and
+  resolves root-relative links under `LANDING_BASE_PATH`.
+- Inter comes from `@fontsource-variable/inter` (as in desktop). Repository files (icon, logos, screenshots, font
+  licence, promoter text) are copied into gitignored `public/` paths at build start.
+
+Verification: `npm run check:landing`; every page's tags, attributes and text match the previous build after URL
+normalization; headless Chromium screenshots of `/en/` (1280 and 390 px) and both French policy pages are pixel-identical
+to the previous build; device suggestion, language-entry redirect and the cookie reset button run in Chromium.
+
+## 2026-10-28: Landing blog and videos
+
+- **Blog.** MDX posts in `apps/landing/src/content/blog/{en,fr}/<slug>.mdx` (title, description, date, optional
+  updated, draft). The same file name in both folders is a translation; a post may exist in one language only. Pages:
+  `/<lang>/blog/` (posts in that language, then those only in the other one) and `/<lang>/blog/<slug>/`. The language
+  switch opens the translation, or the other blog when there is none; hreflang alternates list only published
+  languages. Each language has an RSS feed (`/<lang>/blog/rss.xml`, linked from every page's head); the sitemap lists
+  both blogs and every post with `lastmod`. Drafts show only on the dev server. Syntax highlighting is off because
+  highlighters emit inline styles the CSP blocks.
+- **Videos.** `<Video>` (also usable in posts without an import) takes `media/…` paths or absolute URLs under
+  `site.json` `mediaBase`, still unset because the host is undecided. Setting it adds a Videos section naming the host to
+  both privacy policies; `check.mjs` fails until the Caddy CSP `media-src` and `img-src` allow its origin, and fails on
+  any video URL outside it. The home gallery video uses the same component.
+- The home header and footer link the blog; the phone header nav wraps instead of overflowing at 320 px.
+
+Verification: `npm run check:landing` with no published posts, and with temporary published posts in both languages,
+an English-only post and a `<Video>` on an external `mediaBase` (failing as expected until the CSP allowed it);
+headless Chromium screenshots of both blogs and a post at 1280 and 390 px, and the French home header at 320 px.
+
+## 2026-10-28: Landing images, motion and SEO
+
+- **Responsive screenshots.** Built from `docs/screenshots/*.png` with `astro:assets` (sharp): `<picture>` with AVIF
+  and WebP `srcset` (desktop 480–2048 px, phone 320–480 px) and per-frame `sizes`; the lightbox opens a 2048 px WebP.
+  The hand-made `public/media/*.webp` copies are gone, and a build hook drops the PNG originals Vite emits. The hero
+  screenshot a phone downloads went from 80 KB (WebP) to about 33 KB (AVIF), 18 KB on a desktop at 1x.
+- **Motion.** Hero entrance by transform only (no opacity, so the largest paint is not delayed), scroll reveal with
+  a short stagger for content below the fold, card hover lift and a pulsing beta dot. Off with reduced motion, without
+  JavaScript and in print; the stagger is set through CSSOM, which the CSP allows.
+- **SEO.** JSON-LD (WebSite and SoftwareApplication on the homes, Blog, BlogPosting with breadcrumbs), `og:site_name`,
+  image size and alt. A bilingual `noindex` 404 page served by Caddy `handle_errors`. `check.mjs` now also checks
+  `srcset` files, image dimensions, AVIF/WebP sources, JSON-LD parsing and types, and the 404 wiring.
+
+Verification: `npm run check:landing`; the Docker image answers an unknown nested path with 404, the 404 page and the
+full security headers; over the Chrome DevTools protocol, scrolling both homes reveals all 24 hidden groups, leaves
+nothing above the fold hidden, causes no horizontal overflow and logs no errors; screenshots of the homes (1280 and 390
+px) and the 404 page.
+
+Dependencies: `vite` 8.3.2 → 8.3.5 (admin, desktop; also used by the landing's Astro) and `zod` 4.6.5 → 4.6.7
+(contracts, Astro) for the dev-server and validation advisories; `npm audit` for the landing reports none. The rest of
+the repository audit (Electron, Fastify, undici, Expo's nested zod and others) predates this and needs framework
+upgrades. Verified with the full `npm run check`. The footer now sits at the bottom of short pages.

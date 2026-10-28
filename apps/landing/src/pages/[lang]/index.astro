@@ -1,0 +1,28 @@
+---
+import Base from '../../layouts/Base.astro';
+import Header from '../../components/Header.astro';
+import Footer from '../../components/Footer.astro';
+import Brand from '../../components/Brand.astro';
+import Hero from '../../components/Hero.astro';
+import Features from '../../components/Features.astro';
+import Gallery from '../../components/Gallery.astro';
+import Offline from '../../components/Offline.astro';
+import Downloads from '../../components/Downloads.astro';
+import Resources from '../../components/Resources.astro';
+import Developers from '../../components/Developers.astro';
+import Promoters from '../../components/Promoters.astro';
+import Faq from '../../components/Faq.astro';
+import { href, languages, repoURL, translations, type Lang } from '../../lib/content';
+import { homeSchema } from '../../lib/seo';
+
+export const getStaticPaths = () => languages.map(lang => ({ params: { lang } }));
+const lang = Astro.params.lang as Lang;
+const t = translations[lang];
+const sections = ['features', 'screenshots', 'downloads', 'resources', 'developers'];
+---
+<Base lang={lang} title={t.title} description={t.description} schema={absolute => homeSchema(lang, absolute)}>
+<a class="skip-link" href="#main">{t.skip}</a><Header lang={lang} brandHref="#top" links={[...t.nav.map((label, i) => ({ href: `#${sections[i]}`, label })), { href: href(`${lang}/blog/`), label: t.blog.nav }]} />
+<main id="main"><Hero lang={lang} /><Features lang={lang} /><Gallery lang={lang} /><Offline lang={lang} /><Downloads lang={lang} /><Resources lang={lang} /><Developers lang={lang} /><Promoters lang={lang} /><Faq lang={lang} /></main>
+<Footer lang={lang}><Fragment slot="lead"><Brand href="#top" /><p>{t.footerLine}</p></Fragment><a href={href(`${lang}/blog/`)}>{t.blog.nav}</a><a href={`${repoURL}/blob/master/docs/README.md`}>{t.footerDocs}</a><a href={`${repoURL}/blob/master/LICENSE`}>{t.footerLicense}</a><a href="#promoters">{t.promotersEyebrow}</a><a href="#top">{t.top} ↑</a></Footer>
+<dialog class="lightbox" aria-label={t.galleryTitle}><button type="button" aria-label={t.close}>×</button><img alt=""><p></p></dialog>
+</Base>

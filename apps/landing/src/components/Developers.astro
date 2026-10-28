@@ -1,0 +1,7 @@
+---
+import Icon from './Icon.astro';
+import { repoURL, translations, type Lang } from '../lib/content';
+interface Props { lang: Lang }
+const t = translations[Astro.props.lang];
+---
+<section class="developer-section" id="developers"><div class="wrap section developer-layout"><div><span class="eyebrow">{t.developersEyebrow}</span><h2>{t.developersTitle}</h2><p>{t.developersBody}</p><div class="actions"><a class="button primary" href={`${repoURL}/blob/master/docs/implementation/selfhost.md`}>{t.selfhost}<Icon name="arrow" /></a><a class="button secondary" href={repoURL}>{t.source} ↗</a></div></div><ul class="tech-list">{t.developersDetails.map(item => <li>{item}</li>)}</ul></div></section>

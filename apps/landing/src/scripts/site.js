@@ -1,4 +1,34 @@
 /* Enhancement only: every page, download and screenshot works without JavaScript. */
+import { detectPlatform } from '../lib/platform.mjs';
+
+/** Groups that fade in as they scroll into view; items in one group follow each other briefly. */
+const revealGroups = ['.section-heading', '.features', '.gallery', '.offline-items', '.download-grid', '.developer-layout', '.promoters', '.faq', '.post-list'];
+
+/**
+ * Fade in content below the fold. Only content the visitor has not seen yet is hidden, and
+ * nothing is when motion is reduced, the observer is missing, or the script never runs.
+ */
+function revealOnScroll() {
+  if (!window.IntersectionObserver || !matchMedia('(prefers-reduced-motion: no-preference)').matches) return;
+  const observer = new IntersectionObserver(entries => entries.forEach(entry => {
+    if (!entry.isIntersecting) return;
+    entry.target.classList.add('revealed');
+    observer.unobserve(entry.target);
+    // Drop the stagger once shown so hover effects respond at once.
+    setTimeout(() => entry.target.style.removeProperty('--reveal-delay'), 1000);
+  }), { rootMargin: '0px 0px -8% 0px' });
+  for (const group of document.querySelectorAll(revealGroups.join(','))) {
+    const items = group.matches('.section-heading,.developer-layout,.promoters,.faq') ? [group] : [...group.children];
+    items.forEach((item, i) => {
+      if (item.getBoundingClientRect().top < innerHeight) return;
+      item.dataset.reveal = '';
+      // CSSOM changes are allowed by the CSP; style attributes in the markup are not.
+      item.style.setProperty('--reveal-delay', `${Math.min(i, 5) * 70}ms`);
+      observer.observe(item);
+    });
+  }
+}
+
 (() => {
   let savedLanguage;
   try { savedLanguage = localStorage.getItem('kolo-landing-language'); } catch { /* Storage can be disabled. */ }
@@ -44,6 +74,7 @@
       if (note) note.hidden = false;
     }
   }
+  revealOnScroll();
   const dialog = document.querySelector('.lightbox');
   if (!dialog?.showModal) return;
   let trigger;
