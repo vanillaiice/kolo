@@ -41,7 +41,7 @@ Caddy serves the site and `/up`. Verify both languages, policy pages, assets,
 
 | Path | Purpose |
 | --- | --- |
-| `content/site.json` | Public URL, operator/contact details and hosting notices |
+| `content/site.json` | Public URL, operator/contact details, hosting notices, Umami statistics and the video host |
 | `content/en.json`, `content/fr.json` | Visitor copy; keep keys and array lengths aligned |
 | `content/releases.json` | Saved GitHub release snapshot; refresh after publishing |
 | `src/pages` | Routes: language entry, `[lang]/` home, `[lang]/[policy]/`, `[lang]/blog/` (index, posts, RSS), sitemap and robots |
@@ -51,7 +51,7 @@ Caddy serves the site and `/up`. Verify both languages, policy pages, assets,
 | `src/lib/content.ts` | Loads copy, the selected release and settings; `href()` adds the base path |
 | `src/lib/screenshots.ts` | Resizes `docs/screenshots/*.png` into AVIF/WebP `srcset` variants at build time |
 | `src/lib/seo.ts` | JSON-LD: WebSite and SoftwareApplication (home), Blog, BlogPosting and breadcrumbs |
-| `src/lib/releases.mjs`, `src/lib/platform.mjs` | Release selection and device suggestion, with their Node tests |
+| `src/lib/releases.mjs`, `src/lib/platform.mjs`, `src/lib/analytics.mjs` | Release selection, device suggestion and statistics settings, with their Node tests |
 | `src/scripts/site.js` | Optional enhancements (language, device suggestion, lightbox, scroll reveal), bundled into one external module |
 | `src/styles/global.css` | Tokens and all page styles; Inter comes from `@fontsource-variable/inter` |
 | `astro.config.mjs` | Site/base URLs, CSP-safe build settings and the copy of repository files |
@@ -130,13 +130,25 @@ to `src`, `poster`, `captionsEn` and `captionsFr` paths or URLs.
 
 ## Privacy
 
+### Visit statistics
+
+The site loads [Umami](https://umami.is) (no cookies, nothing stored in the browser)
+from `analytics` in `content/site.json`: `umamiScript` (HTTPS URL of `script.js`)
+and `umamiWebsiteId` (UUID). The website ID is public by design; it appears in every
+page. Override per build with `LANDING_UMAMI_SCRIPT` and `LANDING_UMAMI_WEBSITE_ID`,
+or turn statistics off with `LANDING_UMAMI_SCRIPT=off` or `"analytics": null`, so a
+fork never reports to hblabs. When statistics are on, the privacy and cookie policies
+describe them and name the `operator` and the Umami host; when off, those passages are
+left out. `check.mjs` fails until the `Caddyfile` CSP `script-src` and `connect-src`
+allow the Umami origin.
+
+### Notices
+
 Policy pages describe this website's local assets, language preference, server
 logs and GitHub links. The script stores `kolo-landing-language` only after an
 explicit language choice; the cookie page can remove it. To highlight the matching
 download, it reads the browser's reported device type in the page only; nothing is
-stored or sent. Visit statistics come from Umami, self-hosted by hblabs at
-`stats.hblabs.xyz` (no cookies, nothing stored in the browser); the privacy policy
-describes what it receives and the CSP allows only that origin. There are no
+stored or sent. There are no
 embedded third-party players or trackers; an external video host is named
 automatically once `mediaBase` is set. Set log retention in both languages once confirmed from
 the host. Update notices when hosting, cookies, forms, media or storage change.

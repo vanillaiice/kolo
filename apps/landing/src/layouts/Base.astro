@@ -2,7 +2,7 @@
 /** Document shell: metadata, alternates, the shared stylesheet, the page script and analytics. */
 import '@fontsource-variable/inter/wght.css';
 import '../styles/global.css';
-import { analyticsID, analyticsScript, href, languages, translations, type Lang } from '../lib/content';
+import { analytics, href, languages, translations, type Lang } from '../lib/content';
 
 interface Props {
   /** Page language; the language entry page has none and gets only basic metadata. */
@@ -66,7 +66,7 @@ const jsonLD = schema?.(absolute).map(item => JSON.stringify(item).replace(/</g,
 <link rel="icon" href={href('assets/kolo-icon.svg')} type="image/svg+xml">
 {jsonLD?.map(json => <script is:inline type="application/ld+json" set:html={json} />)}
 <script src="../scripts/site.js"></script>
-<script is:inline defer src={analyticsScript} data-website-id={analyticsID}></script>
+{analytics && <script is:inline defer src={analytics.script} data-website-id={analytics.websiteId}></script>}
 </head>
 <body id={lang ? 'top' : undefined} class={bodyClass} data-language-entry={languageEntry ? '' : undefined}>
 <slot />

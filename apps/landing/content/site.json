@@ -7,5 +7,9 @@
     "en": null,
     "fr": null
   },
-  "mediaBase": null
+  "mediaBase": null,
+  "analytics": {
+    "umamiScript": "https://stats.hblabs.xyz/script.js",
+    "umamiWebsiteId": "9e1c1208-ee0e-4ac5-83db-2631a1db803d"
+  }
 }

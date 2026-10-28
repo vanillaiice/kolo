@@ -2357,3 +2357,17 @@ Dependencies: `vite` 8.3.2 → 8.3.5 (admin, desktop; also used by the landing's
 (contracts, Astro) for the dev-server and validation advisories; `npm audit` for the landing reports none. The rest of
 the repository audit (Electron, Fastify, undici, Expo's nested zod and others) predates this and needs framework
 upgrades. Verified with the full `npm run check`. The footer now sits at the bottom of short pages.
+
+## 2026-10-28: Landing statistics settings
+
+Umami's script URL and website ID moved from code into `content/site.json` `analytics`, overridable with
+`LANDING_UMAMI_SCRIPT` / `LANDING_UMAMI_WEBSITE_ID`; `LANDING_UMAMI_SCRIPT=off` or `"analytics": null` turns statistics off
+so forks never report to hblabs. The ID is public by design; this is about forks, not secrecy. The privacy section and
+cookie-policy sentence about statistics are now conditional and name the configured operator and host.
+`src/lib/analytics.mjs` validates the settings (HTTPS script, UUID ID) and is shared by the build and `check.mjs`,
+which checks the script on every page, the Caddy CSP `script-src`/`connect-src`, and that policies mention Umami only
+when it is on.
+
+Verification: `npm run check:landing` with the committed settings (every page byte-identical to the deployed site except
+the cookie policy, where the same statistics sentence is now its own paragraph); with statistics off (no script, no Umami text); with a fork's host (fails until the CSP allows it); with an invalid
+ID (build fails).

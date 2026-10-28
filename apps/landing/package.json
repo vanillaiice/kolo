@@ -9,8 +9,8 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "check": "astro build && node check.mjs && node --test src/lib/releases.test.mjs src/lib/platform.test.mjs",
-    "test": "node --test src/lib/releases.test.mjs src/lib/platform.test.mjs",
+    "check": "astro build && node check.mjs && node --test src/lib/releases.test.mjs src/lib/platform.test.mjs src/lib/analytics.test.mjs",
+    "test": "node --test src/lib/releases.test.mjs src/lib/platform.test.mjs src/lib/analytics.test.mjs",
     "refresh-releases": "node refresh-releases.mjs"
   },
   "dependencies": {

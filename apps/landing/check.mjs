@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, readdir, access } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveAnalytics } from './src/lib/analytics.mjs';
 const root = fileURLToPath(new URL('./', import.meta.url));
 const read = path => readFile(resolve(root,path),'utf8');
 const base = (process.env.LANDING_BASE_PATH ?? '/').replace(/\/?$/, '/');
@@ -108,3 +109,20 @@ for (const page of pages) {
   if (page.endsWith('privacy/')) assert.equal(html.includes(new URL(site.mediaBase ?? 'https://none.invalid').host),Boolean(mediaOrigin),`${page}: the privacy notice must name the video host exactly when one is set`);
 }
 console.log('Media host CSP and privacy notice passed.');
+
+// Visit statistics: the script is on every page exactly when configured, the CSP allows only that
+// origin, and the policies describe it only when it is on.
+const analytics = resolveAnalytics(site.analytics, process.env);
+if (analytics) for (const name of ['script-src','connect-src']) assert.ok(directive(name).includes(analytics.origin),`Caddyfile CSP ${name} must allow ${analytics.origin}`);
+for (const page of pages) {
+  const html = await read(pageFile(page));
+  const tags = [...html.matchAll(/<script\b[^>]*data-website-id="([^"]+)"[^>]*>/g)];
+  if (analytics) {
+    assert.equal(tags.length,1,`${page}: needs one statistics script`);
+    assert.ok(tags[0][0].includes(`src="${analytics.script}"`) && tags[0][1] === analytics.websiteId,`${page}: statistics script differs from the configuration`);
+  } else assert.equal(tags.length,0,`${page}: statistics are off but the script is present`);
+  assert.ok(!/\{(?:operator|host|origin)\}/.test(html),`${page}: unfilled copy placeholder`);
+  if (/(privacy|cookies)\/$/.test(page)) assert.equal(html.includes('Umami'),Boolean(analytics),`${page}: policies must mention Umami exactly when statistics are on`);
+  if (analytics && page.endsWith('privacy/')) assert.ok(html.includes(analytics.host),`${page}: the privacy policy must name ${analytics.host}`);
+}
+console.log(`Visit statistics ${analytics ? `(${analytics.host})` : '(off)'}: scripts, CSP and policies passed.`);

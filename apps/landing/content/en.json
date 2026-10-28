@@ -247,6 +247,15 @@
     ],
     "mediaHeading": "Videos",
     "mediaBody": "Videos, their preview images and captions are served from {origin}. Your browser contacts that host when a page shows a video preview, and again when you play one, so the host receives your IP address, browser details and the page you came from, like any website request. Videos never start loading until you press play.",
+    "analytics": {
+      "title": "Visit statistics",
+      "paragraphs": [
+        "To understand which pages are read and which downloads are useful, this website uses Umami, an open-source statistics tool that {operator} runs on its own server ({host}). No third-party analytics company receives this data.",
+        "When a page loads, the script sends the page address, the referring page, your browser, operating system, device type, screen size, language and the country derived from your IP address. Umami sets no cookies and stores nothing in your browser. It counts visits using a value derived from your IP address and browser that changes regularly and cannot be used to recognise you over time; your IP address itself is not stored.",
+        "These statistics are only viewed as totals and are not used for advertising or profiling. You can block {host} with a content blocker; the website works the same without it."
+      ]
+    },
+    "analyticsCookieNote": "Visit statistics use Umami, hosted by {operator}, which sets no cookies and stores nothing in your browser; the privacy policy describes what it collects.",
     "privacy": {
       "title": "Privacy policy",
       "description": "How the KOLO website handles browser preferences, hosting requests and external links.",
@@ -264,14 +273,6 @@
           "paragraphs": [
             "To deliver a page or file, the server receives technical information such as your IP address, the requested URL, the request time and browser information sent with the request. The host may keep access or security logs for delivering the website, diagnosing problems and protecting it from abuse.",
             "This website is self-hosted on a server operated by hblabs. Any access or security logs remain on that hosting infrastructure. The retention period is determined by the server configuration; contact us for details about hosting logs."
-          ]
-        },
-        {
-          "title": "Visit statistics",
-          "paragraphs": [
-            "To understand which pages are read and which downloads are useful, this website uses Umami, an open-source statistics tool that hblabs runs on its own server (stats.hblabs.xyz). No third-party analytics company receives this data.",
-            "When a page loads, the script sends the page address, the referring page, your browser, operating system, device type, screen size, language and the country derived from your IP address. Umami sets no cookies and stores nothing in your browser. It counts visits using a value derived from your IP address and browser that changes regularly and cannot be used to recognise you over time; your IP address itself is not stored.",
-            "These statistics are only viewed as totals and are not used for advertising or profiling. You can block stats.hblabs.xyz with a content blocker; the website works the same without it."
           ]
         },
         {
@@ -310,7 +311,7 @@
         {
           "title": "No cookies or advertising trackers",
           "paragraphs": [
-            "The website includes no advertising cookies, tracking pixels, fingerprinting or third-party embedded players. Visit statistics use Umami, hosted by hblabs, which sets no cookies and stores nothing in your browser; the privacy policy describes what it collects. A hosting provider may add its own security mechanisms; any provider-added storage must be documented when hosting is configured."
+            "The website includes no advertising cookies, tracking pixels, fingerprinting or third-party embedded players. A hosting provider may add its own security mechanisms; any provider-added storage must be documented when hosting is configured."
           ]
         },
         {

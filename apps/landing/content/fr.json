@@ -247,6 +247,15 @@
     ],
     "mediaHeading": "Vidéos",
     "mediaBody": "Les vidéos, leurs images d’aperçu et leurs sous-titres sont servis depuis {origin}. Votre navigateur contacte cet hébergeur lorsqu’une page affiche un aperçu de vidéo, puis lorsque vous en lancez une ; l’hébergeur reçoit donc votre adresse IP, des informations sur votre navigateur et la page d’origine, comme pour toute requête web. Les vidéos ne commencent à se charger que lorsque vous appuyez sur lecture.",
+    "analytics": {
+      "title": "Statistiques de visite",
+      "paragraphs": [
+        "Pour savoir quelles pages sont lues et quels téléchargements sont utiles, ce site utilise Umami, un outil de statistiques open source que {operator} exploite sur son propre serveur ({host}). Aucune société tierce de mesure d’audience ne reçoit ces données.",
+        "Au chargement d’une page, le script envoie l’adresse de la page, la page d’origine, votre navigateur, votre système d’exploitation, le type d’appareil, la taille de l’écran, la langue et le pays déduit de votre adresse IP. Umami ne dépose aucun cookie et n’enregistre rien dans votre navigateur. Il compte les visites à l’aide d’une valeur dérivée de votre adresse IP et de votre navigateur, renouvelée régulièrement, qui ne permet pas de vous reconnaître dans la durée ; votre adresse IP elle-même n’est pas conservée.",
+        "Ces statistiques ne sont consultées que sous forme de totaux et ne servent ni à la publicité ni au profilage. Vous pouvez bloquer {host} avec un bloqueur de contenu ; le site fonctionne de la même façon sans lui."
+      ]
+    },
+    "analyticsCookieNote": "Les statistiques de visite utilisent Umami, hébergé par {operator}, qui ne dépose aucun cookie et n’enregistre rien dans votre navigateur ; la politique de confidentialité décrit les données collectées.",
     "privacy": {
       "title": "Politique de confidentialité",
       "description": "Comment le site KOLO traite les préférences du navigateur, les requêtes d’hébergement et les liens externes.",
@@ -264,14 +273,6 @@
           "paragraphs": [
             "Pour fournir une page ou un fichier, le serveur reçoit des informations techniques telles que votre adresse IP, l’URL demandée, l’heure de la requête et les informations du navigateur jointes à cette requête. L’hébergeur peut conserver des journaux d’accès ou de sécurité pour fournir le site, diagnostiquer les problèmes et prévenir les abus.",
             "Ce site est auto-hébergé sur un serveur exploité par hblabs. Les éventuels journaux d’accès ou de sécurité restent sur cette infrastructure. Leur durée de conservation dépend de la configuration du serveur ; contactez-nous pour obtenir des précisions sur ces journaux."
-          ]
-        },
-        {
-          "title": "Statistiques de visite",
-          "paragraphs": [
-            "Pour savoir quelles pages sont lues et quels téléchargements sont utiles, ce site utilise Umami, un outil de statistiques open source que hblabs exploite sur son propre serveur (stats.hblabs.xyz). Aucune société tierce de mesure d’audience ne reçoit ces données.",
-            "Au chargement d’une page, le script envoie l’adresse de la page, la page d’origine, votre navigateur, votre système d’exploitation, le type d’appareil, la taille de l’écran, la langue et le pays déduit de votre adresse IP. Umami ne dépose aucun cookie et n’enregistre rien dans votre navigateur. Il compte les visites à l’aide d’une valeur dérivée de votre adresse IP et de votre navigateur, renouvelée régulièrement, qui ne permet pas de vous reconnaître dans la durée ; votre adresse IP elle-même n’est pas conservée.",
-            "Ces statistiques ne sont consultées que sous forme de totaux et ne servent ni à la publicité ni au profilage. Vous pouvez bloquer stats.hblabs.xyz avec un bloqueur de contenu ; le site fonctionne de la même façon sans lui."
           ]
         },
         {
@@ -310,7 +311,7 @@
         {
           "title": "Aucun cookie ni traceur publicitaire",
           "paragraphs": [
-            "Le site ne comporte ni cookie publicitaire, ni pixel de suivi, ni empreinte de navigateur, ni lecteur tiers intégré. Les statistiques de visite utilisent Umami, hébergé par hblabs, qui ne dépose aucun cookie et n’enregistre rien dans votre navigateur ; la politique de confidentialité décrit les données collectées. Un hébergeur peut ajouter ses propres mécanismes de sécurité ; tout stockage ajouté par cet hébergeur doit être documenté lors de la configuration de l’hébergement."
+            "Le site ne comporte ni cookie publicitaire, ni pixel de suivi, ni empreinte de navigateur, ni lecteur tiers intégré. Un hébergeur peut ajouter ses propres mécanismes de sécurité ; tout stockage ajouté par cet hébergeur doit être documenté lors de la configuration de l’hébergement."
           ]
         },
         {

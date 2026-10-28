@@ -5,6 +5,7 @@ import releases from '../../content/releases.json';
 import media from '../../content/media.json';
 import site from '../../content/site.json';
 import { selectRelease, releasesURL } from './releases.mjs';
+import { resolveAnalytics } from './analytics.mjs';
 
 export const languages = ['en', 'fr'] as const;
 export type Lang = (typeof languages)[number];
@@ -13,8 +14,8 @@ export const release = selectRelease(releases);
 export { media, site, releasesURL };
 
 export const repoURL = 'https://github.com/vanillaiice/kolo';
-export const analyticsScript = 'https://stats.hblabs.xyz/script.js';
-export const analyticsID = '9e1c1208-ee0e-4ac5-83db-2631a1db803d';
+/** Umami visit statistics from `site.json` or `LANDING_UMAMI_*`, or null when off (see analytics.mjs). */
+export const analytics = resolveAnalytics(site.analytics, process.env);
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 /** A site-relative path (no leading slash) under the configured base path. */
