@@ -151,12 +151,15 @@ npm run record:walkthrough:android -- fr   # or en; a USB phone with debugging a
   then shortens the still waits between steps, keeping time to read each caption. On failure
   the phone's screen is saved to `release/android-<lang>-failure.png`.
 
-The published walkthroughs are on YouTube (channel `@hblabsxyz`). The Guides section links to
-them under "Watch the first steps" without embedding: the thumbnails are served from this site
-(`src/images/walkthrough-<desktop|android>-<fr|en>.jpg`, the YouTube thumbnails), so the page
-loads nothing from YouTube and the CSP and policies stay unchanged. Set the video IDs per language in
-`content/media.json` `walkthroughs`; a language without its own video links to the other
-language's, labelled "In French"/"En anglais", and a platform with neither is left out.
+The published walkthroughs are on YouTube (channel `@hblabsxyz`). The Guides section shows them
+under "Watch the first steps" as click-to-play cards: the thumbnails are served from this site
+(`src/images/walkthrough-<desktop|android>-<fr|en>.jpg`, the YouTube thumbnails), and pressing one
+swaps in the player from `www.youtube-nocookie.com` (`src/scripts/walkthroughs.js`). Nothing loads
+from YouTube before that press; without JavaScript the thumbnail links to YouTube. The Caddy CSP
+allows that origin in `frame-src`, and both policies describe the player whenever a walkthrough is
+configured; `npm run check:landing` enforces both and fails on any iframe in the built markup.
+Set the video IDs per language in `content/media.json` `walkthroughs`; a language without its own
+video uses the other language's, labelled "In French"/"En anglais", and a platform with neither is left out.
 
 ## Privacy
 

@@ -110,6 +110,19 @@ for (const page of pages) {
 }
 console.log('Media host CSP and privacy notice passed.');
 
+// Walkthrough player: pages embed only youtube-nocookie.com, only on press (no iframe in the markup),
+// the CSP allows exactly that frame origin, and both policies describe it exactly when videos are configured.
+const youtube = 'https://www.youtube-nocookie.com';
+const walkthroughIds = Object.values(JSON.parse(await read('content/media.json')).walkthroughs ?? {}).flatMap(Object.values).filter(Boolean);
+assert.deepEqual(directive('frame-src'),[youtube],'Caddyfile CSP frame-src must allow only the YouTube player');
+for (const page of pages) {
+  const html = await read(pageFile(page));
+  assert.ok(!/<iframe\b/.test(html),`${page}: an iframe would load before the visitor presses play`);
+  for (const [,url] of html.matchAll(/data-embed="([^"]+)"/g)) assert.ok(url.startsWith(`${youtube}/embed/`),`${page}: player ${url} is not on ${youtube}`);
+  if (/(privacy|cookies)\/$/.test(page)) assert.equal(html.includes('youtube-nocookie.com'),walkthroughIds.length > 0,`${page}: policies must describe the YouTube player exactly when walkthroughs are configured`);
+}
+console.log('Walkthrough player CSP, click-to-load markup and policies passed.');
+
 // Visit statistics: the script is on every page exactly when configured, the CSP allows only that
 // origin, and the policies describe it only when it is on.
 const analytics = resolveAnalytics(site.analytics, process.env);

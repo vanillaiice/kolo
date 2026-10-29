@@ -143,14 +143,16 @@
   "resourcesDownload": "Télécharger le PDF",
   "resourcesOtherLanguage": "English version",
   "walkthroughsTitle": "Regardez les premiers pas",
-  "walkthroughsLead": "Moins de 5 minutes chacune : créez votre boutique, ajoutez articles et stock, puis vendez en espèces, par Mobile Money et à crédit. Les vidéos s’ouvrent sur YouTube.",
+  "walkthroughsLead": "Moins de 5 minutes chacune : créez votre boutique, ajoutez articles et stock, puis vendez en espèces, par Mobile Money et à crédit.",
   "walkthroughs": {
     "desktop": "Sur ordinateur",
     "android": "Sur téléphone Android"
   },
   "walkthroughsMeta": "Environ 5 minutes · YouTube",
   "walkthroughsOtherLanguage": "En anglais",
-  "walkthroughsWatch": "Regarder sur YouTube",
+  "walkthroughsPlay": "Lire la vidéo : {title}",
+  "walkthroughsOpen": "Ouvrir sur YouTube",
+  "walkthroughsNote": "Lancer la lecture charge le lecteur YouTube de Google.",
   "coming": "À venir",
   "stores": [
     "Google Play",
@@ -229,7 +231,7 @@
     "privacyLink": "Confidentialité",
     "cookiesLink": "Cookies",
     "home": "Retour à KOLO",
-    "updated": "Dernière mise à jour : 27 octobre 2026",
+    "updated": "Dernière mise à jour : 29 octobre 2026",
     "contactHeading": "Contact pour la confidentialité",
     "contactFallback": "Pour toute question sur la confidentialité, contactez hblabs par le canal grâce auquel vous avez obtenu KOLO. Ne publiez pas de données de boutique, sauvegardes, mots de passe ou autres informations privées dans les tickets publics GitHub.",
     "contactLabel": "Contact",
@@ -256,6 +258,8 @@
     ],
     "mediaHeading": "Vidéos",
     "mediaBody": "Les vidéos, leurs images d’aperçu et leurs sous-titres sont servis depuis {origin}. Votre navigateur contacte cet hébergeur lorsqu’une page affiche un aperçu de vidéo, puis lorsque vous en lancez une ; l’hébergeur reçoit donc votre adresse IP, des informations sur votre navigateur et la page d’origine, comme pour toute requête web. Les vidéos ne commencent à se charger que lorsque vous appuyez sur lecture.",
+    "youtubeHeading": "Vidéos de démonstration (YouTube)",
+    "youtubeBody": "Les vidéos de démonstration sont hébergées sur YouTube, un service de Google. La page affiche des images d’aperçu servies par ce site et ne charge rien depuis YouTube avant que vous lanciez la lecture. À ce moment, le lecteur se charge depuis www.youtube-nocookie.com : Google reçoit votre adresse IP, des informations sur votre navigateur et la page d’origine, et le lecteur peut enregistrer des données dans votre navigateur selon la politique de confidentialité de Google (policies.google.com/privacy). Si vous ne le souhaitez pas, ne lancez pas les vidéos ; le reste du site fonctionne sans elles.",
     "analytics": {
       "title": "Statistiques de visite",
       "paragraphs": [
@@ -293,7 +297,7 @@
         {
           "title": "Téléchargements et sites externes",
           "paragraphs": [
-            "Les polices, captures et toute vidéo fournie localement sont servies par ce site. Aucun lecteur de réseau social ou de vidéo tiers n’est intégré.",
+            "Les polices, captures et toute vidéo fournie localement sont servies par ce site. Aucun lecteur de réseau social n’est intégré, et un lecteur vidéo ne se charge que lorsque vous lancez une vidéo de démonstration.",
             "Les téléchargements de l’application, le code source et la documentation renvoient vers GitHub. L’ouverture de ces liens envoie une requête à GitHub ou à son infrastructure de téléchargement, qui applique ses propres règles de confidentialité. Le mainteneur récupère les informations de version lors de la génération du site, pas votre navigateur."
           ]
         },
@@ -320,7 +324,7 @@
         {
           "title": "Aucun cookie ni traceur publicitaire",
           "paragraphs": [
-            "Le site ne comporte ni cookie publicitaire, ni pixel de suivi, ni empreinte de navigateur, ni lecteur tiers intégré. Un hébergeur peut ajouter ses propres mécanismes de sécurité ; tout stockage ajouté par cet hébergeur doit être documenté lors de la configuration de l’hébergement."
+            "Le site ne comporte ni cookie publicitaire, ni pixel de suivi, ni empreinte de navigateur, et aucun lecteur tiers ne se charge avant que vous lanciez une vidéo. Un hébergeur peut ajouter ses propres mécanismes de sécurité ; tout stockage ajouté par cet hébergeur doit être documenté lors de la configuration de l’hébergement."
           ]
         },
         {

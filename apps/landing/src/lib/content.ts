@@ -59,14 +59,20 @@ for (const lang of languages) for (const platform of walkthroughPlatforms) {
   if (id !== null && !/^[\w-]{11}$/.test(id)) throw new Error(`Invalid YouTube ID for the ${lang} ${platform} walkthrough: ${id}`);
 }
 
+/** Origin of the embedded walkthrough player; the Caddy CSP `frame-src` must allow it. */
+export const youtubeEmbedOrigin = 'https://www.youtube-nocookie.com';
+/** Whether any walkthrough is configured, so the policies describe the YouTube player. */
+export const walkthroughsOn = languages.some(lang => walkthroughPlatforms.some(platform => walkthroughIds[lang][platform]));
+
 /**
  * The YouTube walkthrough for a page language and platform, falling back to the other language's
- * video until this one is uploaded; null when neither exists. Pages link out, never embed.
+ * video until this one is uploaded; null when neither exists. `embed` is the player address the
+ * page loads only when the visitor presses play.
  */
-export function walkthrough(lang: Lang, platform: WalkthroughPlatform): { url: string; lang: Lang } | null {
+export function walkthrough(lang: Lang, platform: WalkthroughPlatform): { url: string; embed: string; lang: Lang } | null {
   for (const videoLang of [lang, other(lang)]) {
     const id = walkthroughIds[videoLang][platform];
-    if (id) return { url: `https://www.youtube.com/watch?v=${id}`, lang: videoLang };
+    if (id) return { url: `https://www.youtube.com/watch?v=${id}`, embed: `${youtubeEmbedOrigin}/embed/${id}?autoplay=1&rel=0&hl=${lang}&cc_lang_pref=${lang}`, lang: videoLang };
   }
   return null;
 }

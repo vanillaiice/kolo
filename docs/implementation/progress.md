@@ -2403,3 +2403,17 @@ passed `npm run verify:android` on a Galaxy A04e; the English one names the acco
   to the other language's video, marked as such.
 
 Verification: `npm run check:landing`; English and French pages viewed in headless Chromium at 1280 px and 390 px.
+
+## 2026-10-29: Click-to-play walkthrough player (branch `landing-youtube-embed`, for comparison)
+
+- The walkthrough cards play inline: pressing a thumbnail replaces it with the `www.youtube-nocookie.com` player
+  (autoplay, captions and interface in the page language); an "Open on YouTube" link stays under each card. Nothing is
+  requested from YouTube before the press, and without JavaScript the thumbnail is a plain link to YouTube.
+- CSP `frame-src https://www.youtube-nocookie.com`. The privacy and cookie policies gain a "Walkthrough videos (YouTube)"
+  section, and the sentences claiming no embedded players now say no player loads before you press play (policy date
+  29 October 2026).
+
+Verification: `npm run check:landing` (new assertions: CSP `frame-src` is exactly the YouTube player, no iframe in any
+built page, `data-embed` only on youtube-nocookie.com, policies name the player exactly when walkthroughs are configured);
+headless Chromium served with the Caddyfile CSP, English and French: no request to YouTube or Google before the press,
+the player loads and takes focus after it, no CSP or console errors.

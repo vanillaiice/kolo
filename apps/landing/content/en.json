@@ -143,14 +143,16 @@
   "resourcesDownload": "Download PDF",
   "resourcesOtherLanguage": "Version française",
   "walkthroughsTitle": "Watch the first steps",
-  "walkthroughsLead": "Under 5 minutes each: create your shop, add products and stock, then sell for cash, by mobile money and on credit. Videos open on YouTube.",
+  "walkthroughsLead": "Under 5 minutes each: create your shop, add products and stock, then sell for cash, by mobile money and on credit.",
   "walkthroughs": {
     "desktop": "On a computer",
     "android": "On an Android phone"
   },
   "walkthroughsMeta": "About 5 minutes · YouTube",
   "walkthroughsOtherLanguage": "In French",
-  "walkthroughsWatch": "Watch on YouTube",
+  "walkthroughsPlay": "Play the video: {title}",
+  "walkthroughsOpen": "Open on YouTube",
+  "walkthroughsNote": "Pressing play loads the YouTube player from Google.",
   "coming": "Coming later",
   "stores": [
     "Google Play",
@@ -229,7 +231,7 @@
     "privacyLink": "Privacy policy",
     "cookiesLink": "Cookie policy",
     "home": "Back to KOLO",
-    "updated": "Last updated: 27 October 2026",
+    "updated": "Last updated: 29 October 2026",
     "contactHeading": "Privacy contact",
     "contactFallback": "For privacy questions, contact hblabs through the channel from which you received KOLO. Do not share shop records, backups, passwords or other private information in public GitHub issues.",
     "contactLabel": "Contact",
@@ -256,6 +258,8 @@
     ],
     "mediaHeading": "Videos",
     "mediaBody": "Videos, their preview images and captions are served from {origin}. Your browser contacts that host when a page shows a video preview, and again when you play one, so the host receives your IP address, browser details and the page you came from, like any website request. Videos never start loading until you press play.",
+    "youtubeHeading": "Walkthrough videos (YouTube)",
+    "youtubeBody": "The walkthrough videos are hosted on YouTube, a Google service. The page shows preview images served by this website and loads nothing from YouTube until you press play. When you do, the player loads from www.youtube-nocookie.com: Google receives your IP address, browser details and the page you came from, and the player may store data in your browser under Google’s privacy policy (policies.google.com/privacy). If you prefer not to, do not play the videos; the rest of the website works without them.",
     "analytics": {
       "title": "Visit statistics",
       "paragraphs": [
@@ -293,7 +297,7 @@
         {
           "title": "Downloads and external websites",
           "paragraphs": [
-            "Fonts, screenshots and any locally supplied video are served by this website. The website does not load embedded social-media or video players.",
+            "Fonts, screenshots and any locally supplied video are served by this website. It loads no embedded social-media players, and a video player only when you press play on a walkthrough video.",
             "App downloads, source code and documentation link to GitHub. Opening these links sends a request to GitHub or its download infrastructure, which has its own privacy practices. Release information is fetched by the maintainer when rebuilding the site, not by your browser."
           ]
         },
@@ -320,7 +324,7 @@
         {
           "title": "No cookies or advertising trackers",
           "paragraphs": [
-            "The website includes no advertising cookies, tracking pixels, fingerprinting or third-party embedded players. A hosting provider may add its own security mechanisms; any provider-added storage must be documented when hosting is configured."
+            "The website includes no advertising cookies, tracking pixels or fingerprinting, and no third-party player loads until you press play on a video. A hosting provider may add its own security mechanisms; any provider-added storage must be documented when hosting is configured."
           ]
         },
         {
