@@ -128,6 +128,29 @@ Videos load nothing before play (`preload="none"`), but a poster from the extern
 is fetched with the page. For the gallery demo video, set `video` in `content/media.json`
 to `src`, `poster`, `captionsEn` and `captionsFr` paths or URLs.
 
+### First-user walkthroughs
+
+Scripted recordings of the real apps: create a shop, categories, products and opening
+stock, a delivery and a shelf count, a mobile money account, a cash sale with change,
+a split cash/mobile money sale, a customer with a credit limit, a credit sale and a
+repayment. Each run writes `release/walkthrough/<desktop|android>-<fr|en>.mp4`, a
+`.webp` poster and French and English `.vtt` captions (gitignored). Re-record after UI changes:
+
+```sh
+npm run record:walkthrough:desktop -- fr   # or en; Linux, Xvfb and ffmpeg
+npm run record:walkthrough:android -- fr   # or en; a USB phone with debugging allowed
+```
+
+- Desktop builds the app, runs it on a private Xvfb display at 1920×1080 in a throwaway
+  config folder (never the computer's shop) and drives it over the DevTools protocol
+  with real mouse and keyboard input; a drawn cursor shows each click.
+- Android **erases KOLO's data on the phone** (`pm clear`), shows taps, keeps the screen
+  on while recording and restores both afterwards. It finds controls by their
+  accessibility labels, types with `adb` (no accents, so the French names avoid them) and
+  records with `screenrecord`, restarted every 170 s and joined. `scripts/walkthrough-tighten.mjs`
+  then shortens the still waits between steps, keeping time to read each caption. On failure
+  the phone's screen is saved to `release/android-<lang>-failure.png`.
+
 ## Privacy
 
 ### Visit statistics

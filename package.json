@@ -52,6 +52,8 @@
     "dev:landing": "npm run dev -w @kolo/landing",
     "check:landing": "npm run check -w @kolo/landing",
     "refresh:landing-releases": "node apps/landing/refresh-releases.mjs",
+    "record:walkthrough:desktop": "node scripts/record-desktop-walkthrough.mjs",
+    "record:walkthrough:android": "node scripts/record-android-walkthrough.mjs",
     "test:server:pg": "node scripts/test-server-postgres.mjs",
     "kolo": "npm run build:packages --silent && npm run build -w @kolo/cli --silent && node apps/cli/dist/main.js",
     "test:e2e": "npm run build:packages && npm run build -w @kolo/server && npm run build -w @kolo/cli && node scripts/test-e2e-sync.mjs"

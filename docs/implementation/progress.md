@@ -2371,3 +2371,25 @@ when it is on.
 Verification: `npm run check:landing` with the committed settings (every page byte-identical to the deployed site except
 the cookie policy, where the same statistics sentence is now its own paragraph); with statistics off (no script, no Umami text); with a fork's host (fails until the CSP allows it); with an invalid
 ID (build fails).
+
+## 2026-10-28: First-user walkthrough videos; setup default names follow the language
+
+- **Walkthroughs.** `npm run record:walkthrough:desktop|android -- <fr|en>` records the real apps creating a shop,
+  categories, products with opening stock, a delivery and a shelf count, a mobile money account, a cash sale with
+  change, a split cash/mobile money sale, a customer with a credit limit, a credit sale and a repayment, with French and
+  English WebVTT captions and a poster (`release/walkthrough/`, gitignored). Desktop: Electron on a private Xvfb display
+  (throwaway `XDG_CONFIG_HOME`), driven over the DevTools protocol with real input and a drawn cursor, recorded by ffmpeg.
+  Android: a USB phone whose KOLO data is erased (`pm clear`), driven by accessibility label over adb, recorded by
+  `screenrecord` in 170 s segments; `scripts/walkthrough-tighten.mjs` shortens the still waits between steps (a 23-minute
+  capture becomes 4:45) and moves the captions with them. All four videos are 4:35–4:48 (desktop 1920×1080, Android
+  720×1600); not yet published (the video host is undecided).
+- **Bug found while recording.** The desktop and Android setup screens captured "Main till"/"Cash" in the language the
+  screen opened in, so switching to English before creating a shop still named the cash account "Espèces"/"Caisse".
+  Untouched defaults now follow the interface language (desktop setup, restore, join and local join; Android setup and
+  restore), and Android always sends the cash account's name, since the core's own default ("Caisse") does not know
+  the language. The Electron workflow smoke now checks that the defaults change with the language switch.
+
+Verification: `npm run smoke:desktop:workflow` (13 phases, new assertion included), mobile tests (26) and
+`npm run bundle:mobile`, `npm run boundaries`, `npm run typecheck`, `npm run docs:check`; contact sheets of all four
+videos checked against their captions. Both Android videos were recorded on a locally built APK with the fix that
+passed `npm run verify:android` on a Galaxy A04e; the English one names the account "Cash drawer" on its receipts.
