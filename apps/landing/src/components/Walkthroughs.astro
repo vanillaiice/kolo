@@ -1,0 +1,24 @@
+---
+/**
+ * First-user walkthrough videos: a self-hosted thumbnail and a link out to YouTube, so the page
+ * loads nothing from YouTube. Falls back to the other language's video until this one is uploaded.
+ */
+import type { ImageMetadata } from 'astro';
+import { getImage } from 'astro:assets';
+import Icon from './Icon.astro';
+import { translations, walkthrough, walkthroughPlatforms, type Lang } from '../lib/content';
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const t = translations[lang];
+const thumbnails = import.meta.glob<{ default: ImageMetadata }>('../images/walkthrough-*.jpg');
+const videos = (await Promise.all(walkthroughPlatforms.map(async platform => {
+  const video = walkthrough(lang, platform);
+  if (!video) return null;
+  const load = thumbnails[`../images/walkthrough-${platform}-${video.lang}.jpg`];
+  if (!load) throw new Error(`No src/images/walkthrough-${platform}-${video.lang}.jpg`);
+  const image = (await load()).default;
+  const variants = await Promise.all([480, 800].map(async width => `${(await getImage({ src: image, width, format: 'webp' })).src} ${width}w`));
+  return { platform, ...video, image, srcset: variants.join(', '), fallback: variants[0].split(' ')[0] };
+}))).filter(video => video !== null);
+---
+{videos.length > 0 && <div class="walkthroughs"><h3>{t.walkthroughsTitle}</h3><p>{t.walkthroughsLead}</p><div class="download-grid resource-grid">{videos.map(video => <article class="download-card walkthrough-card"><a class="walkthrough-thumb" href={video.url} tabindex="-1" aria-hidden="true"><img src={video.fallback} srcset={video.srcset} sizes="(max-width: 760px) calc(100vw - 92px), 520px" alt="" width={video.image.width} height={video.image.height} loading="lazy" decoding="async"></a><h4>{t.walkthroughs[video.platform]}</h4><small>{t.walkthroughsMeta}{video.lang !== lang && ` · ${t.walkthroughsOtherLanguage}`}</small><a class="button primary" href={video.url}>{t.walkthroughsWatch}<Icon name="arrow" /></a></article>)}</div></div>}

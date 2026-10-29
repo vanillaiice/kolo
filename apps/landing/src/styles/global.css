@@ -636,6 +636,45 @@ section[id] {
   font-size:12px;
 }
 
+.walkthroughs {
+  margin-top:56px;
+}
+
+.walkthroughs>h3 {
+  font-size:24px;
+  margin-bottom:8px;
+}
+
+.walkthroughs>p {
+  color:var(--muted);
+  font-size:14px;
+  max-width:640px;
+  margin-bottom:24px;
+}
+
+.walkthrough-thumb {
+  display:block;
+  width:100%;
+  margin-bottom:20px;
+  border-radius:8px;
+  overflow:hidden;
+}
+
+.walkthrough-thumb img {
+  display:block;
+  width:100%;
+  height:auto;
+}
+
+.walkthrough-card h4 {
+  font-size:20px;
+  margin:0;
+}
+
+.download-card.walkthrough-card>small {
+  margin-top:6px;
+}
+
 .download-card {
   display:flex;
   align-items:flex-start;

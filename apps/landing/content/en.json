@@ -142,6 +142,15 @@
   ],
   "resourcesDownload": "Download PDF",
   "resourcesOtherLanguage": "Version française",
+  "walkthroughsTitle": "Watch the first steps",
+  "walkthroughsLead": "Under 5 minutes each: create your shop, add products and stock, then sell for cash, by mobile money and on credit. Videos open on YouTube.",
+  "walkthroughs": {
+    "desktop": "On a computer",
+    "android": "On an Android phone"
+  },
+  "walkthroughsMeta": "About 5 minutes · YouTube",
+  "walkthroughsOtherLanguage": "In French",
+  "walkthroughsWatch": "Watch on YouTube",
   "coming": "Coming later",
   "stores": [
     "Google Play",

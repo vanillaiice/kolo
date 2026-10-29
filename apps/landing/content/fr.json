@@ -142,6 +142,15 @@
   ],
   "resourcesDownload": "Télécharger le PDF",
   "resourcesOtherLanguage": "English version",
+  "walkthroughsTitle": "Regardez les premiers pas",
+  "walkthroughsLead": "Moins de 5 minutes chacune : créez votre boutique, ajoutez articles et stock, puis vendez en espèces, par Mobile Money et à crédit. Les vidéos s’ouvrent sur YouTube.",
+  "walkthroughs": {
+    "desktop": "Sur ordinateur",
+    "android": "Sur téléphone Android"
+  },
+  "walkthroughsMeta": "Environ 5 minutes · YouTube",
+  "walkthroughsOtherLanguage": "En anglais",
+  "walkthroughsWatch": "Regarder sur YouTube",
   "coming": "À venir",
   "stores": [
     "Google Play",

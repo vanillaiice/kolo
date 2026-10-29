@@ -50,3 +50,23 @@ export function mediaURL(path: string): string {
 }
 
 if (media.video) for (const key of ['src', 'poster', 'captionsEn', 'captionsFr'] as const) mediaURL(media.video[key]);
+
+export const walkthroughPlatforms = ['desktop', 'android'] as const;
+export type WalkthroughPlatform = (typeof walkthroughPlatforms)[number];
+const walkthroughIds = media.walkthroughs as Record<Lang, Record<WalkthroughPlatform, string | null>>;
+for (const lang of languages) for (const platform of walkthroughPlatforms) {
+  const id = walkthroughIds[lang][platform];
+  if (id !== null && !/^[\w-]{11}$/.test(id)) throw new Error(`Invalid YouTube ID for the ${lang} ${platform} walkthrough: ${id}`);
+}
+
+/**
+ * The YouTube walkthrough for a page language and platform, falling back to the other language's
+ * video until this one is uploaded; null when neither exists. Pages link out, never embed.
+ */
+export function walkthrough(lang: Lang, platform: WalkthroughPlatform): { url: string; lang: Lang } | null {
+  for (const videoLang of [lang, other(lang)]) {
+    const id = walkthroughIds[videoLang][platform];
+    if (id) return { url: `https://www.youtube.com/watch?v=${id}`, lang: videoLang };
+  }
+  return null;
+}

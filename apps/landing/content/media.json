@@ -1,3 +1,7 @@
 {
-  "video": null
+  "video": null,
+  "walkthroughs": {
+    "en": { "desktop": "dbTlNKh6Dp4", "android": "AC8pY5nY_YI" },
+    "fr": { "desktop": "0NKmplCvlVg", "android": "oiKgPIPLjAc" }
+  }
 }

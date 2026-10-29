@@ -1,5 +1,6 @@
 ---
 import Icon from './Icon.astro';
+import Walkthroughs from './Walkthroughs.astro';
 import { href, other, repoURL, translations, type Lang } from '../lib/content';
 interface Props { lang: Lang }
 const { lang } = Astro.props;
@@ -11,4 +12,4 @@ const files = [
   { file: 'slides', icon: 'slides', source: `${repoURL}/tree/master/docs/guides/slides` },
 ] as const;
 ---
-<section class="section wrap" id="resources"><div class="section-heading"><span class="eyebrow">{t.resourcesEyebrow}</span><h2>{t.resourcesTitle}</h2><p>{t.resourcesLead}</p></div><div class="download-grid resource-grid">{t.resources.map((r, i) => <article class="download-card"><Icon name={files[i].icon} /><h3>{r.title}</h3><p>{r.body}</p><small>{r.meta}</small><a class="button primary" href={guide(files[i].file, lang)} download>{t.resourcesDownload}<Icon name="arrow" /></a><div class="inline-links"><a href={guide(files[i].file, otherLang)} lang={otherLang} hreflang={otherLang} download>{t.resourcesOtherLanguage} ↓</a><a href={files[i].source}>{r.source} ↗</a></div></article>)}</div></section>
+<section class="section wrap" id="resources"><div class="section-heading"><span class="eyebrow">{t.resourcesEyebrow}</span><h2>{t.resourcesTitle}</h2><p>{t.resourcesLead}</p></div><div class="download-grid resource-grid">{t.resources.map((r, i) => <article class="download-card"><Icon name={files[i].icon} /><h3>{r.title}</h3><p>{r.body}</p><small>{r.meta}</small><a class="button primary" href={guide(files[i].file, lang)} download>{t.resourcesDownload}<Icon name="arrow" /></a><div class="inline-links"><a href={guide(files[i].file, otherLang)} lang={otherLang} hreflang={otherLang} download>{t.resourcesOtherLanguage} ↓</a><a href={files[i].source}>{r.source} ↗</a></div></article>)}</div><Walkthroughs lang={lang} /></section>

@@ -2393,3 +2393,13 @@ Verification: `npm run smoke:desktop:workflow` (13 phases, new assertion include
 `npm run bundle:mobile`, `npm run boundaries`, `npm run typecheck`, `npm run docs:check`; contact sheets of all four
 videos checked against their captions. Both Android videos were recorded on a locally built APK with the fix that
 passed `npm run verify:android` on a Galaxy A04e; the English one names the account "Cash drawer" on its receipts.
+
+## 2026-10-29: Walkthrough videos on YouTube, linked from the landing page
+
+- All four walkthroughs (desktop and Android, French and English) are public on YouTube (`@hblabsxyz`).
+- The landing Guides section has "Watch the first steps": one card per platform with a self-hosted thumbnail and a
+  "Watch on YouTube" link. Nothing is embedded or loaded from YouTube, so the CSP, privacy and cookie policies are
+  unchanged. Video IDs live in `content/media.json` `walkthroughs`; until a language's own video exists, its page links
+  to the other language's video, marked as such.
+
+Verification: `npm run check:landing`; English and French pages viewed in headless Chromium at 1280 px and 390 px.
