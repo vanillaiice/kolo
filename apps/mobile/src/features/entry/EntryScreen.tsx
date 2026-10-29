@@ -58,7 +58,9 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
   const { t, language } = useText(), s = useStyles(), { colors } = useTheme();
   const [step, setStep] = useState<Step>(() => firstStep(state, ports.database));
   const [shop, setShop] = useState(""), [owner, setOwner] = useState(""), [customize, setCustomize] = useState(false);
-  const [till, setTill] = useState(() => t("defaultTill")), [cash, setCash] = useState(() => t("defaultCash"));
+  const [tillEdit, setTill] = useState<string>(), [cashEdit, setCash] = useState<string>();
+  // Default names follow the interface language until the owner edits them.
+  const till = tillEdit ?? t("defaultTill"), cash = cashEdit ?? t("defaultCash");
   const [secret, setSecret] = useState(""), [confirmation, setConfirmation] = useState(""), [recovery, setRecovery] = useState("");
   const [phone, setPhone] = useState(""), [serverPin, setServerPin] = useState(""), [password, setPassword] = useState(""), [withKey, setWithKey] = useState(false), [typedName, setTypedName] = useState(""), [fingerprint, setFingerprint] = useState("");
   const [pairingCode, setPairingCode] = useState(""), [acknowledged, setAcknowledged] = useState(false), [replacing, setReplacing] = useState(false);
@@ -181,7 +183,8 @@ export function EntryScreen({ ports, files, slots, state, authority, onUnlocked,
         <Button label={t("createShop")} busy={busy} onPress={() => { void run(async () => {
           checkNewSecret();
           const installation = await createWorkspace({ businessName: shop.trim(), ownerName: owner.trim(), secret, deviceLabel: till.trim(), currency: "XAF", platform,
-            ...(customize ? { accounts: [{ name: cash.trim(), kind: "CASH" as const }] } : {}) }, ports);
+            // Always named here: the core's own default ("Caisse") does not know the interface language.
+            accounts: [{ name: (customize ? cash : t("defaultCash")).trim(), kind: "CASH" as const }] }, ports);
           await openWithKey(installation.ownerId);
         }); }} />
       </Section>, { back: () => { setSecret(""); setConfirmation(""); go({ name: "create", part: 1 }); }, intro: t("stepTwoOfTwo") });

@@ -43,7 +43,9 @@ export function ImportFile({service,replacing,onDone,onBack}:{readonly service:S
 function Restore({service,sessionId,chosen=false,replacing,onDone,onBusy}:{service:ShopService;sessionId?:string;chosen?:boolean;replacing?:string;onDone:()=>void;onBusy?:(busy:boolean)=>void}):React.JSX.Element{
   const {t,language}=useText(),action=useAction();
   useEffect(()=>{onBusy?.(action.busy);},[action.busy,onBusy]);
-  const [password,setPassword]=useState(""),[preview,setPreview]=useState<BackupFileView>(),[name,setName]=useState(""),[device,setDevice]=useState(()=>t("defaultTill")),[secret,setSecret]=useState(""),[confirm,setConfirm]=useState("");
+  const [password,setPassword]=useState(""),[preview,setPreview]=useState<BackupFileView>(),[name,setName]=useState(""),[deviceEdit,setDevice]=useState<string>(),[secret,setSecret]=useState(""),[confirm,setConfirm]=useState("");
+  // The default till name follows the interface language until edited.
+  const device=deviceEdit??t("defaultTill");
   const [withKey,setWithKey]=useState(false),[recoveryKey,setRecoveryKey]=useState("");
   const check=async():Promise<void>=>{setPreview(undefined);const value=await action.run(()=>service.openBackup(withKey?{recoveryKey}:{password}));setPassword("");setRecoveryKey("");if(value!==undefined)setPreview(value);};
   const restore=async():Promise<void>=>{
@@ -67,7 +69,8 @@ function Restore({service,sessionId,chosen=false,replacing,onDone,onBusy}:{servi
 function Join({service,autoOpen=false,onDone,onBusy}:{service:ShopService;autoOpen?:boolean;onDone:()=>void;onBusy?:(busy:boolean)=>void}):React.JSX.Element{
   const {t}=useText(),action=useAction();
   useEffect(()=>{onBusy?.(action.busy);},[action.busy,onBusy]);
-  const [invite,setInvite]=useState<InviteView>(),[fingerprint,setFingerprint]=useState(""),[device,setDevice]=useState(()=>t("defaultTill")),[secret,setSecret]=useState(""),[confirm,setConfirm]=useState("");
+  const [invite,setInvite]=useState<InviteView>(),[fingerprint,setFingerprint]=useState(""),[deviceEdit,setDevice]=useState<string>(),[secret,setSecret]=useState(""),[confirm,setConfirm]=useState("");
+  const device=deviceEdit??t("defaultTill");
   const [code,setCode]=useState<string>(),[password,setPassword]=useState(""),[typedCode,setTypedCode]=useState("");
   const accept=async():Promise<void>=>{
     if(secret!==confirm){action.setError({code:"codesMismatch"});return;}
@@ -163,7 +166,8 @@ function AddTill({service,sessionId,revision}:{service:ShopService;sessionId:str
  * (server or same Wi-Fi). The owner must still allow it on the main till.
  */
 export function JoinLocalComputer({service,onDone,onBack}:{service:ShopService;onDone:()=>void;onBack:()=>void}):React.JSX.Element{
-  const {t}=useText(),action=useAction(),[link,setLink]=useState(""),[address,setAddress]=useState(""),[shop,setShop]=useState<string>(),[label,setLabel]=useState(t("defaultTill")),[secret,setSecret]=useState(""),[confirm,setConfirm]=useState(""),[waiting,setWaiting]=useState(false);
+  const {t}=useText(),action=useAction(),[link,setLink]=useState(""),[address,setAddress]=useState(""),[shop,setShop]=useState<string>(),[labelEdit,setLabel]=useState<string>(),[secret,setSecret]=useState(""),[confirm,setConfirm]=useState(""),[waiting,setWaiting]=useState(false);
+  const label=labelEdit??t("defaultTill");
   // A pasted link carries its own address; a typed code needs the one shown under it.
   const typedCode=!/^\s*kolo:/i.test(link),target={link,...(typedCode&&address.trim()!==""?{url:address}:{})};
   useEffect(()=>{if(!waiting)return;let live=true,running=false;const timer=setInterval(()=>{if(running)return;running=true;void service.finishLocalJoin(target).then(result=>{if(!live)return;if(!result.ok){action.setError(result.error);return;}if(result.value?.activated){live=false;onDone();}}).catch(()=>{if(live)action.setError({code:"local_network_unavailable"});}).finally(()=>{running=false;});},2000);return()=>{live=false;clearInterval(timer);};},[service,link,address,waiting,onDone]);

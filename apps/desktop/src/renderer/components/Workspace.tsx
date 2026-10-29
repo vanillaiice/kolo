@@ -20,7 +20,9 @@ export function Workspace({ service, view, refresh, onRecoveryKey, onLegal }: {
   const { t, language } = useText(), action = useAction();
   const [mode, setMode] = useState<"home" | "create" | "recover" | "import" | "fresh" | "join">("home");
   const [step, setStep] = useState<1 | 2>(1);
-  const [shop, setShop] = useState(""), [owner, setOwner] = useState(""), [device, setDevice] = useState(() => t("defaultTill")), [cash, setCash] = useState(() => t("defaultCash"));
+  const [shop, setShop] = useState(""), [owner, setOwner] = useState(""), [deviceEdit, setDevice] = useState<string>(), [cashEdit, setCash] = useState<string>();
+  // Default names follow the interface language until the owner edits them.
+  const device = deviceEdit ?? t("defaultTill"), cash = cashEdit ?? t("defaultCash");
   const [secret, setSecret] = useState(""), [confirmation, setConfirmation] = useState(""), [key, setKey] = useState(""), [confirmedName, setConfirmedName] = useState("");
   const [userId, setUserId] = useState(view.members[0]?.id ?? ""), [recovered, setRecovered] = useState(false);
   const empty = view.state === "empty", pending = view.state === "pending";

@@ -127,7 +127,8 @@ export function BackupRestoreScreen(): React.JSX.Element {
   const [file, setFile] = useState<PickedFile>(), [password, setPassword] = useState(""), [preview, setPreview] = useState<BackupPreview>(), [withKey, setWithKey] = useState(false);
   const picked = useRef<PickedFile | undefined>(undefined);
   useEffect(() => () => { void picked.current?.close(); }, []);
-  const [typed, setTyped] = useState(""), [label, setLabel] = useState(() => t("defaultTill")), [secret, setSecret] = useState(""), [confirmation, setConfirmation] = useState(""), [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState(""), [labelEdit, setLabel] = useState<string>(), [secret, setSecret] = useState(""), [confirmation, setConfirmation] = useState(""), [confirming, setConfirming] = useState(false);
+  const label = labelEdit ?? t("defaultTill");
   const staged = useRef<BackupPreview | undefined>(undefined);
   useEffect(() => () => { if (staged.current !== undefined) void cancelBackupPreview(staged.current); }, []);
   useLeaveGuard(preview !== undefined);

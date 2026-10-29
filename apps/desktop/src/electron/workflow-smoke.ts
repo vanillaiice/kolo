@@ -129,6 +129,8 @@ export async function runDesktopWorkflowSmoke(window: BrowserWindow, phase: stri
     await audit("French shop details"); await snapshot("setup-details-fr");
     await evaluate("Array.from(document.querySelectorAll('.language-switch button')).find(element=>element.textContent==='EN').click()");
     await click(".setup-options summary");
+    // The screen opened in French; untouched default names follow the switch to English.
+    await wait("document.querySelector('#device-name').value==='Main till' && document.querySelector('#cash-name').value==='Cash'", "default names follow the language");
     for (const [selector, value] of [["#shop-name", "Desktop validation"], ["#owner-name", "Owner"], ["#device-name", "Till"], ["#cash-name", "Cash"]]) await fill(selector!, value!);
     await submit("#shop-name"); await wait("document.querySelector('#local-secret')!==null");
     assert.ok(await evaluate("document.querySelector('.setup-accept')?.textContent.includes('Terms of use')"), "setup names the terms");
