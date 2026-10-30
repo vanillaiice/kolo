@@ -183,6 +183,10 @@ async function choose(selector, optionText) {
 const navigate = name => click(find(".nav-item", name), `menu ${name}`);
 const submit = async selector => { await click(`${find(selector)}.closest('form').querySelector('button[type=submit]')`, `submit ${selector}`); };
 
+// The app opens in French; choose the language before recording, as Android does, so every shot is in it.
+await waitFor(`document.querySelector('[data-auth-action=create]')!==null`, "welcome screen");
+if (lang === "en") { await evaluate(`localStorage.setItem('kolo.language','en')`); await send("Page.reload"); }
+
 // Recording and captions share one clock that starts with ffmpeg.
 const raw = join(work, "raw.mp4");
 const recorder = start("ffmpeg", ["-y", "-loglevel", "error", "-f", "x11grab", "-draw_mouse", "0", "-framerate", "30", "-video_size", `${size[0]}x${size[1]}`, "-i", display,
@@ -194,10 +198,9 @@ const caption = key => cues.push({ at: (Date.now() - startedAt) / 1000, text: ca
 try {
   // Light appearance, like the website and README screenshots.
   await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] });
-  await waitFor(`document.querySelector('[data-auth-action=create]')!==null`, "welcome screen");
+  await waitFor(`document.querySelector('[data-auth-action=create]')!==null && document.documentElement.lang===${JSON.stringify(lang)}`, "welcome screen in the chosen language");
   await sleep(1200);
   caption("welcome"); await sleep(2600);
-  if (lang === "en") { await click(find(".language-switch button", "EN"), "English"); await sleep(900); }
   await click(`document.querySelector('[data-auth-action=create]')`, "create a shop");
   await waitFor(`document.querySelector('#shop-name')!==null`, "shop details");
   caption("details"); await sleep(1200);
