@@ -2417,3 +2417,35 @@ Verification: `npm run check:landing` (new assertions: CSP `frame-src` is exactl
 built page, `data-embed` only on youtube-nocookie.com, policies name the player exactly when walkthroughs are configured);
 headless Chromium served with the Caddyfile CSP, English and French: no request to YouTube or Google before the press,
 the player loads and takes focus after it, no CSP or console errors.
+
+## 2026-10-30: Operator dashboard v2 (ADR-045)
+
+The user asked to upgrade the sync server's dashboard in interface, features and integrity, staying fast and light.
+
+- **Client:** `apps/admin` moved from React to Preact 10.29.8 with `preact-iso` 2.12.2 routing: real addresses
+  (`/admin/shops/<id>`, filters and pages in the query string, back button), lazily loaded pages, a dark rail, light/dark/
+  system theme, French/English, `/` to search, background refresh only while visible, an idle-timeout warning. Script:
+  24 KiB gzip entry, 35 KiB for every page (was about 225 KB raw); `npm run build -w @kolo/admin` fails above 40/80 KiB.
+- **Pages:** overview (attention list, figures, 14-day arrivals chart), shops (search, status/subscription filters, sort,
+  pages, CSV), shop (tills with stale marker, limit, subscription and payments, activity timeline, recovery, actions),
+  codes (state tabs, QR download), billing (hosted: period totals by method, ending subscriptions, ledger, CSV), audit
+  (filters, CSV, chain status and per-entry seals), health (integrity checks, audit seal, runtime), operators, account
+  (own sessions, password).
+- **Server:** strict JSON schemas on every admin route (no coercion; field codes kept); payment `requestId`
+  idempotency, with `recordPayment` locking the shop before its replay check (parallel duplicates no longer fail on the
+  unique index); till-limit `expected` (409 `stale`); step-up confirmation for removal, recovery codes, password and
+  operator changes; operator management and own sessions; overview, billing and integrity endpoints; `x-kolo-poll`
+  refreshes do not keep a session alive. Name searches no longer match ID prefixes made of their hex letters.
+- **Migration `0010_audit_chain`:** database-kept hash chain on `admin_audit` (`seq`, `prev_hash`, `hash`,
+  `kolo_audit_hash`, existing entries chained), `admin_sessions.confirmed_at`, `journal (received_at)` index.
+
+Verification: server suite 56/56 on PGlite and on real PostgreSQL 18 (`npm run test:server:pg`), including the new
+`admin-dashboard.test.ts` (upgrade from 0009 chains old entries; 20 parallel writers and a multi-row insert stay linear;
+an edit or deletion around the trigger is reported at its `seq`; schemas; payment replay in parallel; `stale`; step-up
+expiry and single-use codes; self/last-admin guards under a race; session revocation scope; filters, sort, pages and
+CSV; attention items; billing totals; each integrity check on a broken fixture and no false alarm at sub-millisecond
+precision; polling does not extend a session). Live: hosted server on a disposable PostgreSQL 18 with seeded shops,
+every page captured in Electron in light and dark, French and English, at 1360 px and 390 px; no console or CSP errors;
+a triple-clicked payment recorded once; deep link and back button; step-up dialog and operator enrolment. The live run
+found the payment-chain check alarming on microsecond dates, fixed and tested.
+Not verified: a TOTP sign-in in a browser (the preview used `KOLO_ADMIN_TOTP=off`; TOTP paths are covered by tests).

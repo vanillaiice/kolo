@@ -116,22 +116,42 @@ are offered again.
 
 ### Operator dashboard API (separate listener)
 
-Served on `KOLO_ADMIN_HOST:KOLO_ADMIN_PORT` only, never on the sync port. The page is `/admin/`; the API is `/admin/api`.
+Served on `KOLO_ADMIN_HOST:KOLO_ADMIN_PORT` only, never on the sync port. The page is `/admin/` (Preact, with client
+routes such as `/admin/shops/<id>`; ADR-045); the API is `/admin/api`.
 Sessions are an HttpOnly, SameSite=Strict cookie (`Path=/admin`, `Secure` over HTTPS) lasting at most 12 hours and ending
-after 30 idle minutes. Every non-GET request must carry a matching `Origin` (403 `bad_origin`). Viewers get 403 `read_only`
-on changes. Responses carry a strict CSP, `X-Frame-Options: DENY` and `Cache-Control: no-store`.
+after 30 idle minutes; a request with `x-kolo-poll: 1` (a background refresh) does not count as activity. Every non-GET
+request must carry a matching `Origin` (403 `bad_origin`). Viewers get 403 `read_only` on changes. Origin, session, role
+and step-up are checked before the request is validated against its schema: unknown fields and wrong types are refused
+without coercion, with the field's own code where it has one (`invalid_months`, `invalid_till_limit`, …) and
+`invalid_request` otherwise; a malformed path ID is 404 `not_found`. Responses carry a strict CSP, `X-Frame-Options: DENY`
+and `Cache-Control: no-store`.
+
+**Step-up:** routes marked *step-up* need `POST /admin/api/session/confirm` within the last 5 minutes, else 403
+`step_up_required`.
 
 | Method/path | Role | Result |
 |---|---|---|
 | `GET /admin/api/config` | — | `{totp}`: whether sign-in asks for an authenticator code |
 | `POST /admin/api/session` | — | `{username,password,code}`; 6-digit TOTP (unless `KOLO_ADMIN_TOTP=off`), each code once; 401 `invalid_credentials`, 423 `account_locked` (5 failures, 15 minutes); 10 a minute per address |
-| `DELETE /admin/api/session`, `GET /admin/api/me` | any | Sign out; current operator |
-| `GET /admin/api/health` | any | Version, database size, facts (total, last 24 h), active till sessions, shops by status, request/error/rate-limit counters since start, applied migrations |
-| `GET/POST /admin/api/codes`, `POST /admin/api/codes/:id/cancel` | any / admin | List (never tokens); issue `{label, days 1–90, includedMonths 0–36 (hosted)}` or an owner-recovery code `{label, days, recoveryShopId}` (existing shop, no months; audited `code.issue_recovery`) → code shown once plus an SVG QR code; cancel an unused code |
-| `GET /admin/api/shops?search=`, `GET /admin/api/shops/:id` | any | Name, status, devices, last seen, fact count and bytes; detail adds devices with backlog, conflicts and the current key epoch |
-| `POST /admin/api/shops/:id/{suspend,resume,remove,restore}` | admin | Remove needs `{confirm: <shop id>}` and keeps data restorable for 30 days; the server purges it hourly afterwards |
-| `POST /admin/api/shops/:id/payments` | admin, hosted | `{months 1–36, amountMinor, method, reference?}`; extends paid-until from its end or today; 409 `not_hosted` on self-hosted servers |
-| `GET /admin/api/audit[?before=]`, `GET /admin/api/audit.csv` | any | Append-only audit log, newest first; CSV export |
+| `POST /admin/api/session/confirm` | any | `{password, code}` (a fresh step); failures count toward the lockout; returns `me` with `confirmedUntil` |
+| `DELETE /admin/api/session`, `GET /admin/api/me` | any | Sign out; current operator `{username, role, idleMinutes, expiresAt, confirmedUntil, edition, totp}` |
+| `GET /admin/api/overview` | any | Shops by status, hosted service counts, tills in use and waiting, facts in 24 h and per UTC day for 14 days, hosted revenue for 30 days, unused codes, the integrity summary and the attention list (`service_inactive`, `service_grace`, `service_expiring` (7 days), `held_tills`, `conflicts`, `stale_shop` (14 days), `code_expiring` (24 h), `purge_soon` (3 days), `server_errors`, `integrity`) |
+| `GET /admin/api/health` | any | Version, database size, facts (total, last 24 h), active till sessions, shops by status, request/error/rate-limit counters since start, applied migrations, runtime (Node, PostgreSQL, memory, uptime) |
+| `GET /admin/api/integrity` | any | Checks `audit_chain`, `payment_chain`, `paid_until`, `held_with_free_places`, `sessions_on_stopped_shops`, `purge_overdue`, each with failing targets; the audit head `{entries, headSeq, headHash}` |
+| `GET /admin/api/codes?state=&offset=&limit=` | any | `{codes, total, canIssue, publicUrl, edition}`; never tokens |
+| `POST /admin/api/codes`, `POST /admin/api/codes/:id/cancel` | admin | Issue `{label, days 1–90, includedMonths 0–36, includedDays 0–90, maxTills}` (hosted: `maxTills` required, `null` unlimited) or an owner-recovery code `{label, days, recoveryShopId}` (*step-up*; audited `code.issue_recovery`) → code shown once plus an SVG QR code; cancel an unused code |
+| `GET /admin/api/shops?search=&status=&service=&sort=&dir=&offset=&limit=`, `GET /admin/api/shops.csv?…` | any | `{shops, total, edition}`; `search` matches the name, or an ID prefix when it looks like one; `sort` is `lastSeen` (default), `name`, `enrolled`, `facts`, `bytes` or `paidUntil`; CSV up to 5000 rows |
+| `GET /admin/api/shops/:id` | any | Detail: tills with backlog, conflicts, key epoch, payments and the 50 latest audit entries naming the shop (`activity`) |
+| `POST /admin/api/shops/:id/{suspend,resume,remove,restore}` | admin | Remove needs `{confirm: <shop id>}` (400 `confirmation_required`) and a *step-up*, and keeps data restorable for 30 days; the server purges it hourly afterwards |
+| `POST /admin/api/shops/:id/till-limit` | admin | `{maxTills, expected?}`; 409 `stale` when the limit is no longer `expected`; returns `{released}` |
+| `POST /admin/api/shops/:id/payments` | admin, hosted | `{months 1–36, amountMinor, method, reference?, requestId}`; extends paid-until from its end or today; the same `requestId` again returns the original with `duplicate: true` (409 `payment_conflict` if it differs); 409 `not_hosted` on self-hosted servers |
+| `GET /admin/api/billing?from=&to=&offset=&limit=`, `GET /admin/api/billing.csv?…` | any, hosted | Payments in [`from`, `to`) (default the last 30 days) with shop names, totals by method and by source, and shops whose subscription ends within 30 days or lapsed; 409 `not_hosted`, 400 `invalid_period` |
+| `GET /admin/api/audit?action=&username=&target=&from=&to=&before=&limit=`, `GET /admin/api/audit.csv?…` | any | Hash-chained, append-only audit log, newest first, each entry with `seq` and `hash`; `action` is a prefix (`shop.`); CSV up to 5000 rows |
+| `GET /admin/api/account/sessions`, `DELETE /admin/api/account/sessions/:id`, `POST /admin/api/account/sessions/sign-out-others` | any | The operator's own live sessions (`id` is a token-hash prefix); ending one of them, or all the others |
+| `POST /admin/api/account/password` | any, *step-up* | `{password}` (12+ characters, not only digits); ends the operator's other sessions |
+| `GET /admin/api/operators` | admin | `{operators: [{adminId, username, role, active, locked, createdAt, lastLoginAt, sessions}], totp}` |
+| `POST /admin/api/operators` | admin, *step-up* | `{username, role}` → generated password, `otpauth` URI and QR, shown once; 409 `username_taken` |
+| `POST /admin/api/operators/:id/{role,deactivate,activate,unlock,reset-totp}` | admin, *step-up* | `role` takes `{role}`; never one's own account (409 `self_change`) nor the last active admin (409 `last_admin`); deactivating ends their sessions; `reset-totp` returns a new URI and QR |
 
 ## Remaining planned API
 

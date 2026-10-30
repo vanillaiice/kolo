@@ -342,7 +342,7 @@ it("upgrading to vouched positions keeps every stored fact and lets forwarded se
     const sealed = (sequence: number, from: string) => run(`INSERT INTO journal(business_id,event_id,origin_device_id,origin_sequence,digest,sealed,received_from) VALUES ($1,$2,$3,$4,repeat('a',64),'{}'::jsonb,$5)`, [shop, randomUUIDv7(), origin, sequence, from]);
     await sealed(1, origin); await sealed(2, other);
     await assert.rejects(sealed(2, other), /unique/, "before: one fact per position, whoever pushed it");
-    assert.deepEqual(await migrateToLatest(db), ["0009_vouched_positions"]);
+    assert.deepEqual((await migrateToLatest(db)).filter(name => name < "0010"), ["0009_vouched_positions"]);
     assert.deepEqual((await run(`SELECT origin_sequence::int AS s, vouched FROM journal ORDER BY seq`)).map(row => [row.s, row.vouched]), [[1, true], [2, false]]);
     await sealed(2, other); await sealed(2, origin);
     await assert.rejects(sealed(2, origin), /journal_vouched_position/, "a vouched position is still unique");

@@ -50,3 +50,4 @@ Accepted ADRs preserve decision history. Changes belong in a superseding ADR.
 | [042](ADR-042-authority-revision-history.md) | Facts are judged by the revision they were signed under | Accepted |
 | [043](ADR-043-vouched-positions.md) | Only a vouched fact holds its origin position on the server | Accepted |
 | [044](ADR-044-join-code-key-stretching.md) | The join code is stretched with Argon2id | Accepted |
+| [045](ADR-045-operator-dashboard-v2.md) | Operator dashboard v2: Preact, strict requests, step-up and a chained audit log | Accepted |

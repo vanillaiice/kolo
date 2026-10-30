@@ -39,8 +39,11 @@ export interface ServerDatabase {
     reference: string | null; source: "manual" | "webhook" | "code"; external_id: string | null; recorded_by: string; recorded_at: Generated<Date>; paid_until_before: Date | null; paid_until_after: Date };
   admins: { admin_id: string; username: string; role: "admin" | "viewer"; password_hash: string; totp_secret: string; totp_last_step: string | null;
     active: Generated<boolean>; failed_attempts: Generated<number>; locked_until: Date | null; created_at: Generated<Date>; last_login_at: Date | null };
-  admin_sessions: { token_hash: string; admin_id: string; created_at: Generated<Date>; expires_at: Date; last_seen_at: Date; address: string };
-  admin_audit: { id: Generated<string>; at: Generated<Date>; admin_id: string | null; username: string; action: string; target: string | null; address: string | null; detail: string | null };
+  /** `confirmed_at`: when the operator last re-entered their password and code in this session (step-up, ADR-045). */
+  admin_sessions: { token_hash: string; admin_id: string; created_at: Generated<Date>; expires_at: Date; last_seen_at: Date; address: string; confirmed_at: Generated<Date | null> };
+  /** `seq`, `prev_hash` and `hash` are set by the database's chain trigger (ADR-045); inserts never supply them. */
+  admin_audit: { id: Generated<string>; at: Generated<Date>; admin_id: string | null; username: string; action: string; target: string | null; address: string | null; detail: string | null;
+    seq: Generated<string>; prev_hash: Generated<string>; hash: Generated<string> };
 }
 
 /** Raises on any change to rows that record received facts. */
@@ -267,6 +270,40 @@ export const SERVER_MIGRATIONS: Readonly<Record<string, Migration>> = {
       sql`ALTER TABLE journal DROP CONSTRAINT journal_business_id_origin_device_id_origin_sequence_key`,
       sql`CREATE UNIQUE INDEX journal_vouched_position ON journal (business_id, origin_device_id, origin_sequence) WHERE vouched`,
       sql`CREATE INDEX journal_position ON journal (business_id, origin_device_id, origin_sequence)`,
+    ]) await statement.execute(db);
+  } },
+  /**
+   * Operator dashboard v2 (ADR-045). The audit log becomes a hash chain kept by the database itself: a trigger takes a
+   * transaction lock, links each entry to the previous one by `seq` and hashes it, so entries written by the CLI, the
+   * dashboard or anything else chain alike. Existing entries are chained in ID order. Sessions record a recent step-up
+   * confirmation, and the journal gains an index on arrival time for the activity counts.
+   */
+  "0010_audit_chain": { async up(db) {
+    for (const statement of [
+      sql`ALTER TABLE admin_audit ADD COLUMN seq bigint, ADD COLUMN prev_hash text, ADD COLUMN hash text`,
+      sql`CREATE FUNCTION kolo_audit_hash(prev text, at timestamptz, admin_id uuid, username text, action text, target text, address text, detail jsonb) RETURNS text
+        LANGUAGE sql STABLE AS $$ SELECT encode(sha256(convert_to(jsonb_build_array(prev, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+          admin_id, username, action, target, address, detail)::text, 'UTF8')), 'hex') $$`,
+      sql`ALTER TABLE admin_audit DISABLE TRIGGER admin_audit_append_only`,
+      sql`DO $$ DECLARE r record; prev text := repeat('0', 64); n bigint := 0; BEGIN
+        FOR r IN SELECT * FROM admin_audit ORDER BY id LOOP
+          n := n + 1;
+          UPDATE admin_audit SET seq = n, prev_hash = prev, hash = kolo_audit_hash(prev, r.at, r.admin_id, r.username, r.action, r.target, r.address, r.detail) WHERE id = r.id RETURNING hash INTO prev;
+        END LOOP; END $$`,
+      sql`ALTER TABLE admin_audit ENABLE TRIGGER admin_audit_append_only`,
+      sql`ALTER TABLE admin_audit ALTER COLUMN seq SET NOT NULL, ALTER COLUMN prev_hash SET NOT NULL, ALTER COLUMN hash SET NOT NULL,
+        ADD CONSTRAINT admin_audit_seq UNIQUE (seq), ADD CONSTRAINT admin_audit_hash_format CHECK (hash ~ '^[a-f0-9]{64}$' AND prev_hash ~ '^[a-f0-9]{64}$')`,
+      sql`CREATE FUNCTION kolo_audit_chain() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE head record; BEGIN
+        PERFORM pg_advisory_xact_lock(4527010);
+        SELECT a.seq, a.hash INTO head FROM admin_audit a ORDER BY a.seq DESC LIMIT 1;
+        NEW.seq := coalesce(head.seq, 0) + 1;
+        NEW.prev_hash := coalesce(head.hash, repeat('0', 64));
+        NEW.hash := kolo_audit_hash(NEW.prev_hash, NEW.at, NEW.admin_id, NEW.username, NEW.action, NEW.target, NEW.address, NEW.detail);
+        RETURN NEW; END $$`,
+      sql`CREATE TRIGGER admin_audit_chain BEFORE INSERT ON admin_audit FOR EACH ROW EXECUTE FUNCTION kolo_audit_chain()`,
+      sql`CREATE INDEX admin_audit_target ON admin_audit (target, id DESC)`,
+      sql`ALTER TABLE admin_sessions ADD COLUMN confirmed_at timestamptz`,
+      sql`CREATE INDEX journal_received ON journal (received_at)`,
     ]) await statement.execute(db);
   } },
 };

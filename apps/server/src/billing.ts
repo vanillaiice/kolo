@@ -50,6 +50,9 @@ export async function recordPayment(tx: Transaction<ServerDatabase>, input: Paym
   if (!PAYMENT_METHODS.includes(input.method)) throw new BillingError(400, "invalid_method");
   const reference = input.reference?.trim() || null;
   if (reference !== null && reference.length > 120) throw new BillingError(400, "invalid_reference");
+  // The shop row is locked before the replay check, so two deliveries of one payment at once are decided one after
+  // the other and the second sees the first instead of failing on the unique external ID.
+  const shop = await tx.selectFrom("shops").select(["paid_until", "status"]).where("business_id", "=", input.shopId).forUpdate().executeTakeFirst();
   if (input.externalId !== undefined) {
     const old = await tx.selectFrom("payments").selectAll().where("external_id", "=", input.externalId).executeTakeFirst();
     if (old !== undefined) {
@@ -57,7 +60,6 @@ export async function recordPayment(tx: Transaction<ServerDatabase>, input: Paym
       return { paymentId: old.payment_id, paidUntilBefore: old.paid_until_before?.toISOString() ?? null, paidUntilAfter: old.paid_until_after.toISOString(), duplicate: true };
     }
   }
-  const shop = await tx.selectFrom("shops").select(["paid_until", "status"]).where("business_id", "=", input.shopId).forUpdate().executeTakeFirst();
   if (shop === undefined || shop.status === "removed") throw new BillingError(404, "not_found");
   const start = shop.paid_until !== null && shop.paid_until > now ? shop.paid_until : now;
   const { after } = (await sql<{ after: Date }>`SELECT (${start}::timestamptz + make_interval(months => ${input.months}::int, days => ${days}::int)) AS after`.execute(tx)).rows[0]!;

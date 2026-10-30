@@ -37,8 +37,17 @@ metadata and protects sessions.
 ## The dashboard
 
 Open it on the server itself, or from your computer through SSH: `ssh -L 8081:127.0.0.1:8081 <server>`, then
-`http://127.0.0.1:8081/admin/`. Codes, shops, suspension, removal, payments (hosted), health and the audit log are there.
-A viewer account (`admin create <name> --role viewer`) can read but not change anything.
+`http://127.0.0.1:8081/admin/`. The overview lists what needs you (unpaid or ending subscriptions, tills waiting for a
+place, quiet shops, codes about to expire, failing integrity checks); codes, shops, suspension, removal, payments and
+billing (hosted), health and the audit log are on their own pages.
+A viewer account (`admin create <name> --role viewer`) can read but not change anything. Admins can also create
+operators, change their role, deactivate them or give them a new authenticator QR code from **Operators**; the CLI
+keeps working. Removing a shop, issuing an owner-recovery code, changing a password and any operator change ask for
+your password and a fresh code again (ADR-045).
+
+**Audit seal.** Server health shows the audit log's newest entry number and its seal (colour blocks and the start of its
+hash). Every entry is chained to the one before by the database, and health checks the chain. Note the number and seal
+now and then: if that entry later shows a different seal, the log was rewritten by someone with direct database access.
 
 ## Attaching a shop
 

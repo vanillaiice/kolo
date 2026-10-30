@@ -139,7 +139,7 @@ it("trial days on a code: days alone, days with months, then grace and pause fro
     await connect(b, target, (await target.invite("Paid with bonus", 7, 1, { includedDays: 10, maxTills: 2 })).token);
     await sync(b, target);
     assert.equal((await serverConnections(b.context, crypto))[0]?.paidUntil, "2026-12-04T08:00:00.000Z", "one calendar month, then ten days");
-    const codes = await listCodes(db, clock);
+    const { codes } = await listCodes(db, clock);
     assert.deepEqual(codes.filter(code => code.state === "used").map(code => [code.includedMonths, code.includedDays, code.maxTills]).sort(), [[0, 7, null], [1, 10, 2]]);
     clock = new Date("2026-11-01T08:00:00.000Z"); await sync(a, target);
     assert.equal((await serverConnections(a.context, crypto))[0]?.service, "grace");

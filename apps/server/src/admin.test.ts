@@ -42,6 +42,11 @@ async function call(d: Dashboard, method: string, path: string, options: { body?
   let json: unknown; try { json = JSON.parse(text); } catch { json = text; }
   return { status: response.status, json: json as Record<string, unknown>, headers: response.headers, text };
 }
+/** A step-up confirmation, one authenticator step later than the last code used. */
+async function confirm(d: Dashboard, cookie: string, username: string, password: string, secret: string) {
+  d.clock.now = new Date(d.clock.now.getTime() + 30_000);
+  return call(d, "POST", "/admin/api/session/confirm", { cookie, body: { password, code: code(secret, username, d.clock.now) } });
+}
 async function signedIn(d: Dashboard, username: string, password: string, secret: string): Promise<string> {
   const response = await call(d, "POST", "/admin/api/session", { body: { username, password, code: code(secret, username, d.clock.now) } });
   assert.equal(response.status, 200, JSON.stringify(response.json));
@@ -61,7 +66,9 @@ it("operators sign in with a password and a single-use authenticator code; failu
     assert.equal((await call(d, "POST", "/admin/api/session", { body: { username: "operator", password: "correct horse battery", code: "000000" } })).status, 401);
     assert.equal((await call(d, "POST", "/admin/api/session", { body: { username: "nobody", password: "correct horse battery", code: "123456" } })).status, 401);
     const cookie = await signedIn(d, "operator", "correct horse battery", secret);
-    assert.deepEqual((await call(d, "GET", "/admin/api/me", { cookie })).json, { username: "operator", role: "admin", idleMinutes: 30 });
+    const me = (await call(d, "GET", "/admin/api/me", { cookie })).json;
+    assert.deepEqual([me["username"], me["role"], me["idleMinutes"], me["confirmedUntil"]], ["operator", "admin", 30, null]);
+    assert.equal(me["expiresAt"], new Date(d.clock.now.getTime() + 12 * 3_600_000).toISOString());
     // The same code cannot be used twice, even within its 30 seconds.
     assert.equal((await call(d, "POST", "/admin/api/session", { body: { username: "operator", password: "correct horse battery", code: code(secret, "operator", d.clock.now) } })).status, 401);
     for (let attempt = 0; attempt < 5; attempt++) await call(d, "POST", "/admin/api/session", { body: { username: "operator", password: "wrong password!!", code: "111111" } });
@@ -123,6 +130,8 @@ it("viewers read, admins change, foreign origins are refused, and codes, shops a
     await assert.rejects(sync(a, target), (error: unknown) => (error as { code?: string }).code === "shop_suspended");
     assert.equal((await call(d, "POST", `/admin/api/shops/${shops[0]!.shopId}/resume`, { cookie })).status, 204);
     assert.deepEqual((await call(d, "POST", `/admin/api/shops/${shops[0]!.shopId}/remove`, { cookie, body: { confirm: "wrong" } })).json, { error: { code: "confirmation_required" } });
+    assert.deepEqual((await call(d, "POST", `/admin/api/shops/${shops[0]!.shopId}/remove`, { cookie, body: { confirm: shops[0]!.shopId } })).json, { error: { code: "step_up_required" } }, "removal needs a fresh step-up");
+    assert.equal((await confirm(d, cookie, "admin", "correct horse battery", admin.secret)).status, 200);
     assert.equal((await call(d, "POST", `/admin/api/shops/${shops[0]!.shopId}/remove`, { cookie, body: { confirm: shops[0]!.shopId } })).status, 204);
     assert.equal((await call(d, "POST", `/admin/api/shops/${shops[0]!.shopId}/restore`, { cookie })).status, 204);
     // Till limits (ADR-039): admins set or clear them, viewers cannot, and each change is audited.
@@ -136,7 +145,7 @@ it("viewers read, admins change, foreign origins are refused, and codes, shops a
     const health = (await call(d, "GET", "/admin/api/health", { cookie: readOnly })).json;
     assert.deepEqual(health["shops"], { active: 1, suspended: 0, removed: 0 });
     assert.deepEqual((health["migrations"] as { name: string }[]).map(item => item.name), Object.keys(SERVER_MIGRATIONS).sort());
-    assert.deepEqual((await call(d, "POST", `/admin/api/shops/${shops[0]!.shopId}/payments`, { cookie, body: { months: 1, amountMinor: 5000, method: "cash" } })).json, { error: { code: "not_hosted" } }, "a self-hosted server has no subscriptions");
+    assert.deepEqual((await call(d, "POST", `/admin/api/shops/${shops[0]!.shopId}/payments`, { cookie, body: { months: 1, amountMinor: 5000, method: "cash", requestId: "0190a0b0-0000-7000-8000-000000000001" } })).json, { error: { code: "not_hosted" } }, "a self-hosted server has no subscriptions");
     const entries = (await call(d, "GET", "/admin/api/audit", { cookie: readOnly })).json["entries"] as { action: string; username: string }[];
     for (const action of ["code.issue", "code.cancel", "shop.suspend", "shop.resume", "shop.remove", "shop.restore", "shop.till_limit"]) assert.ok(entries.some(entry => entry.action === action && entry.username === "admin"), action);
     const csv = await call(d, "GET", "/admin/api/audit.csv", { cookie: readOnly });

@@ -128,9 +128,9 @@ it("the dashboard records payments for admins only and shows each shop's subscri
     };
     const admin = await signIn("cashier-desk", "correct horse battery", "admin"), viewer = await signIn("auditor", "staple battery horse", "viewer");
     const post = (cookie: string, body: unknown) => fetch(`${base}/admin/api/shops/${a.install.businessId}/payments`, { method: "POST", headers: { "content-type": "application/json", origin: base, cookie }, body: JSON.stringify(body) }).then(async r => ({ status: r.status, json: await r.json() as Record<string, unknown> }));
-    assert.deepEqual((await post(viewer, { months: 1, amountMinor: 5000, method: "cash" })).json, { error: { code: "read_only" } });
-    assert.deepEqual((await post(admin, { months: 1, amountMinor: 5000, method: "bitcoin" })).json, { error: { code: "invalid_method" } });
-    const paid = await post(admin, { months: 6, amountMinor: 27000, method: "orange_money", reference: "OM-77" });
+    assert.deepEqual((await post(viewer, { months: 1, amountMinor: 5000, method: "cash", requestId: randomUUIDv7() })).json, { error: { code: "read_only" } });
+    assert.deepEqual((await post(admin, { months: 1, amountMinor: 5000, method: "bitcoin", requestId: randomUUIDv7() })).json, { error: { code: "invalid_method" } });
+    const paid = await post(admin, { months: 6, amountMinor: 27000, method: "orange_money", reference: "OM-77", requestId: randomUUIDv7() });
     assert.equal(paid.status, 200); assert.equal(paid.json["paidUntilAfter"], "2027-04-11T06:00:00.000Z");
     const shops = await fetch(`${base}/admin/api/shops`, { headers: { cookie: viewer } }).then(r => r.json()) as { edition: string; shops: { service: string; paidUntil: string }[] };
     assert.equal(shops.edition, "hosted"); assert.equal(shops.shops[0]!.service, "active"); assert.equal(shops.shops[0]!.paidUntil, "2027-04-11T06:00:00.000Z");

@@ -2709,6 +2709,27 @@ export interface Admin {
 }
 ```
 
+A resolved dashboard session: who, which session (by token hash), and when it was last confirmed (step-up).
+
+```ts
+export interface AdminSession {
+    readonly admin: Admin;
+    readonly tokenHash: string;
+    readonly expiresAt: Date;
+    readonly confirmedAt: Date | null;
+}
+```
+
+Who wrote an audit entry; the CLI writes as `cli` with no ID.
+
+```ts
+export interface AuditActor {
+    readonly adminId: string | null;
+    readonly username: string;
+    readonly address?: string | null;
+}
+```
+
 Stable admin failure; the code is the whole client-visible explanation.
 
 ```ts
@@ -2726,10 +2747,22 @@ const ADMIN_IDLE_MINUTES: 30;
 const ADMIN_SESSION_HOURS: 12;
 ```
 
+How long a step-up confirmation lets a session make sensitive changes (ADR-045).
+
+```ts
+const STEP_UP_MINUTES: 5;
+```
+
 Rejects passwords an operator could guess or mistype into something weak.
 
 ```ts
 validatePassword(password: string): void;
+```
+
+A random 24-character password for a new operator, shown once.
+
+```ts
+generatePassword(): string;
 ```
 
 `scrypt$N$r$p$salt$key`, so parameters can be raised later without breaking existing hashes.
@@ -2745,13 +2778,15 @@ createAdmin(db: Kysely<ServerDatabase>, input: {
     readonly username: string;
     readonly password: string;
     readonly role: AdminRole;
-}): Promise<{ readonly adminId: string; readonly secret: string; readonly uri: string; }>;
+}, actor: AuditActor = CLI): Promise<{ readonly adminId: string; readonly username: string; readonly secret: string; readonly uri: string; }>;
 ```
 
-Replaces an operator's authenticator secret, for a lost phone. Signs every session out.
+Replaces an operator's authenticator secret, for a lost phone, by username or ID. Unlocks the account and signs every session out.
 
 ```ts
-resetTotp(db: Kysely<ServerDatabase>, username: string): Promise<{ readonly secret: string; readonly uri: string; }>;
+resetTotp(db: Kysely<ServerDatabase>, who: string | {
+    readonly adminId: string;
+}, actor: AuditActor = CLI): Promise<{ readonly username: string; readonly secret: string; readonly uri: string; }>;
 ```
 
 Password plus a fresh TOTP code (or the password alone where the operator turned TOTP off on a loopback-only
@@ -2762,14 +2797,33 @@ Every outcome is audited. Returns a session token for an HttpOnly cookie; only i
 signIn(db: Kysely<ServerDatabase>, input: {
     readonly username: string;
     readonly password: string;
-    readonly code: string;
-    readonly address: string;
-    readonly now: Date;
-    readonly totp?: boolean;
-}): Promise<{ readonly token: string; readonly admin: Admin; }>;
+} & Credentials): Promise<{ readonly token: string; readonly admin: Admin; }>;
 ```
 
-Resolves a session token, enforcing idle and absolute expiry and that the account is still active.
+Step-up (ADR-045): the signed-in operator re-enters their password and a fresh authenticator code, which marks this
+session confirmed for `STEP_UP_MINUTES`. Failures count toward the same lockout as sign-in.
+
+```ts
+confirmSession(db: Kysely<ServerDatabase>, session: AdminSession, input: {
+    readonly password: string;
+} & Credentials): Promise<void>;
+```
+
+Refuses a sensitive change unless this session was confirmed within `STEP_UP_MINUTES`.
+
+```ts
+requireConfirmed(session: AdminSession, now: Date): void;
+```
+
+Resolves a session token, enforcing idle and absolute expiry and that the account is still active. With `touch`
+false (a page refreshing itself in the background) the session is not kept alive, so an unattended dashboard still
+signs out after `ADMIN_IDLE_MINUTES`.
+
+```ts
+resolveSession(db: Kysely<ServerDatabase>, token: string | undefined, now: Date, touch = true): Promise<AdminSession>;
+```
+
+The operator behind a session token; see `resolveSession`.
 
 ```ts
 sessionAdmin(db: Kysely<ServerDatabase>, token: string | undefined, now: Date): Promise<Admin>;
@@ -2781,7 +2835,85 @@ Ends one session; idempotent.
 signOut(db: Kysely<ServerDatabase>, token: string | undefined, admin: Admin, address: string): Promise<void>;
 ```
 
-Appends one audit entry inside the caller's transaction, so a change and its record commit together.
+One of the operator's own live sessions; `id` is a prefix of the token hash, never the token.
+
+```ts
+export interface SessionView {
+    readonly id: string;
+    readonly createdAt: string;
+    readonly lastSeenAt: string;
+    readonly expiresAt: string;
+    readonly address: string;
+    readonly current: boolean;
+}
+```
+
+The operator's live sessions, most recent first.
+
+```ts
+listSessions(db: Kysely<ServerDatabase>, session: AdminSession, now: Date): Promise<readonly SessionView[]>;
+```
+
+Ends one of the operator's own sessions by its listed ID, or every other one with `"others"`. Returns how many ended.
+
+```ts
+revokeSessions(db: Kysely<ServerDatabase>, session: AdminSession, which: string, address: string): Promise<number>;
+```
+
+Replaces the operator's own password and signs their other sessions out. Requires a confirmed session.
+
+```ts
+changePassword(db: Kysely<ServerDatabase>, session: AdminSession, password: string, address: string): Promise<void>;
+```
+
+An operator account as listed to admins; never secrets or hashes.
+
+```ts
+export interface OperatorView {
+    readonly adminId: string;
+    readonly username: string;
+    readonly role: AdminRole;
+    readonly active: boolean;
+    readonly locked: boolean;
+    readonly createdAt: string;
+    readonly lastLoginAt: string | null;
+    readonly sessions: number;
+}
+```
+
+Every operator account, by username.
+
+```ts
+listOperators(db: Kysely<ServerDatabase>, now: Date): Promise<readonly OperatorView[]>;
+```
+
+A change to another operator's account.
+
+```ts
+export type OperatorChange = {
+    readonly kind: "deactivate";
+} | {
+    readonly kind: "activate";
+} | {
+    readonly kind: "unlock";
+} | {
+    readonly kind: "role";
+    readonly role: AdminRole;
+};
+```
+
+Changes another operator's account, audited as `admin.<kind>`. An operator never changes their own account here
+(`self_change`), and the last active admin can be neither deactivated nor demoted (`last_admin`): the active admin
+rows are locked first, so two parallel changes cannot both pass the count. Deactivating signs the account out.
+A change that is already in effect does nothing and records nothing.
+
+```ts
+changeOperator(db: Kysely<ServerDatabase>, actor: AuditActor & {
+    readonly adminId: string;
+}, adminId: string, change: OperatorChange): Promise<void>;
+```
+
+Appends one audit entry inside the caller's transaction, so a change and its record commit together. The database chains it (ADR-045).
 
 ```ts
 audit(tx: Transaction<ServerDatabase> | Kysely<ServerDatabase>, admin: {
@@ -2812,7 +2944,9 @@ export interface AdminOptions {
 
 The operator dashboard: a JSON API under `/admin/api` and the static dashboard under `/admin/`, served on its own
 listener so the public sync port never exposes it. Sessions use an HttpOnly, SameSite=Strict cookie; every change
-also requires a matching `Origin`. Viewers can read only. Every change is audited in its own transaction.
+also requires a matching `Origin`. Viewers can read only. Every change is audited in its own transaction. Requests
+are checked against strict schemas after the session is (ADR-045), and the most sensitive changes need a step-up
+confirmation from the last `STEP_UP_MINUTES`.
 
 ```ts
 createAdminApplication(options: AdminOptions): Promise<FastifyInstance<RawServerDefault, IncomingMessage, ServerResponse<IncomingMessage>, FastifyBaseLogger, FastifyTypeProviderDefault>>;
@@ -2892,10 +3026,24 @@ issueCode(db: Kysely<ServerDatabase>, key: ServerKey, publicUrl: string, actor: 
 }): Promise<IssuedCode>;
 ```
 
-Recent codes, newest first, with what became of each.
+What became of a code.
 
 ```ts
-listCodes(db: Kysely<ServerDatabase>, now: Date, limit = 200): Promise<readonly CodeView[]>;
+const CODE_STATES: readonly ["unused", "used", "expired", "cancelled"];
+```
+
+```ts
+export type CodeState = typeof CODE_STATES[number];
+```
+
+Codes, newest first, with what became of each; optionally one state, a page at a time.
+
+```ts
+listCodes(db: Kysely<ServerDatabase>, now: Date, query: {
+    readonly state?: CodeState;
+    readonly offset?: number;
+    readonly limit?: number;
+} = {}): Promise<{ readonly codes: readonly CodeView[]; readonly total: number; }>;
 ```
 
 Cancels an unused code. A used code has done its job and cannot be cancelled.
@@ -2924,10 +3072,35 @@ export interface ShopView {
 }
 ```
 
-Shops matching `search` (name or ID prefix), most recently active first.
+Orders the shop list can take.
 
 ```ts
-listShops(db: Kysely<ServerDatabase>, search = "", limit = 200, edition: Edition = { edition: "selfhost", graceDays: 0 }, now = new Date()): Promise<readonly ShopView[]>;
+const SHOP_SORTS: readonly ["lastSeen", "name", "enrolled", "facts", "bytes", "paidUntil"];
+```
+
+```ts
+export type ShopSort = typeof SHOP_SORTS[number];
+```
+
+Filters, order and page for `listShops`. `search` matches the name, or an ID prefix when it looks like one.
+
+```ts
+export interface ShopQuery {
+    readonly search?: string;
+    readonly shopId?: string;
+    readonly status?: ShopView["status"];
+    readonly service?: "active" | "grace" | "inactive";
+    readonly sort?: ShopSort;
+    readonly dir?: "asc" | "desc";
+    readonly offset?: number;
+    readonly limit?: number;
+}
+```
+
+Shops matching `query`, most recently active first by default, with the total that match.
+
+```ts
+listShops(db: Kysely<ServerDatabase>, query: ShopQuery = {}, edition: Edition = { edition: "selfhost", graceDays: 0 }, now = new Date()): Promise<{ readonly shops: readonly ShopView[]; readonly total: number; }>;
 ```
 
 One shop's devices and delivery health; the key epoch is read from sealed headers, never from content.
@@ -2940,6 +3113,7 @@ export interface ShopDetail extends ShopView {
     readonly connectionCode: string | null;
     readonly graceUntil: string | null;
     readonly payments: Awaited<ReturnType<typeof listPayments>>;
+    readonly activity: readonly AuditView[];
     readonly deviceList: readonly {
         readonly deviceId: string;
         readonly label: string;
@@ -2952,6 +3126,8 @@ export interface ShopDetail extends ShopView {
     }[];
 }
 ```
+
+One shop as the operator sees it, with its tills, payments and recent audit entries.
 
 ```ts
 shopDetail(db: Kysely<ServerDatabase>, shopId: string, edition: Edition = { edition: "selfhost", graceDays: 0 }, now = new Date()): Promise<ShopDetail>;
@@ -2966,13 +3142,16 @@ setShopStatus(db: Kysely<ServerDatabase>, actor: Actor, shopId: string, action: 
 
 Sets a shop's till limit (null for unlimited), audited as `shop.till_limit`. Raising or clearing it releases held
 tills, oldest first, into the new places; lowering it below current use holds nobody (ADR-039). Returns the
-released device IDs.
+released device IDs. With `expected`, the change is refused (`stale`) unless the limit is still that value, so two
+operators editing at once cannot silently overwrite each other.
 
 ```ts
-setTillLimit(db: Kysely<ServerDatabase>, actor: Actor, shopId: string, maxTills: number | null): Promise<readonly string[]>;
+setTillLimit(db: Kysely<ServerDatabase>, actor: Actor, shopId: string, maxTills: number | null, expected?: number | null): Promise<readonly string[]>;
 ```
 
 Records a payment taken by the operator and moves the shop's paid-until date; audited in the same transaction.
+`requestId` (a UUID the form generates once) makes a retried or double-submitted request record the payment once:
+the replay returns the original and is not audited again.
 
 ```ts
 recordShopPayment(db: Kysely<ServerDatabase>, actor: Actor, input: {
@@ -2981,6 +3160,7 @@ recordShopPayment(db: Kysely<ServerDatabase>, actor: Actor, input: {
     readonly amountMinor: number;
     readonly method: PaymentMethod;
     readonly reference?: string;
+    readonly requestId?: string;
 }, now: Date): Promise<RecordedPayment>;
 ```
 
@@ -3007,16 +3187,173 @@ export interface Metrics {
 createMetrics(now = new Date()): Metrics;
 ```
 
-Server-wide health for the dashboard.
+Server-wide health for the dashboard, with the runtime it runs on.
 
 ```ts
-serverHealth(db: Kysely<ServerDatabase>, metrics: Metrics, version: string, now: Date, edition: Edition = { edition: "selfhost", graceDays: 0 }): Promise<{ version: string; edition: "selfhost" | "hosted"; graceDays: number; startedAt: string; databaseBytes: number; facts: number; factsLastDay: number; activeSessions: number; shops: { active: number; suspended: number; removed: number; }; ... 4 more ...; migrations: { ...; }[]; }>;
+serverHealth(db: Kysely<ServerDatabase>, metrics: Metrics, version: string, now: Date, edition: Edition = { edition: "selfhost", graceDays: 0 }): Promise<{ version: string; edition: "selfhost" | "hosted"; graceDays: number; startedAt: string; databaseBytes: number; facts: number; factsLastDay: number; activeSessions: number; shops: { active: number; suspended: number; removed: number; }; ... 5 more ...; runtime: { ...; }; }>;
 ```
 
-Audit entries, newest first, optionally before an ID for paging.
+An audit entry as listed; `seq` is its place in the hash chain and `hash` its link (ADR-045).
 
 ```ts
-listAudit(db: Kysely<ServerDatabase>, before?: string, limit = 100): Promise<{ id: string; at: string; username: string; action: string; target: string; address: string; detail: Record<string, unknown>; }[]>;
+export interface AuditView {
+    readonly id: string;
+    readonly seq: string;
+    readonly hash: string;
+    readonly at: string;
+    readonly username: string;
+    readonly action: string;
+    readonly target: string | null;
+    readonly address: string | null;
+    readonly detail: Record<string, unknown> | null;
+}
+```
+
+Filters for `listAudit`: `action` is a prefix (`shop.` matches every shop change), the others exact.
+
+```ts
+export interface AuditQuery {
+    readonly before?: string;
+    readonly action?: string;
+    readonly username?: string;
+    readonly target?: string;
+    readonly from?: Date;
+    readonly to?: Date;
+    readonly limit?: number;
+}
+```
+
+Audit entries, newest first, filtered, optionally before an ID for paging.
+
+```ts
+listAudit(db: Kysely<ServerDatabase>, query: AuditQuery = {}): Promise<readonly AuditView[]>;
+```
+
+Something the operator should look at, linking to its shop or code.
+
+```ts
+export interface AttentionItem {
+    readonly kind: "service_inactive" | "service_grace" | "service_expiring" | "held_tills" | "conflicts" | "stale_shop" | "code_expiring" | "purge_soon" | "server_errors" | "integrity";
+    readonly target: string | null;
+    readonly label: string;
+    readonly at: string | null;
+    readonly count: number | null;
+}
+```
+
+Days without any till contact before an active shop is called stale.
+
+```ts
+const STALE_SHOP_DAYS: 14;
+```
+
+The dashboard's first page: counts across the server, facts received per UTC day for the last 14 days, hosted
+revenue for 30 days, and what needs attention. Reads only; each attention kind is capped at 20 items.
+
+```ts
+overview(db: Kysely<ServerDatabase>, metrics: Metrics, edition: Edition, now: Date): Promise<{ edition: "selfhost" | "hosted"; shops: { active: number; suspended: number; removed: number; }; services: { active: number; grace: number; inactive: number; }; tills: { used: number; held: number; }; ... 4 more ...; attention: AttentionItem[]; }>;
+```
+
+Hosted billing across shops (ADR-031): payments recorded in [`from`, `to`), newest first and paged, their totals by
+method and by source, and the subscriptions that end within 30 days or have already lapsed. Refused on self-hosted servers.
+
+```ts
+billingReport(db: Kysely<ServerDatabase>, edition: Edition, now: Date, query: {
+    readonly from: Date;
+    readonly to: Date;
+    readonly offset?: number;
+    readonly limit?: number;
+}): Promise<{ from: string; to: string; payments: { paymentId: string; shopId: string; shopName: string; months: number; days: number; amountMinor: number; method: "other" | "cash" | "mtn_momo" | "orange_money" | "bank" | "card"; ... 4 more ...; paidUntilAfter: string; }[]; total: { ...; }; byMethod: { ...; }[]; bySourc...;
+```
+
+One consistency check: `targets` names what fails it (shop IDs, or the first broken audit `seq`), at most 20.
+
+```ts
+export interface IntegrityCheck {
+    readonly name: "audit_chain" | "payment_chain" | "paid_until" | "held_with_free_places" | "sessions_on_stopped_shops" | "purge_overdue";
+    readonly ok: boolean;
+    readonly targets: readonly string[];
+}
+```
+
+Read-only consistency checks over what the server guarantees by construction (ADR-045): the audit hash chain
+recomputes and links from the first entry to the head; each shop's payments chain (every payment starts where the
+previous ended) and its paid-until date is the last one's end; no till waits while a place is free; no sync session
+outlives a suspension or removal; nothing removed waits more than two hours past its purge date. The audit head is
+returned so an operator can note it and later notice a rewritten or truncated chain.
+
+```ts
+integrityReport(db: Kysely<ServerDatabase>, now: Date): Promise<{ ok: boolean; checkedAt: string; checks: IntegrityCheck[]; audit: { entries: number; headSeq: string; headHash: string; }; }>;
+```
+
+## [apps/server/src/admin/schemas.ts](../../apps/server/src/admin/schemas.ts)
+
+Path parameters: an ID that is not a UUID is simply not found.
+
+```ts
+const idParams: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const actionParams: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const sessionParams: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const signInBody: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const confirmBody: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const passwordBody: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const issueBody: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const paymentBody: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const tillLimitBody: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const operatorBody: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const roleBody: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const shopsQuery: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const codesQuery: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const auditQuery: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+```ts
+const billingQuery: { type: string; additionalProperties: boolean; properties: Record<string, unknown>; required: readonly string[]; };
+```
+
+The stable code a malformed field earns, so a wrong type reads like the same field out of range.
+
+```ts
+const FIELD_CODES: Readonly<Record<string, string>>;
 ```
 
 ## [apps/server/src/app.ts](../../apps/server/src/app.ts)
@@ -3084,7 +3421,7 @@ Hosted service status for a paid-until date: `active` while paid, `grace` for `g
 A shop never paid for is `inactive`. Self-hosted shops are `unlimited`. Local trading never depends on any of it.
 
 ```ts
-entitlementOf(edition: Edition, paidUntil: Date | null, now: Date): { edition: "selfhost" | "hosted"; status: "active" | "unlimited" | "grace" | "inactive"; paid_until?: string; grace_until?: string; };
+entitlementOf(edition: Edition, paidUntil: Date | null, now: Date): { edition: "selfhost" | "hosted"; status: "active" | "inactive" | "grace" | "unlimited"; paid_until?: string; grace_until?: string; };
 ```
 
 A payment to record: one plan per shop, so only the paid time matters for service. Manual and webhook payments are
@@ -3359,6 +3696,7 @@ export interface ServerDatabase {
         expires_at: Date;
         last_seen_at: Date;
         address: string;
+        confirmed_at: Generated<Date | null>;
     };
     admin_audit: {
         id: Generated<string>;
@@ -3369,6 +3707,9 @@ export interface ServerDatabase {
         target: string | null;
         address: string | null;
         detail: string | null;
+        seq: Generated<string>;
+        prev_hash: Generated<string>;
+        hash: Generated<string>;
     };
 }
 ```
@@ -3674,7 +4015,7 @@ enroll(relay: Relay, input: EnrollmentRequest): Promise<void>;
 This shop's hosted service status; available to a signed-in till even when sync is paused, so it can say why.
 
 ```ts
-entitlement(relay: Relay, scope: Scope): Promise<{ edition: "selfhost" | "hosted"; status: "active" | "unlimited" | "grace" | "inactive"; paid_until?: string; grace_until?: string; }>;
+entitlement(relay: Relay, scope: Scope): Promise<{ edition: "selfhost" | "hosted"; status: "active" | "inactive" | "grace" | "unlimited"; paid_until?: string; grace_until?: string; }>;
 ```
 
 Refuses data transfer for a hosted shop whose paid period and grace have ended. Its facts stay stored, its tills keep
@@ -4252,7 +4593,7 @@ Hosted service eligibility for the session's shop (ADR-031). `unlimited` on self
 paid period while sync still runs; `inactive` when sync is paused. Never a condition for local trading.
 
 ```ts
-const entitlementSchema: ZodObject<{ edition: ZodEnum<{ selfhost: "selfhost"; hosted: "hosted"; }>; status: ZodEnum<{ active: "active"; unlimited: "unlimited"; grace: "grace"; inactive: "inactive"; }>; paid_until: ZodNullable<ZodISODateTime>; grace_until: ZodNullable<ZodISODateTime>; }, $strict>;
+const entitlementSchema: ZodObject<{ edition: ZodEnum<{ selfhost: "selfhost"; hosted: "hosted"; }>; status: ZodEnum<{ active: "active"; inactive: "inactive"; grace: "grace"; unlimited: "unlimited"; }>; paid_until: ZodNullable<ZodISODateTime>; grace_until: ZodNullable<ZodISODateTime>; }, $strict>;
 ```
 
 The shop's till limit (ADR-039): `max_tills` null is unlimited; `tills` counts the active tills that hold a place.
