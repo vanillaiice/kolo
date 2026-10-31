@@ -9,6 +9,19 @@ GitHub release, and installed desktop apps show it before updating, so write it 
 - Say what someone will notice: new things they can do, fixes, and anything that works differently. Leave out
   internal changes. Do not use a `---` line inside a section: it ends the notes shown in the app.
 
+## 0.12.0
+
+### Français
+
+- À la création d’une boutique, les noms proposés pour la caisse et le compte d’espèces suivent maintenant la langue
+  choisie, même si on change de langue après avoir ouvert l’écran. Il en va de même pour la restauration et pour
+  l’ajout d’une caisse.
+
+### English
+
+- When creating a shop, the suggested names for the till and the cash account now follow the chosen language, even if
+  you change language after opening the screen. The same goes for restoring a shop and adding a till.
+
 ## 0.11.0
 
 ### Français

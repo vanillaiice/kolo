@@ -2449,3 +2449,16 @@ every page captured in Electron in light and dark, French and English, at 1360 p
 a triple-clicked payment recorded once; deep link and back button; step-up dialog and operator enrolment. The live run
 found the payment-chain check alarming on microsecond dates, fixed and tested.
 Not verified: a TOTP sign-in in a browser (the preview used `KOLO_ADMIN_TOTP=off`; TOTP paths are covered by tests).
+
+## 2026-10-31: v0.12.0 release checks and Windows script paths
+
+- `apps/admin/scripts/check-size.mjs` and `scripts/capture-mobile-screenshots.mjs` used `new URL().pathname`, which gives
+  `/D:/...` on Windows, so the dashboard size check failed every Windows build since ADR-045. Both use `fileURLToPath`.
+
+Verification: `npm run check`; Desktop Windows acceptance on GitHub passed on the fix, including `verify:desktop:win`, the
+install, upgrade, native-vault and crash acceptance and the Store package. `npm run verify:android` passed on a Galaxy A04e
+(SM-A042F, Android 13), upgrading over a shop that stayed intact. On that phone, driven through adb: the Roles screen (create a role,
+change a permission, delete it), the custom role in the new-member picker (the picker was not saved through), "New
+category" in the product form, and the report print dialog with its preview.
+Not verified: the mobile review list with a real held-back fact, a real phone-to-desktop join against
+`sync.kolo.hblabs.xyz`, the Android share sheet, a physical print, and a TOTP sign-in in a browser.
