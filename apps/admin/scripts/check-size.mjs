@@ -2,9 +2,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const ENTRY_BUDGET = 40 * 1024, TOTAL_BUDGET = 80 * 1024;
-const dir = new URL("../dist/assets/", import.meta.url).pathname;
+const dir = fileURLToPath(new URL("../dist/assets/", import.meta.url));
 const html = readFileSync(new URL("../dist/index.html", import.meta.url), "utf8");
 const entry = /src="\/admin\/assets\/([^"]+\.js)"/.exec(html)?.[1];
 if (entry === undefined) { console.error("check-size: no entry script in dist/index.html"); process.exit(1); }

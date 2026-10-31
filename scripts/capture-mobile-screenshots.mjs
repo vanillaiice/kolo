@@ -7,8 +7,9 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const output = resolve(process.argv[2] ?? new URL("../docs/screenshots", import.meta.url).pathname);
+const output = resolve(process.argv[2] ?? fileURLToPath(new URL("../docs/screenshots", import.meta.url)));
 const dumpPath = "/sdcard/kolo-readme-window.xml";
 const pause = () => new Promise(resolve => setTimeout(resolve, 300));
 function adb(args, binary = false) {
